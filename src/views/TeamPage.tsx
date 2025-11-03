@@ -28,6 +28,9 @@ import {
   useReorderParticipantsMutation,
 } from "../app/api";
 import type { Participant } from "../types";
+import { setTeamFilters } from "../app/uiSlice";
+import { useAppDispatch, useAppSelector } from "./hooks";
+import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 
 import {
   DndContext,
@@ -50,6 +53,14 @@ const PRESET_RATES = [1, 0.75, 0.5, 0.25];
 
 const uniqueRolesFrom = (participants: Participant[]) =>
   Array.from(new Set(participants.map((p) => p.role).filter(Boolean)));
+
+function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
 
 function SortableRow({
   participant,
@@ -99,6 +110,8 @@ export default function TeamPage() {
   const [updateParticipant] = useUpdateParticipantMutation();
   const [deleteParticipant] = useDeleteParticipantMutation();
   const [reorderParticipants] = useReorderParticipantsMutation();
+  const dispatch = useAppDispatch();
+  const { filterRoles, filterRates } = useAppSelector((s) => s.ui.team);
 
   // Добавление
   const [newName, setNewName] = React.useState("");
@@ -117,10 +130,6 @@ export default function TeamPage() {
   const [editRate, setEditRate] = React.useState<string>("1");
   const [editRateInput, setEditRateInput] = React.useState<string>("");
 
-  // Фильтры
-  const [filterRoles, setFilterRoles] = React.useState<string[]>([]);
-  const [filterRates, setFilterRates] = React.useState<string[]>([]);
-
   const allRoleOptions = React.useMemo(
     () =>
       Array.from(new Set([...PRESET_ROLES, ...uniqueRolesFrom(participants)])),
@@ -137,6 +146,31 @@ export default function TeamPage() {
       .sort((a, b) => b - a)
       .map((v) => String(Number(v.toFixed(2)))); // "1", "0.75", "0.5", ...
   }, [participants]);
+
+  const handleRoleFilterChange = React.useCallback(
+    (values: string[]) => {
+      const next = Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
+      if (shallowArrayEqual(next, filterRoles)) return;
+      dispatch(setTeamFilters({ filterRoles: next }));
+    },
+    [dispatch, filterRoles]
+  );
+
+  const handleRateFilterChange = React.useCallback(
+    (values: string[]) => {
+      const normalized = values
+        .map((v) => v.replace(",", ".").trim())
+        .filter(Boolean)
+        .map((v) => {
+          const num = Number(v);
+          return Number.isFinite(num) ? String(Number(num.toFixed(2))) : v;
+        });
+      const next = Array.from(new Set(normalized));
+      if (shallowArrayEqual(next, filterRates)) return;
+      dispatch(setTeamFilters({ filterRates: next }));
+    },
+    [dispatch, filterRates]
+  );
 
   const filtered = React.useMemo(() => {
     let list = participants.slice();
@@ -407,28 +441,22 @@ export default function TeamPage() {
           spacing={2}
           alignItems="center"
         >
-          <Autocomplete
+          <FilterAutocomplete
             multiple
-            size="small"
+            allowCustom={false}
+            label="Фильтр: Роли"
             options={allRoleOptions}
             value={filterRoles}
-            onChange={(_, val) => setFilterRoles(val)}
-            renderInput={(params) => (
-              <TextField {...params} label="Фильтр: Роли" />
-            )}
+            onChange={handleRoleFilterChange}
             sx={{ minWidth: 260, flex: 1 }}
           />
 
-          <Autocomplete
+          <FilterAutocomplete
             multiple
-            size="small"
-            freeSolo
+            label="Фильтр: Ставка (0..1)"
             options={rateOptions}
             value={filterRates}
-            onChange={(_, val) => setFilterRates(val)}
-            renderInput={(params) => (
-              <TextField {...params} label="Фильтр: Ставка (0..1)" />
-            )}
+            onChange={handleRateFilterChange}
             sx={{ minWidth: 260, flex: 1 }}
           />
         </Stack>

@@ -13,9 +13,13 @@ export const store = configureStore({
 });
 
 // Сохранение UI-фильтров в localStorage
+let lastPersistedUI = store.getState().ui;
+
 store.subscribe(() => {
-  const state = store.getState();
-  persistUIState(state.ui);
+  const nextUI = store.getState().ui;
+  if (nextUI === lastPersistedUI) return;
+  lastPersistedUI = nextUI;
+  persistUIState(nextUI);
 });
 
 export type RootState = ReturnType<typeof store.getState>;

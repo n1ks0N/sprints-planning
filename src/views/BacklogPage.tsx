@@ -21,11 +21,6 @@ import {
   Tooltip,
   Divider,
   InputBase,
-  FormControl,
-  InputLabel,
-  OutlinedInput,
-  Checkbox,
-  ListItemText,
 } from "@mui/material";
 import {
   Add,
@@ -59,7 +54,11 @@ import type {
   Sprint,
   TaskPriority,
   Quarter,
+  TaskStatus,
 } from "../types";
+import { setBacklogFilters } from "../app/uiSlice";
+import { useAppDispatch, useAppSelector } from "./hooks";
+import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 
 moment.locale("ru");
 
@@ -77,6 +76,13 @@ function isISOWithin(iso: string, startISO: string, endISO: string) {
 }
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 /** Инлайн-редактор текста (клик по тексту -> InputBase, «невидимый инпут») */
@@ -222,7 +228,6 @@ const LS_STATUS = "backlog.statusMap";
 const LS_LEADER = "backlog.leaderMap";
 const LS_TASK_ORDER = "backlog.orderMap";
 
-type TaskStatus = "inprogress" | "done" | "notdone" | "canceled" | "partial";
 const STATUS_LABEL: Record<TaskStatus, string> = {
   inprogress: "В работе",
   done: "Выполнена",
@@ -240,6 +245,8 @@ const STATUS_COLOR: Record<
   canceled: "info",
   partial: "warning",
 };
+
+const PRIORITY_VALUES: readonly number[] = [1, 2, 3];
 
 type StatusMap = Record<string, TaskStatus>;
 type LeaderMap = Record<string, string | undefined>;
@@ -316,10 +323,10 @@ export default function BacklogPage() {
     return m;
   }, [sprintsGlobalOrdered]);
 
-  // Фильтры: приоритет (множественный), стрим (строка), статус (множественный)
-  const [priorityFilter, setPriorityFilter] = React.useState<number[]>([]);
-  const [streamFilter, setStreamFilter] = React.useState<string>("");
-  const [statusFilter, setStatusFilter] = React.useState<TaskStatus[]>([]);
+  const dispatch = useAppDispatch();
+  const { priorityFilter, streamFilter, statusFilter } = useAppSelector(
+    (s) => s.ui.backlog
+  );
 
   // Источник задач — всегда берём все, фильтруем на клиенте (т.к. мульти-кварталы)
   const { data: allTasks = [], isFetching } = useGetTasksQuery(undefined);
@@ -349,6 +356,61 @@ export default function BacklogPage() {
     for (const t of allTasks) if (t.customer?.trim()) s.add(t.customer.trim());
     return Array.from(s).sort();
   }, [allTasks]);
+
+  const quarterFilterOptions = React.useMemo(
+    () =>
+      quarters
+        .slice()
+        .sort((a, b) => a.endDate.localeCompare(b.endDate))
+        .map((q) => ({ value: q.id, label: q.name })),
+    [quarters]
+  );
+
+  const priorityOptions = React.useMemo(
+    () => PRIORITY_VALUES.map((p) => ({ value: String(p), label: String(p) })),
+    []
+  );
+
+  const statusOptions = React.useMemo(
+    () =>
+      (Object.keys(STATUS_LABEL) as TaskStatus[]).map((st) => ({
+        value: st,
+        label: STATUS_LABEL[st],
+      })),
+    []
+  );
+
+  const handleQuarterFilterChange = React.useCallback(
+    (ids: string[]) => {
+      const existing = new Set(quarters.map((q) => q.id));
+      const filtered = ids.filter((id) => existing.has(id));
+      const unique = Array.from(new Set(filtered));
+      if (shallowArrayEqual(unique, selectedQuarterIds)) return;
+      setSelectedQuarterIds(unique);
+    },
+    [quarters, selectedQuarterIds]
+  );
+
+  const handlePriorityFilterChange = React.useCallback(
+    (values: string[]) => {
+      const unique = Array.from(new Set(values));
+      const next = unique
+        .map((v) => Number(v))
+        .filter((n): n is number => PRIORITY_VALUES.includes(n));
+      if (shallowArrayEqual(next, priorityFilter)) return;
+      dispatch(setBacklogFilters({ priorityFilter: next }));
+    },
+    [dispatch, priorityFilter]
+  );
+
+  const handleStatusFilterChange = React.useCallback(
+    (values: string[]) => {
+      const next = Array.from(new Set(values)) as TaskStatus[];
+      if (shallowArrayEqual(next, statusFilter)) return;
+      dispatch(setBacklogFilters({ statusFilter: next }));
+    },
+    [dispatch, statusFilter]
+  );
 
   // Фильтрация задач
   const filteredTasks = React.useMemo(() => {
@@ -1097,124 +1159,63 @@ export default function BacklogPage() {
 
       {/* Панель фильтров */}
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-          {/* Кварталы (множественный выбор). При пустом — показываем все */}
-          <FormControl sx={{ minWidth: 280 }} size="small">
-            <InputLabel id="quarters-filter-label">
-              Фильтр по кварталам
-            </InputLabel>
-            <Select
-              labelId="quarters-filter-label"
-              multiple
-              value={selectedQuarterIds}
-              onChange={(e) =>
-                setSelectedQuarterIds(e.target.value as string[])
-              }
-              input={<OutlinedInput label="Фильтр по кварталам" />}
-              renderValue={(selected) => (
-                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                  {(selected as string[]).map((id) => {
-                    const q = quarters.find((x) => x.id === id);
-                    return (
-                      <Chip key={id} label={q ? q.name : id} size="small" />
-                    );
-                  })}
-                </Box>
-              )}
-            >
-              {quarters
-                .slice()
-                .sort((a, b) => a.endDate.localeCompare(b.endDate))
-                .map((q) => (
-                  <MenuItem key={q.id} value={q.id}>
-                    <Checkbox checked={selectedQuarterIds.includes(q.id)} />
-                    <ListItemText
-                      primary={`${q.name} — ${q.startDate} → ${q.endDate}`}
-                    />
-                  </MenuItem>
-                ))}
-            </Select>
-          </FormControl>
+        <Stack
+          direction="row"
+          spacing={2}
+          alignItems="center"
+          sx={{ flexWrap: { xs: "wrap", xl: "nowrap" } }}
+        >
+          <FilterAutocomplete
+            multiple
+            allowCustom={false}
+            label="Фильтр по кварталам"
+            options={quarterFilterOptions}
+            value={selectedQuarterIds}
+            onChange={handleQuarterFilterChange}
+            sx={{ minWidth: 240, flex: 1 }}
+          />
 
-          {/* Приоритет (множественный) */}
-          <FormControl sx={{ minWidth: 200 }} size="small">
-            <InputLabel id="priority-filter-label">Приоритет</InputLabel>
-            <Select
-              labelId="priority-filter-label"
-              multiple
-              value={priorityFilter.map(String)}
-              onChange={(e) =>
-                setPriorityFilter(
-                  (e.target.value as string[]).map((s) => Number(s))
-                )
-              }
-              input={<OutlinedInput label="Приоритет" />}
-              renderValue={(selected) => (
-                <Box sx={{ display: "flex", gap: 0.5 }}>
-                  {(selected as string[]).map((p) => (
-                    <Chip key={p} size="small" label={p} />
-                  ))}
-                </Box>
-              )}
-            >
-              {[1, 2, 3].map((p) => (
-                <MenuItem key={p} value={String(p)}>
-                  <Checkbox checked={priorityFilter.includes(p)} />
-                  <ListItemText primary={String(p)} />
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          <FilterAutocomplete
+            multiple
+            allowCustom={false}
+            label="Приоритет"
+            options={priorityOptions}
+            value={priorityFilter.map(String)}
+            onChange={handlePriorityFilterChange}
+            sx={{ minWidth: 160 }}
+          />
 
-          {/* Статус (множественный, локальный) */}
-          <FormControl sx={{ minWidth: 260 }} size="small">
-            <InputLabel id="status-filter-label">Статусы</InputLabel>
-            <Select
-              labelId="status-filter-label"
-              multiple
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as TaskStatus[])}
-              input={<OutlinedInput label="Статусы" />}
-              renderValue={(selected) => (
-                <Box sx={{ display: "flex", gap: 0.5 }}>
-                  {(selected as TaskStatus[]).map((st) => (
-                    <Chip
-                      key={st}
-                      size="small"
-                      color={STATUS_COLOR[st]}
-                      label={STATUS_LABEL[st]}
-                    />
-                  ))}
-                </Box>
-              )}
-            >
-              {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((st) => (
-                <MenuItem key={st} value={st}>
-                  <Checkbox checked={statusFilter.includes(st)} />
-                  <ListItemText primary={STATUS_LABEL[st]} />
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          <FilterAutocomplete
+            multiple
+            allowCustom={false}
+            label="Статусы"
+            options={statusOptions}
+            value={statusFilter}
+            onChange={handleStatusFilterChange}
+            sx={{ minWidth: 220, flex: 1 }}
+          />
 
-          {/* Стрим (строка) */}
-          <Autocomplete
+          <FilterAutocomplete
+            label="Стрим"
             options={streamOptions}
-            freeSolo
             value={streamFilter}
-            onChange={(_, v) => setStreamFilter(v || "")}
-            onInputChange={(_, v) => setStreamFilter(v)}
-            renderInput={(params) => (
-              <TextField {...params} size="small" label="Стрим" />
-            )}
-            sx={{ minWidth: 220 }}
+            onChange={(value) => {
+              if (value !== streamFilter) {
+                dispatch(
+                  setBacklogFilters({
+                    streamFilter: value,
+                  })
+                );
+              }
+            }}
+            sx={{ minWidth: 220, flex: 1 }}
           />
 
           <Button
             variant="contained"
             startIcon={<Add />}
             onClick={createTask}
-            sx={{ ml: { md: "auto" } }}
+            sx={{ ml: "auto", flexShrink: 0 }}
           >
             Добавить задачу
           </Button>

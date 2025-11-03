@@ -6,16 +6,9 @@ import {
   Grid,
   TextField,
   Button,
-  MenuItem,
   Stack,
   Box,
   Alert,
-  Chip,
-  Select,
-  SelectChangeEvent,
-  InputLabel,
-  FormControl,
-  OutlinedInput,
   IconButton,
   Tooltip,
   Checkbox,
@@ -39,6 +32,9 @@ import {
   useDeleteSprintMutation,
 } from "../app/api";
 import type { Quarter, Sprint } from "../types";
+import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import { useAppDispatch, useAppSelector } from "./hooks";
+import { setTimeSelectedQuarterIds } from "../app/uiSlice";
 
 moment.locale("ru");
 
@@ -52,7 +48,14 @@ const quarterOfMonth0 = (m0: number) =>
   (Math.floor(m0 / 3) + 1) as 1 | 2 | 3 | 4;
 const fmtRU = (isoDate: string) => moment(isoDate, fmt).format("DD.MM.YYYY");
 
-const LS_SELECTED = "timeSetup.selectedQuarterNames";
+function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 const LS_HIDE_PAST = "timeSetup.hidePast";
 
 const rangesOverlap = (
@@ -119,46 +122,49 @@ export default function TimeSetupPage() {
   const [updateSprint] = useUpdateSprintMutation();
   const [deleteSprint] = useDeleteSprintMutation();
 
-  const [selectedQuarterNames, setSelectedQuarterNames] = React.useState<
-    string[]
-  >([]);
-  const [hidePast, setHidePast] = React.useState<boolean>(true);
-
-  React.useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(LS_SELECTED) || "[]");
-      if (Array.isArray(saved))
-        setSelectedQuarterNames(saved.filter((x) => typeof x === "string"));
-    } catch {}
+  const dispatch = useAppDispatch();
+  const selectedQuarterIds = useAppSelector(
+    (state) => state.ui.time.selectedQuarterIds
+  );
+  const [hidePast, setHidePast] = React.useState<boolean>(() => {
     try {
       const hpRaw = localStorage.getItem(LS_HIDE_PAST);
-      if (hpRaw === null) {
-        setHidePast(true);
-      } else {
-        setHidePast(hpRaw === "true");
-      }
-    } catch {}
-  }, []);
+      if (hpRaw === null) return true;
+      return hpRaw === "true";
+    } catch {
+      return true;
+    }
+  });
 
   React.useEffect(() => {
-    const actualNames = new Set(quarters.map((q) => q.name));
-    setSelectedQuarterNames((prev) => prev.filter((n) => actualNames.has(n)));
-  }, [quarters]);
-
-  React.useEffect(() => {
-    localStorage.setItem(LS_SELECTED, JSON.stringify(selectedQuarterNames));
-  }, [selectedQuarterNames]);
+    if (!quarters.length) return;
+    const actualIds = new Set(quarters.map((q) => q.id));
+    const filtered = selectedQuarterIds.filter((id) => actualIds.has(id));
+    const unique = Array.from(new Set(filtered));
+    if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
+      dispatch(setTimeSelectedQuarterIds(unique));
+    }
+  }, [quarters, selectedQuarterIds, dispatch]);
 
   const onToggleHidePast = (e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.checked;
     setHidePast(next);
-    localStorage.setItem(LS_HIDE_PAST, String(next));
+    try {
+      localStorage.setItem(LS_HIDE_PAST, String(next));
+    } catch {}
   };
 
-  const handleFilterChange = (e: SelectChangeEvent<string[]>) => {
-    const value = e.target.value as string[];
-    setSelectedQuarterNames(value);
-  };
+  const handleQuarterFilterChange = React.useCallback(
+    (ids: string[]) => {
+      const existing = new Set(quarters.map((q) => q.id));
+      const filtered = ids.filter((id) => existing.has(id));
+      const unique = Array.from(new Set(filtered));
+      if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
+        dispatch(setTimeSelectedQuarterIds(unique));
+      }
+    },
+    [quarters, selectedQuarterIds, dispatch]
+  );
 
   const [openSprintForQuarterId, setOpenSprintForQuarterId] = React.useState<
     string | null
@@ -200,6 +206,15 @@ export default function TimeSetupPage() {
     [quarters]
   );
 
+  const quarterFilterOptions = React.useMemo(
+    () =>
+      sortedQuarters.map((q) => ({
+        value: q.id,
+        label: `${q.name} — ${fmtRU(q.startDate)} → ${fmtRU(q.endDate)}`,
+      })),
+    [sortedQuarters]
+  );
+
   const sprintsByQuarter = React.useMemo(() => {
     const map = new Map<string, Sprint[]>();
     for (const s of allSprints) {
@@ -217,13 +232,13 @@ export default function TimeSetupPage() {
 
   const visibleQuarters = React.useMemo(() => {
     const base =
-      selectedQuarterNames.length === 0
+      selectedQuarterIds.length === 0
         ? sortedQuarters
-        : sortedQuarters.filter((q) => selectedQuarterNames.includes(q.name));
+        : sortedQuarters.filter((q) => selectedQuarterIds.includes(q.id));
     if (!hidePast) return base;
     const today = moment().startOf("day");
     return base.filter((q) => !today.isAfter(parseISO(q.endDate), "day"));
-  }, [sortedQuarters, selectedQuarterNames, hidePast]);
+  }, [sortedQuarters, selectedQuarterIds, hidePast]);
 
   const openAddSprint = (quarterId: string) => {
     const q = quartersById.get(quarterId);
@@ -460,10 +475,13 @@ export default function TimeSetupPage() {
       endDate: qEnd,
     }).unwrap()) as Quarter;
 
-    if (selectedQuarterNames.length > 0) {
-      setSelectedQuarterNames((prev) =>
-        prev.includes(created.name) ? prev : [...prev, created.name]
-      );
+    if (selectedQuarterIds.length > 0) {
+      const set = new Set(selectedQuarterIds);
+      if (!set.has(created.id)) {
+        dispatch(
+          setTimeSelectedQuarterIds([...selectedQuarterIds, created.id])
+        );
+      }
     }
 
     const next = calcNextQuarterDefaults(
@@ -499,15 +517,12 @@ export default function TimeSetupPage() {
   const saveEditQuarter = async () => {
     if (!editingQuarterId || !qEditStart || !qEditEnd || qEditError) return;
 
-    const old = quartersById.get(editingQuarterId);
-    const oldName = old?.name;
-
     const start = parseISO(qEditStart);
     const year = start.year();
     const number = quarterOfMonth0(start.month());
     const newName = `Q${number} ${year}`;
 
-    const updated = await updateQuarter({
+    await updateQuarter({
       id: editingQuarterId,
       startDate: qEditStart,
       endDate: qEditEnd,
@@ -516,22 +531,17 @@ export default function TimeSetupPage() {
       name: newName,
     }).unwrap();
 
-    if (oldName && oldName !== updated.name) {
-      setSelectedQuarterNames((prev) =>
-        prev.map((n) => (n === oldName ? updated.name : n))
-      );
-    }
-
     cancelEditQuarter();
   };
   const removeQuarter = async (id: string) => {
     if (!window.confirm("Удалить квартал и все его спринты?")) return;
-    const q = quartersById.get(id);
-    const oldName = q?.name;
     await deleteQuarter({ id }).unwrap();
-
-    if (oldName) {
-      setSelectedQuarterNames((prev) => prev.filter((n) => n !== oldName));
+    if (selectedQuarterIds.includes(id)) {
+      dispatch(
+        setTimeSelectedQuarterIds(
+          selectedQuarterIds.filter((qid) => qid !== id)
+        )
+      );
     }
   };
 
@@ -902,37 +912,22 @@ export default function TimeSetupPage() {
         direction="row"
         spacing={2}
         alignItems="center"
-        sx={{ mb: 2, flexWrap: "wrap" }}
+        sx={{ mb: 2, flexWrap: { xs: "wrap", md: "nowrap" } }}
       >
-        <FormControl sx={{ minWidth: 320 }} size="small">
-          <InputLabel id="quarters-filter-label">
-            Фильтр по кварталам
-          </InputLabel>
-          <Select
-            labelId="quarters-filter-label"
-            multiple
-            value={selectedQuarterNames}
-            onChange={handleFilterChange}
-            input={<OutlinedInput label="Фильтр по кварталам" />}
-            renderValue={(selected) => (
-              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                {selected.map((name) => (
-                  <Chip key={name} label={name} size="small" />
-                ))}
-              </Box>
-            )}
-          >
-            {sortedQuarters.map((q) => (
-              <MenuItem key={q.id} value={q.name}>
-                {q.name} — {fmtRU(q.startDate)} → {fmtRU(q.endDate)}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        <FilterAutocomplete
+          multiple
+          allowCustom={false}
+          label="Фильтр по кварталам"
+          options={quarterFilterOptions}
+          value={selectedQuarterIds}
+          onChange={handleQuarterFilterChange}
+          sx={{ minWidth: 280, flex: 1 }}
+        />
 
         <FormControlLabel
           control={<Checkbox checked={hidePast} onChange={onToggleHidePast} />}
           label="Скрыть прошедшие"
+          sx={{ whiteSpace: "nowrap" }}
         />
       </Stack>
 

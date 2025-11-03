@@ -3,12 +3,9 @@ import {
   Paper,
   Typography,
   Stack,
-  Box,
   Chip,
   Select,
   MenuItem,
-  Autocomplete,
-  TextField,
   Table,
   TableHead,
   TableBody,
@@ -22,10 +19,10 @@ import {
   useGetSprintsQuery,
   useGetTasksQuery,
 } from "../app/api";
-import type { Participant, Sprint, BacklogItem } from "../types";
-import { useDispatch, useSelector } from "react-redux";
-import type { RootState } from "../app/store";
+import type { Sprint, BacklogItem } from "../types";
 import { setParticipantWorkloadFilters } from "../app/uiSlice";
+import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import { useAppDispatch, useAppSelector } from "./hooks";
 
 function byStart(a: Sprint, b: Sprint) {
   return a.startDate.localeCompare(b.startDate);
@@ -33,9 +30,17 @@ function byStart(a: Sprint, b: Sprint) {
 const toInt = (n: any) =>
   Number.isFinite(Number(n)) ? Math.round(Number(n)) : 0;
 
+function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 export default function ParticipantWorkloadPage() {
-  const dispatch = useDispatch();
-  const ui = useSelector((s: RootState) => s.ui.participantWorkload);
+  const dispatch = useAppDispatch();
+  const ui = useAppSelector((s) => s.ui.participantWorkload);
 
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: participants = [] } = useGetParticipantsQuery();
@@ -50,9 +55,43 @@ export default function ParticipantWorkloadPage() {
     return list.sort(byStart);
   }, [allSprints, ui.quarterId]);
 
-  const roleOptions = React.useMemo(
-    () => Array.from(new Set(participants.map((p) => p.role))).sort(),
+  const participantOptions = React.useMemo(
+    () =>
+      participants.map((p) => ({
+        value: p.id,
+        label: `${p.fullName}${p.role ? ` (${p.role})` : ""}`,
+      })),
     [participants]
+  );
+
+  const quarterOptions = React.useMemo(
+    () => [
+      { value: "all", label: "Все кварталы" },
+      ...quarters
+        .slice()
+        .sort((a, b) => a.endDate.localeCompare(b.endDate))
+        .map((q) => ({
+          value: q.id,
+          label: `${q.name} (${q.startDate} → ${q.endDate})`,
+        })),
+    ],
+    [quarters]
+  );
+
+  const roleOptions = React.useMemo(() => {
+    const roles = participants
+      .map((p) => p.role)
+      .filter((role): role is string => Boolean(role && role.trim()));
+    return Array.from(new Set(roles)).sort();
+  }, [participants]);
+
+  const handleRolesFilterChange = React.useCallback(
+    (values: string[]) => {
+      const next = Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
+      if (shallowArrayEqual(next, ui.rolesFilter)) return;
+      dispatch(setParticipantWorkloadFilters({ rolesFilter: next }));
+    },
+    [dispatch, ui.rolesFilter]
   );
 
   const selectedParticipants = React.useMemo(
@@ -96,69 +135,51 @@ export default function ParticipantWorkloadPage() {
       </Typography>
 
       <Stack
-        direction={{ xs: "column", md: "row" }}
+        direction="row"
         spacing={2}
         alignItems="center"
-        sx={{ mb: 2, flexWrap: "wrap" }}
+        sx={{ mb: 2, flexWrap: { xs: "wrap", md: "nowrap" } }}
       >
-        <Box sx={{ minWidth: 260 }}>
-          <Typography variant="caption" color="text.secondary">
-            Квартал
-          </Typography>
-          <Select
-            size="small"
-            value={ui.quarterId}
-            onChange={(e) =>
-              dispatch(
-                setParticipantWorkloadFilters({
-                  quarterId: String(e.target.value),
-                })
-              )
-            }
-            sx={{ ml: 1, minWidth: 220 }}
-          >
-            <MenuItem value="all">Все кварталы</MenuItem>
-            {quarters.map((q) => (
-              <MenuItem key={q.id} value={q.id}>
-                {q.name} ({q.startDate} → {q.endDate})
-              </MenuItem>
-            ))}
-          </Select>
-        </Box>
-
-        <Autocomplete
-          multiple
-          size="small"
-          sx={{ minWidth: 320 }}
-          options={participants}
-          getOptionLabel={(p) => (p ? `${p.fullName} (${p.role})` : "")}
-          value={participants.filter((p) =>
-            ui.selectedParticipantIds.includes(p.id)
-          )}
-          onChange={(_, val) =>
+        <FilterAutocomplete
+          allowCustom={false}
+          label="Квартал"
+          options={quarterOptions}
+          value={ui.quarterId}
+          onChange={(quarterId) =>
             dispatch(
               setParticipantWorkloadFilters({
-                selectedParticipantIds: (val as Participant[]).map((p) => p.id),
+                quarterId: quarterId || "all",
               })
             )
           }
-          renderInput={(params) => (
-            <TextField {...params} label="Фильтр по ФИО" />
-          )}
+          disableClearable
+          sx={{ minWidth: 240 }}
         />
 
-        <Autocomplete
+        <FilterAutocomplete
           multiple
-          size="small"
-          sx={{ minWidth: 240 }}
-          options={roleOptions}
-          value={ui.rolesFilter}
-          onChange={(_, val) =>
+          allowCustom={false}
+          label="Фильтр по ФИО"
+          options={participantOptions}
+          value={ui.selectedParticipantIds}
+          onChange={(ids) =>
             dispatch(
-              setParticipantWorkloadFilters({ rolesFilter: val as string[] })
+              setParticipantWorkloadFilters({
+                selectedParticipantIds: ids,
+              })
             )
           }
-          renderInput={(params) => <TextField {...params} label="Роли" />}
+          sx={{ minWidth: 320 }}
+        />
+
+        <FilterAutocomplete
+          multiple
+          allowCustom={false}
+          label="Роли"
+          options={roleOptions}
+          value={ui.rolesFilter}
+          onChange={handleRolesFilterChange}
+          sx={{ minWidth: 240 }}
         />
 
         <Select

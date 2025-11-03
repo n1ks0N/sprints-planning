@@ -51,6 +51,13 @@ export type CapacityRow = {
 
 export type TaskPriority = 1 | 2 | 3;
 
+export type TaskStatus =
+  | "inprogress"
+  | "done"
+  | "notdone"
+  | "canceled"
+  | "partial";
+
 export type BacklogItem = {
   id: string;
   title: string;

@@ -6,11 +6,6 @@ import {
   Stack,
   Box,
   Chip,
-  Select,
-  MenuItem,
-  OutlinedInput,
-  InputLabel,
-  FormControl,
   Table,
   TableHead,
   TableRow,
@@ -27,47 +22,37 @@ import {
   useGetTasksQuery,
 } from "../app/api";
 import type { Participant, Quarter, Sprint, BacklogItem } from "../types";
+import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import { useAppDispatch, useAppSelector } from "./hooks";
+import { setCapacitySelectedQuarterIds } from "../app/uiSlice";
 
 moment.locale("ru");
 
 const NORM = 0.75;
-const LS_KEY = "capacity.selectedQuarterNames";
 
 const ruDate = (iso: string) =>
   moment(iso, "YYYY-MM-DD", true).format("DD.MM.YYYY");
 const round1 = (v: number) => Math.round(v * 10) / 10;
 
-function getCurrentQuarterName(
-  quarters: ReturnType<typeof useGetQuartersQuery>["data"] extends infer T
-    ? T extends Array<any>
-      ? string | null
-      : string | null
-    : string | null,
-  qts?: Quarter[]
-) {
-  const qs = (qts ?? []) as Quarter[];
+function getCurrentQuarterId(quarters: Quarter[]) {
   const today = moment().format("YYYY-MM-DD");
-  const q = qs.find((x) => x.startDate <= today && today <= x.endDate);
-  return q ? q.name : null;
+  const q = quarters.find((x) => x.startDate <= today && today <= x.endDate);
+  return q ? q.id : null;
 }
 
 function collectSprintIds(
-  quartersFilterNames: string[],
-  quarters: Quarter[],
+  selectedQuarterIds: string[],
   allSprints: Sprint[]
 ) {
-  const nameSet = new Set(quartersFilterNames);
-  const qids = quarters.filter((q) => nameSet.has(q.name)).map((q) => q.id);
-  const idSet = new HashSet(qids);
+  if (!selectedQuarterIds.length) {
+    return allSprints
+      .slice()
+      .sort((a, b) => a.endDate.localeCompare(b.endDate));
+  }
+  const idSet = new Set(selectedQuarterIds);
   return allSprints
     .filter((s) => idSet.has(s.quarterId))
     .sort((a, b) => a.endDate.localeCompare(b.endDate));
-}
-
-class HashSet<T> extends Set<T> {
-  constructor(iter?: Iterable<T>) {
-    super(iter);
-  }
 }
 
 function buildWorkloadByParticipantSprint(
@@ -111,51 +96,46 @@ function cellColor(workload: number, available: number): string {
   return "#e8f5e9"; // зелёный
 }
 
+function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 export default function CapacityPage() {
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: sprints = [] } = useGetSprintsQuery(undefined);
   const { data: participants = [] } = useGetParticipantsQuery();
   const { data: tasks = [] } = useGetTasksQuery(undefined);
 
-  const [selectedQuarterNames, setSelectedQuarterNames] = React.useState<
-    string[]
-  >(() => {
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch {}
-    return [];
-  });
-
-  React.useEffect(() => {
-    const existing = new Set(quarters.map((q) => q.name));
-    const filtered = selectedQuarterNames.filter((n) => existing.has(n));
-    if (filtered.length !== selectedQuarterNames.length) {
-      setSelectedQuarterNames(filtered);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quarters.length]);
+  const dispatch = useAppDispatch();
+  const selectedQuarterIds = useAppSelector(
+    (state) => state.ui.capacity.selectedQuarterIds
+  );
 
   React.useEffect(() => {
     if (!quarters.length) return;
-    if (selectedQuarterNames.length === 0) {
-      const current = getCurrentQuarterName(null, quarters);
-      if (current) {
-        setSelectedQuarterNames([current]);
-      }
+    const actualIds = new Set(quarters.map((q) => q.id));
+    const filtered = selectedQuarterIds.filter((id) => actualIds.has(id));
+    const unique = Array.from(new Set(filtered));
+    if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
+      dispatch(setCapacitySelectedQuarterIds(unique));
     }
-  }, [quarters, selectedQuarterNames.length]);
+  }, [quarters, selectedQuarterIds, dispatch]);
 
   React.useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEY, JSON.stringify(selectedQuarterNames));
-    } catch {}
-  }, [selectedQuarterNames]);
+    if (!quarters.length || selectedQuarterIds.length > 0) return;
+    const currentId = getCurrentQuarterId(quarters);
+    if (currentId) {
+      dispatch(setCapacitySelectedQuarterIds([currentId]));
+    }
+  }, [quarters, selectedQuarterIds.length, dispatch]);
 
   const displaySprints = React.useMemo(() => {
-    const list = collectSprintIds(selectedQuarterNames, quarters, sprints);
-    return list.sort((a, b) => a.endDate.localeCompare(b.endDate));
-  }, [selectedQuarterNames, quarters, sprints]);
+    return collectSprintIds(selectedQuarterIds, sprints);
+  }, [selectedQuarterIds, sprints]);
 
   const workloadMap = React.useMemo(() => {
     const sprintIds = displaySprints.map((s) => s.id);
@@ -168,17 +148,27 @@ export default function CapacityPage() {
     return m;
   }, [displaySprints]);
 
-  const allQuarterNamesSorted = React.useMemo(() => {
-    return [...quarters]
+  const quarterFilterOptions = React.useMemo(() => {
+    return quarters
+      .slice()
       .sort((a, b) => a.endDate.localeCompare(b.endDate))
-      .map((q) => q.name);
+      .map((q) => ({
+        value: q.id,
+        label: `${q.name} — ${ruDate(q.startDate)} → ${ruDate(q.endDate)}`,
+      }));
   }, [quarters]);
 
-  const handleFilterChange = (value: string[]) => {
-    const existing = new Set(quarters.map((q) => q.name));
-    const filtered = value.filter((v) => existing.has(v));
-    setSelectedQuarterNames(filtered);
-  };
+  const handleQuarterFilterChange = React.useCallback(
+    (ids: string[]) => {
+      const existing = new Set(quarters.map((q) => q.id));
+      const filtered = ids.filter((id) => existing.has(id));
+      const unique = Array.from(new Set(filtered));
+      if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
+        dispatch(setCapacitySelectedQuarterIds(unique));
+      }
+    },
+    [quarters, dispatch, selectedQuarterIds]
+  );
 
   const getAvailable = (p: Participant, s: Sprint) =>
     s.workingDays * p.rate * NORM;
@@ -210,31 +200,17 @@ export default function CapacityPage() {
         direction="row"
         spacing={2}
         alignItems="center"
-        sx={{ flexWrap: "wrap" }}
+        sx={{ flexWrap: { xs: "wrap", md: "nowrap" } }}
       >
-        <FormControl sx={{ minWidth: 320 }} size="small">
-          <InputLabel id="capacity-q-filter">Фильтр по кварталам</InputLabel>
-          <Select
-            labelId="capacity-q-filter"
-            multiple
-            value={selectedQuarterNames}
-            onChange={(e) => handleFilterChange(e.target.value as string[])}
-            input={<OutlinedInput label="Фильтр по кварталам" />}
-            renderValue={(selected) => (
-              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                {selected.map((name) => (
-                  <Chip key={name} label={name} size="small" />
-                ))}
-              </Box>
-            )}
-          >
-            {allQuarterNamesSorted.map((name) => (
-              <MenuItem key={name} value={name}>
-                {name}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        <FilterAutocomplete
+          multiple
+          allowCustom={false}
+          label="Фильтр по кварталам"
+          options={quarterFilterOptions}
+          value={selectedQuarterIds}
+          onChange={handleQuarterFilterChange}
+          sx={{ minWidth: 280, flex: 1 }}
+        />
       </Stack>
 
       <Box sx={{ overflowX: "auto" }}>
