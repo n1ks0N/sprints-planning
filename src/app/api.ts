@@ -10,7 +10,7 @@ import type {
   RunVacation,
   CapacityRow,
   BacklogItem,
-  TaskPriority,
+  Release,
 } from "../types";
 import { mockBaseQuery } from "../mock/mockApi";
 
@@ -30,6 +30,7 @@ export const api = createApi({
     "RunVacation",
     "Capacity",
     "Task",
+    "Release",
   ],
   endpoints: (b) => ({
     // ---- Quarters ----
@@ -147,28 +148,54 @@ export const api = createApi({
       query: (body) => ({ url: "/tasks", method: "POST", body }),
       invalidatesTags: ["Task"],
     }),
-    updateTask: b.mutation<BacklogItem, Partial<BacklogItem> & { id: string }>({
-      query: (body) => ({ url: "/tasks/update", method: "POST", body }),
-      invalidatesTags: ["Task", "Capacity"],
-    }),
+    updateTask: b.mutation<BacklogItem, Partial<BacklogItem> & { id: string }>(
+      {
+        query: (body) => ({ url: "/tasks/update", method: "POST", body }),
+        invalidatesTags: ["Task"],
+      }
+    ),
     deleteTask: b.mutation<BacklogItem, { id: string }>({
       query: (body) => ({ url: "/tasks/delete", method: "POST", body }),
-      invalidatesTags: ["Task", "Capacity"],
+      invalidatesTags: ["Task"],
     }),
+
+    // Новый (детализация по участникам)
+    upsertTaskAllocation: b.mutation<
+      BacklogItem,
+      { taskId: string; participantId: string; sprintId: string; days: number }
+    >({
+      query: (body) => ({ url: "/taskalloc", method: "POST", body }),
+      invalidatesTags: ["Task"],
+    }),
+
+    // Легаси-алиас для совместимости с undoSlice и старым кодом
     upsertTaskLoad: b.mutation<
       BacklogItem,
       { taskId: string; sprintId: string; days: number }
     >({
       query: (body) => ({ url: "/taskload", method: "POST", body }),
-      invalidatesTags: ["Task", "Capacity"],
+      invalidatesTags: ["Task"],
     }),
-    // новый: ячейка распределения участник×спринт
-    upsertTaskAllocation: b.mutation<
-      BacklogItem,
-      { taskId: string; participantId: string; sprintId: string; days: number }
+
+    // ---- Releases ----
+    getReleases: b.query<Release[], void>({
+      query: () => ({ url: "/releases", method: "GET" }),
+      providesTags: ["Release"],
+    }),
+    addRelease: b.mutation<Release, Partial<Release> & { promDate: string }>({
+      query: (body) => ({ url: "/releases", method: "POST", body }),
+      invalidatesTags: ["Release"],
+    }),
+    updateRelease: b.mutation<
+      Release,
+      (Partial<Release> & { id: string }) & { action?: "recalc" | "clear" }
     >({
-      query: (body) => ({ url: "/taskallocation", method: "POST", body }),
-      invalidatesTags: ["Task", "Capacity"],
+      query: (body) => ({ url: "/releases/update", method: "POST", body }),
+      invalidatesTags: ["Release"],
+    }),
+    deleteRelease: b.mutation<Release, { id: string }>({
+      query: (body) => ({ url: "/releases/delete", method: "POST", body }),
+      invalidatesTags: ["Release"],
     }),
   }),
 });
@@ -199,6 +226,11 @@ export const {
   useAddTaskMutation,
   useUpdateTaskMutation,
   useDeleteTaskMutation,
-  useUpsertTaskLoadMutation,
   useUpsertTaskAllocationMutation,
+  useUpsertTaskLoadMutation,
+
+  useGetReleasesQuery,
+  useAddReleaseMutation,
+  useUpdateReleaseMutation,
+  useDeleteReleaseMutation,
 } = api;

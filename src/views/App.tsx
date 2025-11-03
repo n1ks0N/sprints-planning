@@ -1,4 +1,3 @@
-// src/views/App.tsx
 import * as React from "react";
 import { Routes, Route, Link } from "react-router-dom";
 import { Container, AppBar, Toolbar, Button, Stack } from "@mui/material";
@@ -7,10 +6,33 @@ import TimeSetupPage from "./TimeSetupPage";
 import TeamPage from "./TeamPage";
 import CapacityPage from "./CapacityPage";
 import BacklogPage from "./BacklogPage";
+import ParticipantWorkloadPage from "./ParticipantWorkloadPage";
+import ReleasesPage from "./ReleasesPage";
+import { useDispatch } from "react-redux";
+import { undoLast } from "../app/undoSlice";
+
+function Hotkeys() {
+  const dispatch = useDispatch();
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const isUndo =
+        (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z";
+      if (isUndo) {
+        e.preventDefault();
+        (dispatch as any)(undoLast());
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKey, { capture: true } as any);
+  }, [dispatch]);
+  return null;
+}
 
 export default function App() {
   return (
     <>
+      <Hotkeys />
       <AppBar position="static" color="default" elevation={0}>
         <Toolbar>
           <Stack direction="row" spacing={1}>
@@ -26,6 +48,12 @@ export default function App() {
             <Button component={Link} to="/backlog">
               Бэклог
             </Button>
+            <Button component={Link} to="/participant-work">
+              По сотрудникам
+            </Button>
+            <Button component={Link} to="/releases">
+              Релизы
+            </Button>
           </Stack>
         </Toolbar>
       </AppBar>
@@ -35,7 +63,12 @@ export default function App() {
           <Route path="/" element={<TimeSetupPage />} />
           <Route path="/team" element={<TeamPage />} />
           <Route path="/capacity" element={<CapacityPage />} />
-          <Route path="/backlog" element={<BacklogPage />} /> {/* NEW */}
+          <Route path="/backlog" element={<BacklogPage />} />
+          <Route
+            path="/participant-work"
+            element={<ParticipantWorkloadPage />}
+          />
+          <Route path="/releases" element={<ReleasesPage />} />
         </Routes>
       </Container>
     </>

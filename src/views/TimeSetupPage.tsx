@@ -1,3 +1,4 @@
+// src/views/TimeSetupPage.tsx
 import * as React from "react";
 import {
   Paper,
@@ -17,6 +18,8 @@ import {
   OutlinedInput,
   IconButton,
   Tooltip,
+  Checkbox,
+  FormControlLabel,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
@@ -24,6 +27,7 @@ import SaveIcon from "@mui/icons-material/Save";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteIcon from "@mui/icons-material/Delete";
 import moment from "moment";
+import "moment/locale/ru";
 import {
   useGetQuartersQuery,
   useAddQuarterMutation,
@@ -36,22 +40,35 @@ import {
 } from "../app/api";
 import type { Quarter, Sprint } from "../types";
 
-/** utils */
+moment.locale("ru");
+
 const fmt = "YYYY-MM-DD";
 const iso = (d: moment.Moment) => d.format(fmt);
+const parseISO = (s: string) => moment(s, fmt, true);
 const nextDay = (d: moment.Moment) => d.clone().add(1, "day");
 const addDays = (d: moment.Moment, n: number) => d.clone().add(n, "day");
 const addMonths = (d: moment.Moment, n: number) => d.clone().add(n, "month");
-const parseISO = (s: string) => moment(s, fmt, true);
-const quarterOfMonth0 = (m0: number) => (Math.floor(m0 / 3) + 1) as 1 | 2 | 3 | 4;
+const quarterOfMonth0 = (m0: number) =>
+  (Math.floor(m0 / 3) + 1) as 1 | 2 | 3 | 4;
+const fmtRU = (isoDate: string) => moment(isoDate, fmt).format("DD.MM.YYYY");
 
-const rangesOverlap = (aS: moment.Moment, aE: moment.Moment, bS: moment.Moment, bE: moment.Moment) =>
-  !(aE.isBefore(bS, "day") || aS.isAfter(bE, "day"));
+const LS_SELECTED = "timeSetup.selectedQuarterNames";
+const LS_HIDE_PAST = "timeSetup.hidePast";
 
-/** smart defaults */
+const rangesOverlap = (
+  aS: moment.Moment,
+  aE: moment.Moment,
+  bS: moment.Moment,
+  bE: moment.Moment
+) => !(aE.isBefore(bS, "day") || aS.isAfter(bE, "day"));
+
 function calcNextQuarterDefaults(quarters: Quarter[]) {
-  const sorted = [...quarters].sort((a, b) => a.endDate.localeCompare(b.endDate));
-  const lastEnd = sorted.length ? parseISO(sorted[sorted.length - 1].endDate) : null;
+  const sorted = [...quarters].sort((a, b) =>
+    a.endDate.localeCompare(b.endDate)
+  );
+  const lastEnd = sorted.length
+    ? parseISO(sorted[sorted.length - 1].endDate)
+    : null;
   const start = lastEnd ? nextDay(lastEnd) : moment().startOf("year");
   const end = addDays(addMonths(start, 3), -1);
   const year = start.year();
@@ -59,32 +76,41 @@ function calcNextQuarterDefaults(quarters: Quarter[]) {
   const name = `Q${number} ${year}`;
   return { startISO: iso(start), endISO: iso(end), year, number, name };
 }
+
 function calcNextSprintDefaults(quarter: Quarter, allSprints: Sprint[]) {
-  const qSprints = allSprints.filter((s) => s.quarterId === quarter.id).sort((a, b) => a.endDate.localeCompare(b.endDate));
-  const lastEnd = qSprints.length ? parseISO(qSprints[qSprints.length - 1].endDate) : null;
+  const qSprints = allSprints
+    .filter((s) => s.quarterId === quarter.id)
+    .sort((a, b) => a.endDate.localeCompare(b.endDate));
+
+  const lastEnd = qSprints.length
+    ? parseISO(qSprints[qSprints.length - 1].endDate)
+    : null;
+
   const qStart = parseISO(quarter.startDate);
   const qEnd = parseISO(quarter.endDate);
+
   const start = lastEnd ? nextDay(lastEnd) : qStart.clone();
   const end = addDays(start, 20);
   const finalEnd = end.isAfter(qEnd, "day") ? qEnd.clone() : end;
+
   const name = `Sprint ${qSprints.length + 1}`;
   return { startISO: iso(start), endISO: iso(finalEnd), name };
 }
 
-/** открыть нативный date-picker на input[type="date"] */
-const openDatePickerOnFocus: React.FocusEventHandler<HTMLInputElement> = (e) => {
-  const input = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+const openDatePickerOnMouseDown: React.MouseEventHandler<HTMLInputElement> = (
+  e
+) => {
+  const input = e.currentTarget as HTMLInputElement & {
+    showPicker?: () => void;
+  };
   input.showPicker?.();
-};
-const openDatePickerOnClick: React.MouseEventHandler<HTMLInputElement> = (e) => {
-  const input = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-  input.showPicker?.();
+  e.preventDefault();
 };
 
 export default function TimeSetupPage() {
-  /** queries & mutations */
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: allSprints = [] } = useGetSprintsQuery(undefined);
+
   const [addQuarter, { isLoading: addingQuarter }] = useAddQuarterMutation();
   const [updateQuarter] = useUpdateQuarterMutation();
   const [deleteQuarter] = useDeleteQuarterMutation();
@@ -93,56 +119,86 @@ export default function TimeSetupPage() {
   const [updateSprint] = useUpdateSprintMutation();
   const [deleteSprint] = useDeleteSprintMutation();
 
-  /** filter: multi-select quarters (по умолчанию — все видны) */
-  const [selectedQuarterIds, setSelectedQuarterIds] = React.useState<string[]>([]);
+  const [selectedQuarterNames, setSelectedQuarterNames] = React.useState<
+    string[]
+  >([]);
+  const [hidePast, setHidePast] = React.useState<boolean>(true);
+
   React.useEffect(() => {
-    if (!selectedQuarterIds.length && quarters.length) {
-      setSelectedQuarterIds(quarters.map((q) => q.id));
-    }
-  }, [quarters, selectedQuarterIds.length]);
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_SELECTED) || "[]");
+      if (Array.isArray(saved))
+        setSelectedQuarterNames(saved.filter((x) => typeof x === "string"));
+    } catch {}
+    try {
+      const hpRaw = localStorage.getItem(LS_HIDE_PAST);
+      if (hpRaw === null) {
+        setHidePast(true);
+      } else {
+        setHidePast(hpRaw === "true");
+      }
+    } catch {}
+  }, []);
+
+  React.useEffect(() => {
+    const actualNames = new Set(quarters.map((q) => q.name));
+    setSelectedQuarterNames((prev) => prev.filter((n) => actualNames.has(n)));
+  }, [quarters]);
+
+  React.useEffect(() => {
+    localStorage.setItem(LS_SELECTED, JSON.stringify(selectedQuarterNames));
+  }, [selectedQuarterNames]);
+
+  const onToggleHidePast = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.checked;
+    setHidePast(next);
+    localStorage.setItem(LS_HIDE_PAST, String(next));
+  };
 
   const handleFilterChange = (e: SelectChangeEvent<string[]>) => {
     const value = e.target.value as string[];
-    setSelectedQuarterIds(value);
+    setSelectedQuarterNames(value);
   };
 
-  /** add forms state */
-  const [openSprintForQuarterId, setOpenSprintForQuarterId] = React.useState<string | null>(null);
+  const [openSprintForQuarterId, setOpenSprintForQuarterId] = React.useState<
+    string | null
+  >(null);
   const [sName, setSName] = React.useState<string>("");
   const [sStart, setSStart] = React.useState<string>("");
   const [sEnd, setSEnd] = React.useState<string>("");
   const [sError, setSError] = React.useState<string>("");
 
   const [openQuarterRow, setOpenQuarterRow] = React.useState<boolean>(false);
-  const [qYear, setQYear] = React.useState<number>(moment().year());
-  const [qNumber, setQNumber] = React.useState<1 | 2 | 3 | 4>(quarterOfMonth0(moment().month()));
   const [qStart, setQStart] = React.useState<string>("");
   const [qEnd, setQEnd] = React.useState<string>("");
+  const [qName, setQName] = React.useState<string>("");
   const [qError, setQError] = React.useState<string>("");
 
-  /** edit states */
-  const [editingQuarterId, setEditingQuarterId] = React.useState<string | null>(null);
+  const [editingQuarterId, setEditingQuarterId] = React.useState<string | null>(
+    null
+  );
   const [qEditStart, setQEditStart] = React.useState<string>("");
   const [qEditEnd, setQEditEnd] = React.useState<string>("");
   const [qEditError, setQEditError] = React.useState<string>("");
 
-  const [editingSprintId, setEditingSprintId] = React.useState<string | null>(null);
+  const [editingSprintId, setEditingSprintId] = React.useState<string | null>(
+    null
+  );
   const [sEditName, setSEditName] = React.useState<string>("");
   const [sEditStart, setSEditStart] = React.useState<string>("");
   const [sEditEnd, setSEditEnd] = React.useState<string>("");
   const [sEditError, setSEditError] = React.useState<string>("");
 
-  /** helpers */
   const quartersById = React.useMemo(() => {
     const m = new Map<string, Quarter>();
     quarters.forEach((q) => m.set(q.id, q));
     return m;
   }, [quarters]);
 
-  const visibleQuarters = React.useMemo(() => {
-    const set = new Set(selectedQuarterIds);
-    return quarters.filter((q) => set.has(q.id));
-  }, [quarters, selectedQuarterIds]);
+  const sortedQuarters = React.useMemo(
+    () => quarters.slice().sort((a, b) => a.endDate.localeCompare(b.endDate)),
+    [quarters]
+  );
 
   const sprintsByQuarter = React.useMemo(() => {
     const map = new Map<string, Sprint[]>();
@@ -150,15 +206,25 @@ export default function TimeSetupPage() {
       if (!map.has(s.quarterId)) map.set(s.quarterId, []);
       map.get(s.quarterId)!.push(s);
     }
-    for (const [, arr] of map) {
-      arr.sort((a, b) =>
-        a.startDate && b.startDate ? a.startDate.localeCompare(b.startDate) : a.order - b.order
+    for (const [qid, arr] of map) {
+      map.set(
+        qid,
+        arr.slice().sort((a, b) => a.endDate.localeCompare(b.endDate))
       );
     }
     return map;
   }, [allSprints]);
 
-  /** open add forms with defaults */
+  const visibleQuarters = React.useMemo(() => {
+    const base =
+      selectedQuarterNames.length === 0
+        ? sortedQuarters
+        : sortedQuarters.filter((q) => selectedQuarterNames.includes(q.name));
+    if (!hidePast) return base;
+    const today = moment().startOf("day");
+    return base.filter((q) => !today.isAfter(parseISO(q.endDate), "day"));
+  }, [sortedQuarters, selectedQuarterNames, hidePast]);
+
   const openAddSprint = (quarterId: string) => {
     const q = quartersById.get(quarterId);
     if (!q) return;
@@ -169,113 +235,255 @@ export default function TimeSetupPage() {
     setSEnd(d.endISO);
     setSError("");
   };
+
   const openAddQuarter = () => {
     const d = calcNextQuarterDefaults(quarters);
     setOpenQuarterRow(true);
-    setQYear(d.year);
-    setQNumber(d.number);
     setQStart(d.startISO);
     setQEnd(d.endISO);
+    setQName(d.name);
     setQError("");
   };
 
-  /** validation: add sprint */
   React.useEffect(() => {
-    if (!openSprintForQuarterId || !sStart || !sEnd) { setSError(""); return; }
-    const start = parseISO(sStart); const end = parseISO(sEnd);
-    if (!start.isValid() || !end.isValid()) { setSError("Неверная дата."); return; }
-    if (end.isBefore(start, "day")) { setSError("Дата окончания раньше даты начала."); return; }
-    const q = quartersById.get(openSprintForQuarterId); if (!q) { setSError("Не выбран квартал."); return; }
-    const qS = parseISO(q.startDate); const qE = parseISO(q.endDate);
+    if (!openSprintForQuarterId || !sStart || !sEnd) {
+      setSError("");
+      return;
+    }
+    const start = parseISO(sStart);
+    const end = parseISO(sEnd);
+    if (!start.isValid() || !end.isValid()) {
+      setSError("Неверная дата.");
+      return;
+    }
+    if (end.isBefore(start, "day")) {
+      setSError("Дата окончания раньше даты начала.");
+      return;
+    }
+    const q = quartersById.get(openSprintForQuarterId);
+    if (!q) {
+      setSError("Не выбран квартал.");
+      return;
+    }
+    const qS = parseISO(q.startDate);
+    const qE = parseISO(q.endDate);
     if (start.isBefore(qS, "day") || end.isAfter(qE, "day")) {
-      setSError(`Спринт выходит за границы квартала (${q.startDate} → ${q.endDate}).`); return;
+      setSError(
+        `Спринт выходит за границы квартала (${fmtRU(q.startDate)} → ${fmtRU(
+          q.endDate
+        )}).`
+      );
+      return;
     }
     const current = sprintsByQuarter.get(openSprintForQuarterId) ?? [];
-    const overlaps = current.filter((s) => rangesOverlap(start, end, parseISO(s.startDate), parseISO(s.endDate)));
+    const overlaps = current.filter((s) =>
+      rangesOverlap(start, end, parseISO(s.startDate), parseISO(s.endDate))
+    );
     if (overlaps.length) {
-      setSError(`Пересечение со спринтами: ${overlaps.map((s) => `${s.name} (${s.startDate} → ${s.endDate})`).join(", ")}`);
+      setSError(
+        `Пересечение со спринтами: ${overlaps
+          .map((s) => `${s.name} (${fmtRU(s.startDate)} → ${fmtRU(s.endDate)})`)
+          .join(", ")}`
+      );
       return;
     }
     setSError("");
   }, [openSprintForQuarterId, sStart, sEnd, quartersById, sprintsByQuarter]);
 
-  /** validation: add quarter */
   React.useEffect(() => {
-    if (!openQuarterRow || !qStart || !qEnd) { setQError(""); return; }
-    const start = parseISO(qStart); const end = parseISO(qEnd);
-    if (!start.isValid() || !end.isValid()) { setQError("Неверная дата."); return; }
-    if (end.isBefore(start, "day")) { setQError("Дата окончания раньше даты начала."); return; }
-    const overlaps = quarters.filter((q) => rangesOverlap(start, end, parseISO(q.startDate), parseISO(q.endDate)));
+    if (!openQuarterRow || !qStart || !qEnd) {
+      setQError("");
+      return;
+    }
+    const start = parseISO(qStart);
+    const end = parseISO(qEnd);
+    if (!start.isValid() || !end.isValid()) {
+      setQError("Неверная дата.");
+      return;
+    }
+    if (end.isBefore(start, "day")) {
+      setQError("Дата окончания раньше даты начала.");
+      return;
+    }
+    const overlaps = quarters.filter((q) =>
+      rangesOverlap(start, end, parseISO(q.startDate), parseISO(q.endDate))
+    );
     if (overlaps.length) {
-      setQError(`Пересечение с кварталом: ${overlaps.map((q) => `${q.name} (${q.startDate} → ${q.endDate})`).join(", ")}`);
+      setQError(
+        `Пересечение со кварталом: ${overlaps
+          .map((q) => `${q.name} (${fmtRU(q.startDate)} → ${fmtRU(q.endDate)})`)
+          .join(", ")}`
+      );
       return;
     }
     setQError("");
   }, [openQuarterRow, qStart, qEnd, quarters]);
 
-  /** validation: edit sprint */
   React.useEffect(() => {
-    if (!editingSprintId || !sEditStart || !sEditEnd) { setSEditError(""); return; }
-    const s = allSprints.find(x => x.id === editingSprintId); if (!s) { setSEditError(""); return; }
-    const q = quartersById.get(s.quarterId); if (!q) { setSEditError("Не найден квартал."); return; }
-    const start = parseISO(sEditStart); const end = parseISO(sEditEnd);
-    if (!start.isValid() || !end.isValid()) { setSEditError("Неверная дата."); return; }
-    if (end.isBefore(start, "day")) { setSEditError("Дата окончания раньше даты начала."); return; }
-    const qS = parseISO(q.startDate); const qE = parseISO(q.endDate);
-    if (start.isBefore(qS, "day") || end.isAfter(qE, "day")) {
-      setSEditError(`Спринт выходит за границы квартала (${q.startDate} → ${q.endDate}).`); return;
+    if (!editingSprintId || !sEditStart || !sEditEnd) {
+      setSEditError("");
+      return;
     }
-    const others = (sprintsByQuarter.get(q.id) ?? []).filter(x => x.id !== s.id);
-    const overlaps = others.filter((o) => rangesOverlap(start, end, parseISO(o.startDate), parseISO(o.endDate)));
+    const s = allSprints.find((x) => x.id === editingSprintId);
+    if (!s) {
+      setSEditError("");
+      return;
+    }
+    const q = quartersById.get(s.quarterId);
+    if (!q) {
+      setSEditError("Не найден квартал.");
+      return;
+    }
+    const start = parseISO(sEditStart);
+    const end = parseISO(sEditEnd);
+    if (!start.isValid() || !end.isValid()) {
+      setSEditError("Неверная дата.");
+      return;
+    }
+    if (end.isBefore(start, "day")) {
+      setSEditError("Дата окончания раньше даты начала.");
+      return;
+    }
+    const qS = parseISO(q.startDate);
+    const qE = parseISO(q.endDate);
+    if (start.isBefore(qS, "day") || end.isAfter(qE, "day")) {
+      setSEditError(
+        `Спринт выходит за границы квартала (${fmtRU(q.startDate)} → ${fmtRU(
+          q.endDate
+        )}).`
+      );
+      return;
+    }
+    const others = (sprintsByQuarter.get(q.id) ?? []).filter(
+      (x) => x.id !== s.id
+    );
+    const overlaps = others.filter((o) =>
+      rangesOverlap(start, end, parseISO(o.startDate), parseISO(o.endDate))
+    );
     if (overlaps.length) {
-      setSEditError(`Пересечение со спринтами: ${overlaps.map((o) => `${o.name} (${o.startDate} → ${o.endDate})`).join(", ")}`);
+      setSEditError(
+        `Пересечение со спринтами: ${overlaps
+          .map((o) => `${o.name} (${fmtRU(o.startDate)} → ${fmtRU(o.endDate)})`)
+          .join(", ")}`
+      );
       return;
     }
     setSEditError("");
-  }, [editingSprintId, sEditStart, sEditEnd, allSprints, quartersById, sprintsByQuarter]);
+  }, [
+    editingSprintId,
+    sEditStart,
+    sEditEnd,
+    allSprints,
+    quartersById,
+    sprintsByQuarter,
+  ]);
 
-  /** validation: edit quarter */
   React.useEffect(() => {
-    if (!editingQuarterId || !qEditStart || !qEditEnd) { setQEditError(""); return; }
-    const start = parseISO(qEditStart); const end = parseISO(qEditEnd);
-    if (!start.isValid() || !end.isValid()) { setQEditError("Неверная дата."); return; }
-    if (end.isBefore(start, "day")) { setQEditError("Дата окончания раньше даты начала."); return; }
+    if (!editingQuarterId || !qEditStart || !qEditEnd) {
+      setQEditError("");
+      return;
+    }
+    const start = parseISO(qEditStart);
+    const end = parseISO(qEditEnd);
+    if (!start.isValid() || !end.isValid()) {
+      setQEditError("Неверная дата.");
+      return;
+    }
+    if (end.isBefore(start, "day")) {
+      setQEditError("Дата окончания раньше даты начала.");
+      return;
+    }
     const overlaps = quarters
-      .filter(q => q.id !== editingQuarterId)
-      .filter((q) => rangesOverlap(start, end, parseISO(q.startDate), parseISO(q.endDate)));
+      .filter((q) => q.id !== editingQuarterId)
+      .filter((q) =>
+        rangesOverlap(start, end, parseISO(q.startDate), parseISO(q.endDate))
+      );
     if (overlaps.length) {
-      setQEditError(`Пересечение с кварталом: ${overlaps.map((q) => `${q.name} (${q.startDate} → ${q.endDate})`).join(", ")}`);
+      setQEditError(
+        `Пересечение со кварталом: ${overlaps
+          .map((q) => `${q.name} (${fmtRU(q.startDate)} → ${fmtRU(q.endDate)})`)
+          .join(", ")}`
+      );
       return;
     }
     setQEditError("");
   }, [editingQuarterId, qEditStart, qEditEnd, quarters]);
 
-  /** submit: add */
   const submitSprint = async () => {
     if (!openSprintForQuarterId || !sStart || !sEnd || sError) return;
     const qid = openSprintForQuarterId;
     const count = (sprintsByQuarter.get(qid)?.length ?? 0) + 1;
     const name = sName.trim() || `Sprint ${count}`;
-    await addSprint({ quarterId: qid, name, startDate: sStart, endDate: sEnd }).unwrap();
 
-    // ресет на следующий дефолт
+    await addSprint({
+      quarterId: qid,
+      name,
+      startDate: sStart,
+      endDate: sEnd,
+    }).unwrap();
+
     const q = quartersById.get(qid)!;
-    const next = calcNextSprintDefaults(q, allSprints.concat([{
-      id: "tmp", quarterId: qid, name, startDate: sStart, endDate: sEnd, workingDays: 0, order: count,
-    } as Sprint]));
-    setSName(next.name); setSStart(next.startISO); setSEnd(next.endISO); setSError("");
+    const next = calcNextSprintDefaults(
+      q,
+      allSprints.concat([
+        {
+          id: "tmp",
+          quarterId: qid,
+          name,
+          startDate: sStart,
+          endDate: sEnd,
+          workingDays: 0,
+          order: count,
+        } as Sprint,
+      ])
+    );
+    setSName(next.name);
+    setSStart(next.startISO);
+    setSEnd(next.endISO);
+    setSError("");
   };
+
   const submitQuarter = async () => {
     if (!openQuarterRow || !qStart || !qEnd || qError) return;
-    const start = parseISO(qStart); const year = start.year();
-    const number = quarterOfMonth0(start.month()); const name = `Q${number} ${year}`;
-    const created = await addQuarter({ year, number, name, startDate: qStart, endDate: qEnd }).unwrap() as Quarter;
-    setSelectedQuarterIds((prev) => prev.includes(created.id) ? prev : [...prev, created.id]);
-    const next = calcNextQuarterDefaults(quarters.concat([{ id: "tmp", year, number, name, startDate: qStart, endDate: qEnd } as Quarter]));
-    setQYear(next.year); setQNumber(next.number); setQStart(next.startISO); setQEnd(next.endISO); setQError("");
+
+    const start = parseISO(qStart);
+    const year = start.year();
+    const number = quarterOfMonth0(start.month());
+    const autoName = `Q${number} ${year}`;
+    const name = qName.trim() || autoName;
+
+    const created = (await addQuarter({
+      year,
+      number,
+      name,
+      startDate: qStart,
+      endDate: qEnd,
+    }).unwrap()) as Quarter;
+
+    if (selectedQuarterNames.length > 0) {
+      setSelectedQuarterNames((prev) =>
+        prev.includes(created.name) ? prev : [...prev, created.name]
+      );
+    }
+
+    const next = calcNextQuarterDefaults(
+      quarters.concat([
+        {
+          id: "tmp",
+          year,
+          number,
+          name,
+          startDate: qStart,
+          endDate: qEnd,
+        } as Quarter,
+      ])
+    );
+    setQStart(next.startISO);
+    setQEnd(next.endISO);
+    setQName(next.name);
+    setQError("");
   };
 
-  /** edit handlers */
   const startEditQuarter = (q: Quarter) => {
     setEditingQuarterId(q.id);
     setQEditStart(q.startDate);
@@ -290,16 +498,41 @@ export default function TimeSetupPage() {
   };
   const saveEditQuarter = async () => {
     if (!editingQuarterId || !qEditStart || !qEditEnd || qEditError) return;
-    const start = parseISO(qEditStart); const year = start.year();
+
+    const old = quartersById.get(editingQuarterId);
+    const oldName = old?.name;
+
+    const start = parseISO(qEditStart);
+    const year = start.year();
     const number = quarterOfMonth0(start.month());
-    const name = `Q${number} ${year}`;
-    await updateQuarter({ id: editingQuarterId, startDate: qEditStart, endDate: qEditEnd, year, number, name }).unwrap();
+    const newName = `Q${number} ${year}`;
+
+    const updated = await updateQuarter({
+      id: editingQuarterId,
+      startDate: qEditStart,
+      endDate: qEditEnd,
+      year,
+      number,
+      name: newName,
+    }).unwrap();
+
+    if (oldName && oldName !== updated.name) {
+      setSelectedQuarterNames((prev) =>
+        prev.map((n) => (n === oldName ? updated.name : n))
+      );
+    }
+
     cancelEditQuarter();
   };
   const removeQuarter = async (id: string) => {
     if (!window.confirm("Удалить квартал и все его спринты?")) return;
+    const q = quartersById.get(id);
+    const oldName = q?.name;
     await deleteQuarter({ id }).unwrap();
-    setSelectedQuarterIds(prev => prev.filter(x => x !== id));
+
+    if (oldName) {
+      setSelectedQuarterNames((prev) => prev.filter((n) => n !== oldName));
+    }
   };
 
   const startEditSprint = (s: Sprint) => {
@@ -319,7 +552,12 @@ export default function TimeSetupPage() {
   const saveEditSprint = async () => {
     if (!editingSprintId || !sEditStart || !sEditEnd || sEditError) return;
     const name = sEditName?.trim() || undefined;
-    await updateSprint({ id: editingSprintId, name, startDate: sEditStart, endDate: sEditEnd }).unwrap();
+    await updateSprint({
+      id: editingSprintId,
+      name,
+      startDate: sEditStart,
+      endDate: sEditEnd,
+    }).unwrap();
     cancelEditSprint();
   };
   const removeSprint = async (id: string) => {
@@ -327,25 +565,37 @@ export default function TimeSetupPage() {
     await deleteSprint({ id }).unwrap();
   };
 
-  /** render */
-  const CARD_MIN_W = 320;
+  const CARD_W = 320;
 
   const renderSprintCard = (s: Sprint, indexInQuarter: number) => {
     const isEditing = editingSprintId === s.id;
     return (
-      <Paper key={s.id} variant="outlined" sx={{ p: 2, minWidth: CARD_MIN_W, flex: "0 0 auto", position: 'relative' }}>
+      <Paper
+        key={s.id}
+        variant="outlined"
+        sx={{ p: 2, width: CARD_W, flex: "0 0 auto", position: "relative" }}
+      >
         {!isEditing ? (
           <>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              sx={{ mb: 0.5 }}
+            >
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                {s.startDate} → {s.endDate}
+                {fmtRU(s.startDate)} → {fmtRU(s.endDate)}
               </Typography>
               <Stack direction="row" spacing={0.5}>
                 <Tooltip title="Редактировать">
-                  <IconButton size="small" onClick={() => startEditSprint(s)}><EditIcon fontSize="small" /></IconButton>
+                  <IconButton size="small" onClick={() => startEditSprint(s)}>
+                    <EditIcon fontSize="small" />
+                  </IconButton>
                 </Tooltip>
                 <Tooltip title="Удалить">
-                  <IconButton size="small" onClick={() => removeSprint(s.id)}><DeleteIcon fontSize="small" /></IconButton>
+                  <IconButton size="small" onClick={() => removeSprint(s.id)}>
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
                 </Tooltip>
               </Stack>
             </Stack>
@@ -359,35 +609,73 @@ export default function TimeSetupPage() {
         ) : (
           <Box sx={{ width: "100%" }}>
             <TextField
-              fullWidth size="small" label="Название (опционально)"
-              value={sEditName} onChange={(e) => setSEditName(e.target.value)}
-              placeholder="Авто: Sprint N" sx={{ mb: 1 }}
+              fullWidth
+              size="small"
+              label="Название (опционально)"
+              value={sEditName}
+              onChange={(e) => setSEditName(e.target.value)}
+              placeholder="Авто: Sprint N"
+              sx={{ mb: 1 }}
             />
             <Grid container spacing={1}>
               <Grid item xs={6}>
                 <TextField
-                  fullWidth size="small" type="date" label="Дата начала"
-                  value={sEditStart} onChange={(e) => setSEditStart(e.target.value)}
+                  fullWidth
+                  size="small"
+                  type="date"
+                  label="Дата начала"
+                  value={sEditStart}
+                  onChange={(e) => setSEditStart(e.target.value)}
                   InputLabelProps={{ shrink: true }}
-                  inputProps={{ onFocus: openDatePickerOnFocus, onClick: openDatePickerOnClick }}
+                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
                   error={!!sEditError}
                 />
               </Grid>
               <Grid item xs={6}>
                 <TextField
-                  fullWidth size="small" type="date" label="Дата окончания"
-                  value={sEditEnd} onChange={(e) => setSEditEnd(e.target.value)}
+                  fullWidth
+                  size="small"
+                  type="date"
+                  label="Дата окончания"
+                  value={sEditEnd}
+                  onChange={(e) => setSEditEnd(e.target.value)}
                   InputLabelProps={{ shrink: true }}
-                  inputProps={{ onFocus: openDatePickerOnFocus, onClick: openDatePickerOnClick }}
+                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
                   error={!!sEditError}
                 />
               </Grid>
-              <Grid item xs={12} sx={{ display: "flex", gap: 1, justifyContent: "flex-end", mt: 0.5 }}>
-                <Button variant="outlined" startIcon={<CloseIcon />} onClick={cancelEditSprint}>Отмена</Button>
-                <Button variant="contained" startIcon={<SaveIcon />} onClick={saveEditSprint} disabled={!!sEditError || !sEditStart || !sEditEnd}>Сохранить</Button>
+              <Grid
+                item
+                xs={12}
+                sx={{
+                  display: "flex",
+                  gap: 1,
+                  justifyContent: "flex-end",
+                  mt: 0.5,
+                }}
+              >
+                <Button
+                  variant="outlined"
+                  startIcon={<CloseIcon />}
+                  onClick={cancelEditSprint}
+                >
+                  Отмена
+                </Button>
+                <Button
+                  variant="contained"
+                  startIcon={<SaveIcon />}
+                  onClick={saveEditSprint}
+                  disabled={!!sEditError || !sEditStart || !sEditEnd}
+                >
+                  Сохранить
+                </Button>
               </Grid>
             </Grid>
-            {sEditError && <Box sx={{ mt: 1 }}><Alert severity="error">{sEditError}</Alert></Box>}
+            {sEditError && (
+              <Box sx={{ mt: 1 }}>
+                <Alert severity="error">{sEditError}</Alert>
+              </Box>
+            )}
           </Box>
         )}
       </Paper>
@@ -396,46 +684,98 @@ export default function TimeSetupPage() {
 
   const renderAddSprintCell = (q: Quarter) => {
     const isOpen = openSprintForQuarterId === q.id;
+
     return (
-      <Paper variant="outlined" sx={{ p: 2, minWidth: CARD_MIN_W, flex: "0 0 auto", display: "flex", alignItems: "stretch", justifyContent: "center", borderStyle: isOpen ? "solid" : "dashed" }}>
+      <Paper
+        variant="outlined"
+        sx={{
+          p: 2,
+          width: CARD_W,
+          flex: "0 0 auto",
+          display: "flex",
+          alignItems: "stretch",
+          justifyContent: "center",
+          borderStyle: isOpen ? "solid" : "dashed",
+        }}
+      >
         {!isOpen ? (
           <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Button startIcon={<AddIcon />} onClick={() => openAddSprint(q.id)} sx={{ fontWeight: 700 }}>
+            <Button
+              startIcon={<AddIcon />}
+              onClick={() => openAddSprint(q.id)}
+              sx={{ fontWeight: 700 }}
+            >
               Добавить спринт
             </Button>
           </Box>
         ) : (
           <Box sx={{ width: "100%" }}>
             <TextField
-              fullWidth size="small" label="Название (опционально)"
-              value={sName} onChange={(e) => setSName(e.target.value)}
-              placeholder="Авто: Sprint N" sx={{ mb: 1 }}
+              fullWidth
+              size="small"
+              label="Название (опционально)"
+              value={sName}
+              onChange={(e) => setSName(e.target.value)}
+              placeholder="Авто: Sprint N"
+              sx={{ mb: 1 }}
             />
             <Grid container spacing={1}>
               <Grid item xs={6}>
                 <TextField
-                  fullWidth size="small" type="date" label="Дата начала"
-                  value={sStart} onChange={(e) => setSStart(e.target.value)}
+                  fullWidth
+                  size="small"
+                  type="date"
+                  label="Дата начала"
+                  value={sStart}
+                  onChange={(e) => setSStart(e.target.value)}
                   InputLabelProps={{ shrink: true }}
-                  inputProps={{ onFocus: openDatePickerOnFocus, onClick: openDatePickerOnClick }}
+                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
                   error={!!sError}
                 />
               </Grid>
               <Grid item xs={6}>
                 <TextField
-                  fullWidth size="small" type="date" label="Дата окончания"
-                  value={sEnd} onChange={(e) => setSEnd(e.target.value)}
+                  fullWidth
+                  size="small"
+                  type="date"
+                  label="Дата окончания"
+                  value={sEnd}
+                  onChange={(e) => setSEnd(e.target.value)}
                   InputLabelProps={{ shrink: true }}
-                  inputProps={{ onFocus: openDatePickerOnFocus, onClick: openDatePickerOnClick }}
+                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
                   error={!!sError}
                 />
               </Grid>
-              <Grid item xs={12} sx={{ display: "flex", gap: 1, justifyContent: "flex-end", mt: 0.5 }}>
-                <Button variant="outlined" onClick={() => setOpenSprintForQuarterId(null)}>Отмена</Button>
-                <Button variant="contained" onClick={submitSprint} disabled={addingSprint || !!sError || !sStart || !sEnd}>Сохранить</Button>
+              <Grid
+                item
+                xs={12}
+                sx={{
+                  display: "flex",
+                  gap: 1,
+                  justifyContent: "flex-end",
+                  mt: 0.5,
+                }}
+              >
+                <Button
+                  variant="outlined"
+                  onClick={() => setOpenSprintForQuarterId(null)}
+                >
+                  Отмена
+                </Button>
+                <Button
+                  variant="contained"
+                  onClick={submitSprint}
+                  disabled={addingSprint || !!sError || !sStart || !sEnd}
+                >
+                  Сохранить
+                </Button>
               </Grid>
             </Grid>
-            {sError && <Box sx={{ mt: 1 }}><Alert severity="error">{sError}</Alert></Box>}
+            {sError && (
+              <Box sx={{ mt: 1 }}>
+                <Alert severity="error">{sError}</Alert>
+              </Box>
+            )}
           </Box>
         )}
       </Paper>
@@ -443,23 +783,32 @@ export default function TimeSetupPage() {
   };
 
   const renderQuarterRow = (q: Quarter) => {
-    const sprints = (sprintsByQuarter.get(q.id) ?? []).sort((a, b) => a.startDate.localeCompare(b.startDate));
+    const sprints = (sprintsByQuarter.get(q.id) ?? []).slice(); // уже отсортированы по endDate
     const isEditing = editingQuarterId === q.id;
 
     return (
       <Paper key={q.id} variant="outlined" sx={{ p: 2 }}>
         {!isEditing ? (
           <>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              sx={{ mb: 1 }}
+            >
               <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                {q.name} — {q.startDate} → {q.endDate}
+                {q.name} — {fmtRU(q.startDate)} → {fmtRU(q.endDate)}
               </Typography>
               <Stack direction="row" spacing={1}>
                 <Tooltip title="Редактировать квартал">
-                  <IconButton size="small" onClick={() => startEditQuarter(q)}><EditIcon fontSize="small" /></IconButton>
+                  <IconButton size="small" onClick={() => startEditQuarter(q)}>
+                    <EditIcon fontSize="small" />
+                  </IconButton>
                 </Tooltip>
                 <Tooltip title="Удалить квартал">
-                  <IconButton size="small" onClick={() => removeQuarter(q.id)}><DeleteIcon fontSize="small" /></IconButton>
+                  <IconButton size="small" onClick={() => removeQuarter(q.id)}>
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
                 </Tooltip>
               </Stack>
             </Stack>
@@ -472,33 +821,70 @@ export default function TimeSetupPage() {
             <Grid container spacing={1} alignItems="center">
               <Grid item xs={6} md={3}>
                 <TextField
-                  fullWidth size="small" type="date" label="Дата начала"
-                  value={qEditStart} onChange={(e) => setQEditStart(e.target.value)}
+                  fullWidth
+                  size="small"
+                  type="date"
+                  label="Дата начала"
+                  value={qEditStart}
+                  onChange={(e) => setQEditStart(e.target.value)}
                   InputLabelProps={{ shrink: true }}
-                  inputProps={{ onFocus: openDatePickerOnFocus, onClick: openDatePickerOnClick }}
+                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
                   error={!!qEditError}
                 />
               </Grid>
               <Grid item xs={6} md={3}>
                 <TextField
-                  fullWidth size="small" type="date" label="Дата окончания"
-                  value={qEditEnd} onChange={(e) => setQEditEnd(e.target.value)}
+                  fullWidth
+                  size="small"
+                  type="date"
+                  label="Дата окончания"
+                  value={qEditEnd}
+                  onChange={(e) => setQEditEnd(e.target.value)}
                   InputLabelProps={{ shrink: true }}
-                  inputProps={{ onFocus: openDatePickerOnFocus, onClick: openDatePickerOnClick }}
+                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
                   error={!!qEditError}
                 />
               </Grid>
-              <Grid item xs={12} md={6} sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-                <Button variant="outlined" startIcon={<CloseIcon />} onClick={cancelEditQuarter}>Отмена</Button>
-                <Button variant="contained" startIcon={<SaveIcon />} onClick={saveEditQuarter} disabled={!!qEditError || !qEditStart || !qEditEnd}>Сохранить</Button>
+              <Grid
+                item
+                xs={12}
+                md={6}
+                sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}
+              >
+                <Button
+                  variant="outlined"
+                  startIcon={<CloseIcon />}
+                  onClick={cancelEditQuarter}
+                >
+                  Отмена
+                </Button>
+                <Button
+                  variant="contained"
+                  startIcon={<SaveIcon />}
+                  onClick={saveEditQuarter}
+                  disabled={!!qEditError || !qEditStart || !qEditEnd}
+                >
+                  Сохранить
+                </Button>
               </Grid>
             </Grid>
-            {qEditError && <Box sx={{ mt: 1 }}><Alert severity="error">{qEditError}</Alert></Box>}
+            {qEditError && (
+              <Box sx={{ mt: 1 }}>
+                <Alert severity="error">{qEditError}</Alert>
+              </Box>
+            )}
           </Box>
         )}
 
-        {/* Лента спринтов */}
-        <Box sx={{ display: "flex", flexWrap: "nowrap", gap: 2, overflowX: "auto", pb: 1 }}>
+        <Box
+          sx={{
+            display: "flex",
+            flexWrap: "nowrap",
+            gap: 2,
+            overflowX: "auto",
+            pb: 1,
+          }}
+        >
           {sprints.map((s, i) => renderSprintCard(s, i))}
           {renderAddSprintCell(q)}
         </Box>
@@ -508,92 +894,138 @@ export default function TimeSetupPage() {
 
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
-      <Typography variant="h6" sx={{ mb: 2 }}>Кварталы и спринты</Typography>
+      <Typography variant="h6" sx={{ mb: 2 }}>
+        Кварталы и спринты
+      </Typography>
 
-      {/* filter by quarters */}
-      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2, flexWrap: "wrap" }}>
+      <Stack
+        direction="row"
+        spacing={2}
+        alignItems="center"
+        sx={{ mb: 2, flexWrap: "wrap" }}
+      >
         <FormControl sx={{ minWidth: 320 }} size="small">
-          <InputLabel id="quarters-filter-label">Фильтр по кварталам</InputLabel>
+          <InputLabel id="quarters-filter-label">
+            Фильтр по кварталам
+          </InputLabel>
           <Select
-            labelId="quarters-filter-label" multiple value={selectedQuarterIds}
+            labelId="quarters-filter-label"
+            multiple
+            value={selectedQuarterNames}
             onChange={handleFilterChange}
             input={<OutlinedInput label="Фильтр по кварталам" />}
             renderValue={(selected) => (
               <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                {selected.map((id) => {
-                  const q = quartersById.get(id);
-                  return <Chip key={id} label={q ? q.name : id} size="small" />;
-                })}
+                {selected.map((name) => (
+                  <Chip key={name} label={name} size="small" />
+                ))}
               </Box>
             )}
           >
-            {quarters.map((q) => (
-              <MenuItem key={q.id} value={q.id}>
-                {q.name} — {q.startDate} → {q.endDate}
+            {sortedQuarters.map((q) => (
+              <MenuItem key={q.id} value={q.name}>
+                {q.name} — {fmtRU(q.startDate)} → {fmtRU(q.endDate)}
               </MenuItem>
             ))}
           </Select>
         </FormControl>
+
+        <FormControlLabel
+          control={<Checkbox checked={hidePast} onChange={onToggleHidePast} />}
+          label="Скрыть прошедшие"
+        />
       </Stack>
 
-      {/* rows = quarters */}
       <Stack spacing={2}>
         {visibleQuarters.map((q) => renderQuarterRow(q))}
 
-        {/* Add Quarter row */}
         <Paper variant="outlined" sx={{ p: 2 }}>
           {!openQuarterRow ? (
-            <Box sx={{ p: 2, border: "2px dashed #cbd5e1", borderRadius: 2, textAlign: "center" }}>
-              <Button startIcon={<AddIcon />} onClick={openAddQuarter} sx={{ fontWeight: 700 }}>
+            <Box
+              sx={{
+                p: 2,
+                border: "2px dashed #cbd5e1",
+                borderRadius: 2,
+                textAlign: "center",
+              }}
+            >
+              <Button
+                startIcon={<AddIcon />}
+                onClick={openAddQuarter}
+                sx={{ fontWeight: 700 }}
+              >
                 Добавить квартал
               </Button>
             </Box>
           ) : (
             <Box>
-              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>Новый квартал</Typography>
-              <Grid container spacing={1} alignItems="center">
-                <Grid item xs={12} md={2}>
+              <Grid container spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                <Grid item xs={12} md={6}>
                   <TextField
-                    fullWidth size="small" type="number" label="Год (авто)"
-                    value={qYear} onChange={(e) => setQYear(Number(e.target.value) || moment().year())}
+                    fullWidth
+                    size="small"
+                    label="Название квартала"
+                    value={qName}
+                    onChange={(e) => setQName(e.target.value)}
+                    placeholder="Например: Q4 2025"
                   />
-                </Grid>
-                <Grid item xs={12} md={2}>
-                  <TextField
-                    fullWidth size="small" select label="Номер (авто)"
-                    value={qNumber} onChange={(e) => setQNumber(Number(e.target.value) as 1 | 2 | 3 | 4)}
-                  >
-                    <MenuItem value={1}>Q1</MenuItem>
-                    <MenuItem value={2}>Q2</MenuItem>
-                    <MenuItem value={3}>Q3</MenuItem>
-                    <MenuItem value={4}>Q4</MenuItem>
-                  </TextField>
-                </Grid>
-                <Grid item xs={6} md={3}>
-                  <TextField
-                    fullWidth size="small" type="date" label="Дата начала"
-                    value={qStart} onChange={(e) => setQStart(e.target.value)}
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ onFocus: openDatePickerOnFocus, onClick: openDatePickerOnClick }}
-                    error={!!qError}
-                  />
-                </Grid>
-                <Grid item xs={6} md={3}>
-                  <TextField
-                    fullWidth size="small" type="date" label="Дата окончания"
-                    value={qEnd} onChange={(e) => setQEnd(e.target.value)}
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ onFocus: openDatePickerOnFocus, onClick: openDatePickerOnClick }}
-                    error={!!qError}
-                    helperText={qError || "Окончание ≈ старт + 3 месяца − 1 день"}
-                  />
-                </Grid>
-                <Grid item xs={12} md={2} sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-                  <Button variant="outlined" onClick={() => setOpenQuarterRow(false)}>Отмена</Button>
-                  <Button variant="contained" onClick={submitQuarter} disabled={addingQuarter || !!qError || !qStart || !qEnd}>Сохранить</Button>
                 </Grid>
               </Grid>
-              {qError && <Box sx={{ mt: 1 }}><Alert severity="error">{qError}</Alert></Box>}
+
+              <Grid container spacing={1} alignItems="center">
+                <Grid item xs={6} md={3}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    type="date"
+                    label="Дата начала"
+                    value={qStart}
+                    onChange={(e) => setQStart(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
+                    error={!!qError}
+                  />
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    type="date"
+                    label="Дата окончания"
+                    value={qEnd}
+                    onChange={(e) => setQEnd(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
+                    error={!!qError}
+                  />
+                </Grid>
+                <Grid
+                  item
+                  xs={12}
+                  md={6}
+                  sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}
+                >
+                  <Button
+                    variant="outlined"
+                    onClick={() => setOpenQuarterRow(false)}
+                  >
+                    Отмена
+                  </Button>
+                  <Button
+                    variant="contained"
+                    onClick={submitQuarter}
+                    disabled={addingQuarter || !!qError || !qStart || !qEnd}
+                  >
+                    Сохранить
+                  </Button>
+                </Grid>
+              </Grid>
+
+              {qError && (
+                <Box sx={{ mt: 1 }}>
+                  <Alert severity="error">{qError}</Alert>
+                </Box>
+              )}
             </Box>
           )}
         </Paper>

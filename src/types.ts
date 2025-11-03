@@ -3,16 +3,16 @@ export type Quarter = {
   year: number;
   number: 1 | 2 | 3 | 4;
   name: string;
-  startDate: string; // ISO YYYY-MM-DD
-  endDate: string; // ISO YYYY-MM-DD
+  startDate: string;
+  endDate: string;
 };
 
 export type Sprint = {
   id: string;
   quarterId: string;
   name: string;
-  startDate: string; // ISO
-  endDate: string; // ISO
+  startDate: string;
+  endDate: string;
   workingDays: number;
   order: number;
 };
@@ -21,10 +21,9 @@ export type Participant = {
   id: string;
   fullName: string;
   role: string;
-  rate: number; // 0..1
+  rate: number;
 };
 
-// run + отпуск (нормированный) на спринт
 export type RunVacation = {
   participantId: string;
   sprintId: string;
@@ -32,17 +31,16 @@ export type RunVacation = {
   vacationNormDays: number;
 };
 
-// Ячейка ёмкости
 export type CapacityCell = {
   participantId: string;
   sprintId: string;
   workingDays: number;
   rate: number;
   normFactor: number;
-  baseCapacity: number; // workingDays * rate * normFactor, округлено
+  baseCapacity: number;
   runDays: number;
   vacationNormDays: number;
-  availableDays: number; // base - run - vacation - tasks (округлено)
+  availableDays: number;
 };
 
 export type CapacityRow = {
@@ -51,7 +49,6 @@ export type CapacityRow = {
   totalQuarterAvailable: number;
 };
 
-// -------- Backlog --------
 export type TaskPriority = 1 | 2 | 3;
 
 export type BacklogItem = {
@@ -62,12 +59,43 @@ export type BacklogItem = {
   customer: string;
   stream: string;
   participantIds: string[];
-  // суммарная нагрузка задачи по спринту (для совместимости)
-  loads: Record<string, number>; // sprintId -> days
-  // распределение по участникам и спринтам
-  allocations?: Record<string, Record<string, number>>; // participantId -> (sprintId -> days)
-  releaseDate?: string; // ISO
-  releaseSprintId?: string; // sprintId
-  createdAt: string; // ISO date (YYYY-MM-DD)
-  updatedAt: string; // ISO date
+  loads: Record<string, number>;
+  allocations?: Record<string, Record<string, number>>;
+  notes?: Record<string, string>;
+  releaseDate?: string;
+  releaseSprintId?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Релиз и ключевые этапы */
+export type Release = {
+  id: string;
+  name?: string;
+
+  promDate: string;       // ПРОМ (обязателен)
+  psiDate?: string;       // ПСИ (prom - 1)
+
+  opsStart?: string;      // OPS 3 дня (начало)
+  opsEnd?: string;        // OPS (конец)
+
+  regressStart?: string;  // Регресс 4 дня (начало = opsStart - 4)
+  regressEnd?: string;    // Регресс (конец)
+
+  ffDate?: string;        // FF = regressStart - 1
+  ffInnerDate?: string;   // FF InnerSource = ffDate - 3
+
+  iftStart?: string;      // ИФТ 5 дней (начало = ffInnerDate - 5)
+  iftEnd?: string;        // ИФТ (конец)
+
+  buildDate?: string;     // Сборка = iftStart - 1
+  crDate?: string;        // CR = buildDate - 1
+
+  devStart?: string;      // Разработка 7 дней (начало = crDate - 7)
+  devEnd?: string;        // Разработка (конец)
+
+  stDate?: string;        // СТ = devStart - 1
+
+  createdAt: string;
+  updatedAt: string;
 };

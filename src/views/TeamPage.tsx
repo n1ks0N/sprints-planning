@@ -1,3 +1,4 @@
+// src/views/TeamPage.tsx
 import * as React from "react";
 import {
   Paper,
@@ -103,14 +104,18 @@ export default function TeamPage() {
   const [newName, setNewName] = React.useState("");
   const [newRole, setNewRole] = React.useState<string>("");
   const [newRoleInput, setNewRoleInput] = React.useState<string>("");
-  const [newRate, setNewRate] = React.useState<number>(1);
+  // Ставка при добавлении — как у роли: Autocomplete freeSolo
+  const [newRate, setNewRate] = React.useState<string>("1");
+  const [newRateInput, setNewRateInput] = React.useState<string>("");
 
   // Редактирование
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editName, setEditName] = React.useState("");
   const [editRole, setEditRole] = React.useState<string>("");
   const [editRoleInput, setEditRoleInput] = React.useState<string>("");
-  const [editRate, setEditRate] = React.useState<number>(1);
+  // Ставка при редактировании — через Autocomplete freeSolo
+  const [editRate, setEditRate] = React.useState<string>("1");
+  const [editRateInput, setEditRateInput] = React.useState<string>("");
 
   // Фильтры
   const [filterRoles, setFilterRoles] = React.useState<string[]>([]);
@@ -122,13 +127,15 @@ export default function TeamPage() {
     [participants]
   );
 
+  // Набор ставок для подсказок (и фильтров): пресеты + уникальные из участников
   const rateOptions = React.useMemo(() => {
-    const all = new Set<string>(
-      [...PRESET_RATES, ...participants.map((p) => p.rate)].map((r) =>
-        Number.isFinite(r as number) ? Number(r).toFixed(2) : String(r)
-      )
-    );
-    return Array.from(all).sort((a, b) => Number(b) - Number(a));
+    const all = new Set<number>([
+      ...PRESET_RATES,
+      ...participants.map((p) => p.rate),
+    ]);
+    return Array.from(all)
+      .sort((a, b) => b - a)
+      .map((v) => String(Number(v.toFixed(2)))); // "1", "0.75", "0.5", ...
   }, [participants]);
 
   const filtered = React.useMemo(() => {
@@ -140,8 +147,8 @@ export default function TeamPage() {
     }
 
     if (filterRates.length) {
-      const rateSet = new Set(filterRates.map((r) => Number(r).toFixed(2)));
-      list = list.filter((p) => rateSet.has(p.rate.toFixed(2)));
+      const rateSet = new Set(filterRates.map((r) => String(r)));
+      list = list.filter((p) => rateSet.has(String(Number(p.rate.toFixed(2)))));
     }
 
     return list;
@@ -156,7 +163,6 @@ export default function TeamPage() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    // Порядок внутри текущего фильтра
     const currentIds = filtered.map((p) => p.id);
     const oldIndex = currentIds.indexOf(String(active.id));
     const newIndex = currentIds.indexOf(String(over.id));
@@ -164,10 +170,10 @@ export default function TeamPage() {
 
     const newOrderIds = arrayMove(currentIds, oldIndex, newIndex);
 
-    // Полный порядок, как сейчас в сторах (без фильтра)
-    const fullIds = participants.map((p) => p.id);
+    // Полный порядок — как вернул API
+    const fullIds = participants.slice().map((p) => p.id);
 
-    // Подменим только видимый сегмент
+    // Заменяем только видимый сегмент
     const visiblePositions: number[] = [];
     const visibleSet = new Set(currentIds);
     fullIds.forEach((id, idx) => {
@@ -178,11 +184,9 @@ export default function TeamPage() {
       merged[pos] = newOrderIds[i];
     });
 
-    // Отправляем на сервер; оптимистический апдейт сделает onQueryStarted внутри api.ts
+    const payload = merged.map((id, idx) => ({ id, order: idx }));
     try {
-      await reorderParticipants({
-        orders: merged.map((id, idx) => ({ id, order: idx })),
-      }).unwrap();
+      await reorderParticipants({ orders: payload }).unwrap();
     } catch (e) {
       console.error("Reorder failed", e);
     }
@@ -191,7 +195,11 @@ export default function TeamPage() {
   // CRUD
   const handleAdd = async () => {
     const roleValue = newRoleInput?.trim() || newRole?.trim();
-    const rate = Number(newRate);
+    const rateStr = (newRateInput?.trim() || newRate?.trim() || "").replace(
+      ",",
+      "."
+    );
+    const rate = parseFloat(rateStr);
     if (!newName.trim() || !roleValue || isNaN(rate)) return;
     if (rate < 0 || rate > 1) return;
 
@@ -203,7 +211,8 @@ export default function TeamPage() {
     setNewName("");
     setNewRole("");
     setNewRoleInput("");
-    setNewRate(1);
+    setNewRate("1");
+    setNewRateInput("");
   };
 
   const startEdit = (p: Participant) => {
@@ -211,7 +220,8 @@ export default function TeamPage() {
     setEditName(p.fullName);
     setEditRole(p.role);
     setEditRoleInput(p.role);
-    setEditRate(p.rate);
+    setEditRate(String(Number(p.rate.toFixed(2))));
+    setEditRateInput(String(Number(p.rate.toFixed(2))));
   };
 
   const cancelEdit = () => {
@@ -219,13 +229,18 @@ export default function TeamPage() {
     setEditName("");
     setEditRole("");
     setEditRoleInput("");
-    setEditRate(1);
+    setEditRate("1");
+    setEditRateInput("");
   };
 
   const saveEdit = async () => {
     if (!editingId) return;
     const roleValue = editRoleInput?.trim() || editRole?.trim();
-    const rate = Number(editRate);
+    const rateStr = (editRateInput?.trim() || editRate?.trim() || "").replace(
+      ",",
+      "."
+    );
+    const rate = parseFloat(rateStr);
     if (!editName.trim() || !roleValue || isNaN(rate)) return;
     if (rate < 0 || rate > 1) return;
 
@@ -251,6 +266,7 @@ export default function TeamPage() {
     const isEditing = editingId === p.id;
     return (
       <SortableRow key={p.id} participant={p}>
+        {/* ФИО */}
         <TableCell sx={{ minWidth: 260 }}>
           {!isEditing ? (
             <Typography>{p.fullName}</Typography>
@@ -265,6 +281,7 @@ export default function TeamPage() {
           )}
         </TableCell>
 
+        {/* Роль */}
         <TableCell sx={{ minWidth: 220 }}>
           {!isEditing ? (
             <Chip label={p.role || "—"} size="small" />
@@ -282,21 +299,27 @@ export default function TeamPage() {
           )}
         </TableCell>
 
-        <TableCell sx={{ minWidth: 120 }}>
+        {/* Ставка 0..1 (Autocomplete freeSolo как у роли) */}
+        <TableCell sx={{ minWidth: 180 }}>
           {!isEditing ? (
             <Typography>{p.rate.toFixed(2)}</Typography>
           ) : (
-            <TextField
+            <Autocomplete
               size="small"
-              type="number"
-              inputProps={{ min: 0, max: 1, step: 0.01 }}
+              freeSolo
+              options={rateOptions}
               value={editRate}
-              onChange={(e) => setEditRate(Number(e.target.value))}
-              label="Ставка"
+              inputValue={editRateInput}
+              onChange={(_, val) => setEditRate((val as string) ?? "")}
+              onInputChange={(_, val) => setEditRateInput(val)}
+              renderInput={(params) => (
+                <TextField {...params} label="Ставка (0..1)" />
+              )}
             />
           )}
         </TableCell>
 
+        {/* Действия */}
         <TableCell align="right" width={160}>
           {!isEditing ? (
             <Stack direction="row" spacing={1} justifyContent="flex-end">
@@ -335,6 +358,7 @@ export default function TeamPage() {
         Участники команды
       </Typography>
 
+      {/* Добавление */}
       <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 2 }}>
         <TextField
           label="ФИО"
@@ -354,14 +378,18 @@ export default function TeamPage() {
           renderInput={(params) => <TextField {...params} label="Роль" />}
           sx={{ minWidth: 220 }}
         />
-        <TextField
-          label="Ставка (0..1)"
+        <Autocomplete
           size="small"
-          type="number"
-          inputProps={{ min: 0, max: 1, step: 0.01 }}
+          freeSolo
+          options={rateOptions}
           value={newRate}
-          onChange={(e) => setNewRate(Number(e.target.value))}
-          sx={{ width: 160 }}
+          inputValue={newRateInput}
+          onChange={(_, val) => setNewRate((val as string) ?? "")}
+          onInputChange={(_, val) => setNewRateInput(val)}
+          renderInput={(params) => (
+            <TextField {...params} label="Ставка (0..1)" />
+          )}
+          sx={{ minWidth: 180 }}
         />
         <Button
           variant="contained"
@@ -372,6 +400,7 @@ export default function TeamPage() {
         </Button>
       </Stack>
 
+      {/* Фильтры */}
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
         <Stack
           direction={{ xs: "column", md: "row" }}
@@ -405,6 +434,7 @@ export default function TeamPage() {
         </Stack>
       </Paper>
 
+      {/* Таблица с DnD */}
       <TableContainer component={Paper} variant="outlined">
         <DndContext
           sensors={sensors}
@@ -452,9 +482,9 @@ export default function TeamPage() {
 
       <Divider sx={{ my: 2 }} />
       <Typography variant="caption" color="text.secondary">
-        Роли — свободный ввод или выбор из списка (пресеты + ранее добавленные).
-        Ставки — выбирайте из списка или вводите свои значения (например 0.83).
-        Перетаскивайте строки за «ручку» слева, чтобы задать свой порядок.
+        Роли и ставки — свободный ввод или выбор из списка (пресеты + ранее
+        добавленные). Ставка — любое число 0..1. Перетаскивайте строки за
+        «ручку» слева, чтобы задать свой порядок.
       </Typography>
     </Paper>
   );

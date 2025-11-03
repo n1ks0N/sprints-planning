@@ -7,6 +7,7 @@ import type {
   CapacityRow,
   CapacityCell,
   BacklogItem,
+  Release,
 } from "../types";
 import {
   quarters,
@@ -14,6 +15,7 @@ import {
   participants,
   runvac,
   tasks,
+  releases,
   helpers,
 } from "./mockData";
 
@@ -21,6 +23,12 @@ const normFactor = 0.75;
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v));
+}
+
+function addDaysISO(iso: string, days: number): string {
+  const d = new Date(iso);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 function ensureRunVac(participantId: string, sprintId: string): RunVacation {
@@ -40,38 +48,50 @@ function ensureTaskLoadsForSprint(sprintId: string) {
   }
 }
 
-function ensureTaskAllocationsForSprint(sprintId: string) {
-  for (const t of tasks) {
-    if (!t.allocations) t.allocations = {};
-    for (const pid of t.participantIds) {
-      if (!t.allocations[pid]) t.allocations[pid] = {};
-      if (t.allocations[pid][sprintId] == null)
-        t.allocations[pid][sprintId] = 0;
-    }
-  }
-}
-
-function ensureTaskAllocationsForAll(task: BacklogItem) {
-  if (!task.allocations) task.allocations = {};
-  for (const pid of task.participantIds) {
-    if (!task.allocations[pid]) task.allocations[pid] = {};
-    for (const s of sprints) {
-      if (task.allocations[pid][s.id] == null) task.allocations[pid][s.id] = 0;
-    }
-  }
-}
-
-function recomputeTaskLoadsFromAllocations(task: BacklogItem) {
-  if (!task.allocations) return;
+function ensureTaskLoadsForAllSprints(item: BacklogItem) {
   for (const s of sprints) {
-    const sid = s.id;
-    let sum = 0;
-    for (const pid of Object.keys(task.allocations)) {
-      const v = Number(task.allocations[pid][sid] || 0);
-      if (Number.isFinite(v)) sum += Math.round(v);
-    }
-    task.loads[sid] = sum;
+    if (!(s.id in item.loads)) item.loads[s.id] = 0;
   }
+}
+
+function computeReleaseFromProm(promDate: string) {
+  const psiDate = addDaysISO(promDate, -1);
+  const opsStart = addDaysISO(psiDate, -3);
+  const opsEnd = addDaysISO(opsStart, 2);
+
+  const regressStart = addDaysISO(opsStart, -4);
+  const regressEnd = addDaysISO(regressStart, 3);
+
+  const ffDate = addDaysISO(regressStart, -1);
+  const ffInnerDate = addDaysISO(ffDate, -3);
+
+  const iftStart = addDaysISO(ffInnerDate, -5);
+  const iftEnd = addDaysISO(iftStart, 4);
+
+  const buildDate = addDaysISO(iftStart, -1);
+  const crDate = addDaysISO(buildDate, -1);
+
+  const devStart = addDaysISO(crDate, -7);
+  const devEnd = addDaysISO(devStart, 6);
+
+  const stDate = addDaysISO(devStart, -1);
+
+  return {
+    psiDate,
+    opsStart,
+    opsEnd,
+    regressStart,
+    regressEnd,
+    ffDate,
+    ffInnerDate,
+    iftStart,
+    iftEnd,
+    buildDate,
+    crDate,
+    devStart,
+    devEnd,
+    stDate,
+  };
 }
 
 export const mockBaseQuery: BaseQueryFn<
@@ -83,7 +103,7 @@ export const mockBaseQuery: BaseQueryFn<
   await new Promise((r) => setTimeout(r, 80));
 
   try {
-    // -------- QUARTERS --------
+    // QUARTERS
     if (url === "/quarters" && method === "GET") {
       return { data: clone(quarters) as Quarter[] };
     }
@@ -101,25 +121,22 @@ export const mockBaseQuery: BaseQueryFn<
     if (url === "/quarters/update" && method === "POST") {
       const { id, ...patch } = body || {};
       const idx = quarters.findIndex((q) => q.id === id);
-      if (idx < 0)
-        return { error: { status: 404, data: "Quarter not found" } as any };
+      if (idx < 0) return { error: { status: 404, data: "Quarter not found" } as any };
       quarters[idx] = { ...quarters[idx], ...patch };
       return { data: clone(quarters[idx]) };
     }
     if (url === "/quarters/delete" && method === "POST") {
       const { id } = body || {};
-      const qIdx = quarters.findIndex((q) => q.id === id);
-      if (qIdx < 0)
-        return { error: { status: 404, data: "Quarter not found" } as any };
-      // удаляем связанные спринты
+      const idx = quarters.findIndex((q) => q.id === id);
+      if (idx < 0) return { error: { status: 404, data: "Quarter not found" } as any };
+      const deleted = quarters.splice(idx, 1)[0];
       for (let i = sprints.length - 1; i >= 0; i--) {
         if (sprints[i].quarterId === id) sprints.splice(i, 1);
       }
-      const deleted = quarters.splice(qIdx, 1)[0];
       return { data: clone(deleted) };
     }
 
-    // -------- SPRINTS --------
+    // SPRINTS
     if (url === "/sprints" && method === "GET") {
       let list = sprints;
       if (params?.quarterId)
@@ -144,48 +161,30 @@ export const mockBaseQuery: BaseQueryFn<
           sprints.filter((x) => x.quarterId === body.quarterId).length + 1,
       };
       sprints.push(s);
-
-      // новый спринт — нулевая нагрузка у всех задач + аллокации
       ensureTaskLoadsForSprint(id);
-      ensureTaskAllocationsForSprint(id);
-
       return { data: clone(s) };
     }
     if (url === "/sprints/update" && method === "POST") {
       const { id, ...patch } = body || {};
       const idx = sprints.findIndex((s) => s.id === id);
-      if (idx < 0)
-        return { error: { status: 404, data: "Sprint not found" } as any };
+      if (idx < 0) return { error: { status: 404, data: "Sprint not found" } as any };
       const prev = sprints[idx];
-      sprints[idx] = { ...prev, ...patch };
-      // пересчёт рабочих дней если изменены даты
-      if (patch.startDate || patch.endDate) {
-        const sd = sprints[idx].startDate;
-        const ed = sprints[idx].endDate;
-        sprints[idx].workingDays = helpers.businessDays(sd, ed);
-      }
+      const startDate = patch.startDate ?? prev.startDate;
+      const endDate = patch.endDate ?? prev.endDate;
+      const workingDays =
+        patch.workingDays ?? helpers.businessDays(startDate, endDate);
+      sprints[idx] = { ...prev, ...patch, startDate, endDate, workingDays };
       return { data: clone(sprints[idx]) };
     }
     if (url === "/sprints/delete" && method === "POST") {
       const { id } = body || {};
       const idx = sprints.findIndex((s) => s.id === id);
-      if (idx < 0)
-        return { error: { status: 404, data: "Sprint not found" } as any };
-      const sid = sprints[idx].id;
-      // чистим loads/allocations в задачах
-      for (const t of tasks) {
-        delete t.loads[sid];
-        if (t.allocations) {
-          for (const pid of Object.keys(t.allocations)) {
-            delete t.allocations[pid][sid];
-          }
-        }
-      }
+      if (idx < 0) return { error: { status: 404, data: "Sprint not found" } as any };
       const deleted = sprints.splice(idx, 1)[0];
       return { data: clone(deleted) };
     }
 
-    // -------- PARTICIPANTS --------
+    // PARTICIPANTS
     if (url === "/participants" && method === "GET") {
       return { data: clone(participants) as Participant[] };
     }
@@ -198,46 +197,33 @@ export const mockBaseQuery: BaseQueryFn<
         rate: body.rate,
       };
       participants.push(p);
-      // ничего не меняем в задачах — распределения редактируются на странице бэклога
       return { data: clone(p) };
     }
     if (url === "/participants/update" && method === "POST") {
       const { id, ...patch } = body || {};
       const idx = participants.findIndex((p) => p.id === id);
-      if (idx < 0)
-        return { error: { status: 404, data: "Participant not found" } as any };
+      if (idx < 0) return { error: { status: 404, data: "Participant not found" } as any };
       participants[idx] = { ...participants[idx], ...patch };
       return { data: clone(participants[idx]) };
     }
     if (url === "/participants/delete" && method === "POST") {
       const { id } = body || {};
       const idx = participants.findIndex((p) => p.id === id);
-      if (idx < 0)
-        return {
-          error: { status: 404, data: "Participant not found" } as any,
-        };
-      // удалить участника из всех задач + его allocations
-      for (const t of tasks) {
-        t.participantIds = t.participantIds.filter((pid) => pid !== id);
-        if (t.allocations) delete t.allocations[id];
-        recomputeTaskLoadsFromAllocations(t);
-      }
+      if (idx < 0) return { error: { status: 404, data: "Participant not found" } as any };
       const deleted = participants.splice(idx, 1)[0];
       return { data: clone(deleted) };
     }
     if (url === "/participants/reorder" && method === "POST") {
       const { orders } = body || {};
       const orderMap = new Map<string, number>();
-      (orders as { id: string; order: number }[]).forEach((o) =>
-        orderMap.set(o.id, o.order)
-      );
+      for (const o of orders || []) orderMap.set(o.id, o.order);
       participants.sort(
         (a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0)
       );
       return { data: { ok: true } as any };
     }
 
-    // -------- RUN/VACATION --------
+    // RUN/VACATION
     if (url === "/runvac" && method === "GET") {
       const qid = params?.quarterId as string;
       const sList = sprints.filter((s) => s.quarterId === qid).map((s) => s.id);
@@ -280,36 +266,25 @@ export const mockBaseQuery: BaseQueryFn<
             ? Math.round(base * p.rate)
             : Math.round(base);
           rv.runDays = Math.max(0, value);
-          // отпуск не трогаем
         }
       }
       return { data: { ok: true } as any };
     }
 
-    // -------- CAPACITY --------
+    // CAPACITY
     if (url === "/capacity" && method === "GET") {
       const qid = params?.quarterId as string;
       const sList = sprints
         .filter((s) => s.quarterId === qid)
         .sort((a, b) => a.order - b.order);
-
       const rows: CapacityRow[] = participants.map((p) => {
         const cells: CapacityCell[] = sList.map((s) => {
           const rv = ensureRunVac(p.id, s.id);
           const baseCapacity = Math.round(s.workingDays * p.rate * normFactor);
-
-          // сумма задач участника в этом спринте
-          let taskDays = 0;
-          for (const t of tasks) {
-            const v = t.allocations?.[p.id]?.[s.id] ?? 0;
-            taskDays += Math.round(Number(v) || 0);
-          }
-
           const available = Math.max(
             0,
-            baseCapacity - rv.runDays - rv.vacationNormDays - taskDays
+            baseCapacity - rv.runDays - rv.vacationNormDays
           );
-
           return {
             participantId: p.id,
             sprintId: s.id,
@@ -322,7 +297,6 @@ export const mockBaseQuery: BaseQueryFn<
             availableDays: Math.round(available),
           };
         });
-
         const total = cells.reduce((a, c) => a + c.availableDays, 0);
         return {
           participant: p,
@@ -330,11 +304,10 @@ export const mockBaseQuery: BaseQueryFn<
           totalQuarterAvailable: Math.round(total),
         };
       });
-
       return { data: clone(rows) as CapacityRow[] };
     }
 
-    // -------- BACKLOG --------
+    // BACKLOG
     if (url === "/tasks" && method === "GET") {
       const qid: string | undefined = params?.quarterId;
       if (!qid) {
@@ -364,20 +337,12 @@ export const mockBaseQuery: BaseQueryFn<
           ? body.participantIds
           : [],
         loads: {},
-        allocations: {},
         releaseDate: body.releaseDate,
         releaseSprintId: body.releaseSprintId,
         createdAt: nowISO,
         updatedAt: nowISO,
       };
-      // инициализация loads/allocations
-      for (const s of sprints) {
-        item.loads[s.id] = 0;
-      }
-      for (const pid of item.participantIds) {
-        item.allocations![pid] = {};
-        for (const s of sprints) item.allocations![pid][s.id] = 0;
-      }
+      ensureTaskLoadsForAllSprints(item);
       tasks.push(item);
       return { data: clone(item) };
     }
@@ -386,36 +351,12 @@ export const mockBaseQuery: BaseQueryFn<
       const idx = tasks.findIndex((t) => t.id === id);
       if (idx < 0)
         return { error: { status: 404, data: "Task not found" } as any };
-
-      // применяем патч
       tasks[idx] = {
         ...tasks[idx],
         ...patch,
         updatedAt: new Date().toISOString().slice(0, 10),
       };
-
-      // поддерживаем согласованность allocations с participantIds
-      const t = tasks[idx];
-      if (!t.allocations) t.allocations = {};
-      if (patch.participantIds) {
-        const set = new Set(t.participantIds);
-        // удаляем лишних
-        for (const pid of Object.keys(t.allocations)) {
-          if (!set.has(pid)) delete t.allocations[pid];
-        }
-        // добавляем недостающих
-        for (const pid of t.participantIds) {
-          if (!t.allocations[pid]) t.allocations[pid] = {};
-          for (const s of sprints) {
-            if (t.allocations[pid][s.id] == null) t.allocations[pid][s.id] = 0;
-          }
-        }
-        // пересчитать loads из allocations
-        recomputeTaskLoadsFromAllocations(t);
-      } else {
-        ensureTaskAllocationsForAll(t);
-      }
-
+      ensureTaskLoadsForAllSprints(tasks[idx]);
       return { data: clone(tasks[idx]) };
     }
     if (url === "/tasks/delete" && method === "POST") {
@@ -426,29 +367,128 @@ export const mockBaseQuery: BaseQueryFn<
       const deleted = tasks.splice(idx, 1)[0];
       return { data: clone(deleted) };
     }
+
+    // Детализированная запись распределения по участнику
+    if (url === "/taskalloc" && method === "POST") {
+      const { taskId, participantId, sprintId, days = 0 } = body || {};
+      const t = tasks.find((x) => x.id === taskId);
+      if (!t) return { error: { status: 404, data: "Task not found" } as any };
+      t.allocations = t.allocations || {};
+      t.allocations[participantId] = t.allocations[participantId] || {};
+      t.allocations[participantId][sprintId] = Math.max(
+        0,
+        Math.round(Number(days) || 0)
+      );
+      t.loads[sprintId] = Object.values(t.allocations)
+        .map((m) => m[sprintId] || 0)
+        .reduce((a, b) => a + b, 0);
+      t.updatedAt = new Date().toISOString().slice(0, 10);
+      ensureTaskLoadsForAllSprints(t);
+      return { data: clone(t) };
+    }
+
+    // Легаси путь для upsertTaskLoad (суммарная нагрузка по спринту)
     if (url === "/taskload" && method === "POST") {
       const { taskId, sprintId, days = 0 } = body || {};
       const t = tasks.find((x) => x.id === taskId);
       if (!t) return { error: { status: 404, data: "Task not found" } as any };
       t.loads[sprintId] = Math.max(0, Math.round(Number(days) || 0));
       t.updatedAt = new Date().toISOString().slice(0, 10);
-      // не меняем allocations — это ручное распределение
+      ensureTaskLoadsForAllSprints(t);
       return { data: clone(t) };
     }
-    if (url === "/taskallocation" && method === "POST") {
-      const { taskId, participantId, sprintId, days = 0 } = body || {};
-      const t = tasks.find((x) => x.id === taskId);
-      if (!t) return { error: { status: 404, data: "Task not found" } as any };
-      if (!t.allocations) t.allocations = {};
-      if (!t.allocations[participantId]) t.allocations[participantId] = {};
-      t.allocations[participantId][sprintId] = Math.max(
-        0,
-        Math.round(Number(days) || 0)
+
+    // RELEASES
+    if (url === "/releases" && method === "GET") {
+      const list = releases.slice().sort((a, b) =>
+        a.promDate.localeCompare(b.promDate)
       );
-      // после изменения allocations — пересчитать loads
-      recomputeTaskLoadsFromAllocations(t);
-      t.updatedAt = new Date().toISOString().slice(0, 10);
-      return { data: clone(t) };
+      return { data: clone(list) as Release[] };
+    }
+    if (url === "/releases" && method === "POST") {
+      const id = "r" + (releases.length + 1);
+      const now = new Date().toISOString().slice(0, 10);
+      const promDate = body.promDate as string;
+      if (!promDate)
+        return { error: { status: 400, data: "promDate required" } as any };
+
+      const set = {
+        ...computeReleaseFromProm(promDate),
+        ...body,
+      } as Partial<Release> & { promDate: string };
+      const r: Release = {
+        id,
+        name: set.name,
+        promDate: set.promDate,
+        psiDate: set.psiDate,
+        opsStart: set.opsStart,
+        opsEnd: set.opsEnd,
+        regressStart: set.regressStart,
+        regressEnd: set.regressEnd,
+        ffDate: set.ffDate,
+        ffInnerDate: set.ffInnerDate,
+        iftStart: set.iftStart,
+        iftEnd: set.iftEnd,
+        buildDate: set.buildDate,
+        crDate: set.crDate,
+        devStart: set.devStart,
+        devEnd: set.devEnd,
+        stDate: set.stDate,
+        createdAt: now,
+        updatedAt: now,
+      };
+      releases.push(r);
+      return { data: clone(r) };
+    }
+    if (url === "/releases/update" && method === "POST") {
+      const { id, action, ...patch } = body || {};
+      const idx = releases.findIndex((r) => r.id === id);
+      if (idx < 0)
+        return { error: { status: 404, data: "Release not found" } as any };
+      let base = releases[idx];
+
+      if (action === "clear") {
+        base = {
+          ...base,
+          name: patch.name ?? base.name,
+          psiDate: undefined,
+          opsStart: undefined,
+          opsEnd: undefined,
+          regressStart: undefined,
+          regressEnd: undefined,
+          ffDate: undefined,
+          ffInnerDate: undefined,
+          iftStart: undefined,
+          iftEnd: undefined,
+          buildDate: undefined,
+          crDate: undefined,
+          devStart: undefined,
+          devEnd: undefined,
+          stDate: undefined,
+        };
+      } else if (action === "recalc") {
+        const prom = (patch.promDate || base.promDate) as string;
+        const calc = computeReleaseFromProm(prom);
+        base = {
+          ...base,
+          ...patch,
+          ...calc,
+        };
+      } else {
+        base = { ...base, ...patch };
+      }
+
+      base.updatedAt = new Date().toISOString().slice(0, 10);
+      releases[idx] = base;
+      return { data: clone(releases[idx]) };
+    }
+    if (url === "/releases/delete" && method === "POST") {
+      const { id } = body || {};
+      const idx = releases.findIndex((r) => r.id === id);
+      if (idx < 0)
+        return { error: { status: 404, data: "Release not found" } as any };
+      const deleted = releases.splice(idx, 1)[0];
+      return { data: clone(deleted) };
     }
 
     return { error: { status: 404, data: "Unknown endpoint" } as any };

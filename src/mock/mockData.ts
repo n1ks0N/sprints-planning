@@ -4,6 +4,7 @@ import type {
   Participant,
   RunVacation,
   BacklogItem,
+  Release,
 } from "../types";
 
 export const helpers = {
@@ -75,9 +76,7 @@ export const participants: Participant[] = [
   { id: "u3", fullName: "Сидоров Сидор", role: "QA", rate: 1 },
 ];
 
-export const runvac: RunVacation[] = [
-  // создаются по ensureRunVac
-];
+export const runvac: RunVacation[] = [];
 
 export const tasks: BacklogItem[] = [
   {
@@ -89,13 +88,6 @@ export const tasks: BacklogItem[] = [
     stream: "isu2.0",
     participantIds: ["u1", "u2", "u3"],
     loads: { s1: 5, s2: 5, s3: 0, s4: 0 },
-    allocations: {
-      // равномерно распределим 5 дней по s1 и s2 между тремя участниками (округляя вниз),
-      // остаток можно считать в следующем редактировании
-      u1: { s1: 2, s2: 2, s3: 0, s4: 0 },
-      u2: { s1: 2, s2: 2, s3: 0, s4: 0 },
-      u3: { s1: 1, s2: 1, s3: 0, s4: 0 },
-    },
     releaseDate: "2025-11-28",
     releaseSprintId: "s3",
     createdAt: "2025-10-05",
@@ -110,12 +102,33 @@ export const tasks: BacklogItem[] = [
     stream: "sm&analytics",
     participantIds: ["u3"],
     loads: { s1: 0, s2: 2, s3: 2, s4: 0 },
-    allocations: {
-      u3: { s1: 0, s2: 2, s3: 2, s4: 0 },
-    },
     releaseDate: "2025-12-20",
     releaseSprintId: "s4",
     createdAt: "2025-10-10",
     updatedAt: "2025-10-10",
+  },
+];
+
+export const releases: Release[] = [
+  {
+    id: "r1",
+    name: "Релиз 1",
+    promDate: "2025-12-25",
+    psiDate: "2025-12-24",
+    opsStart: "2025-12-21",
+    opsEnd: "2025-12-23",
+    regressStart: "2025-12-17",
+    regressEnd: "2025-12-20",
+    ffDate: "2025-12-16",
+    ffInnerDate: "2025-12-13",
+    iftStart: "2025-12-08",
+    iftEnd: "2025-12-12",
+    buildDate: "2025-12-07",
+    crDate: "2025-12-06",
+    devStart: "2025-11-29",
+    devEnd: "2025-12-05",
+    stDate: "2025-11-28",
+    createdAt: "2025-10-15",
+    updatedAt: "2025-10-15",
   },
 ];

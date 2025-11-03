@@ -5,375 +5,343 @@ import {
   Typography,
   Stack,
   Box,
+  Chip,
+  Select,
+  MenuItem,
+  OutlinedInput,
+  InputLabel,
+  FormControl,
   Table,
   TableHead,
-  TableBody,
   TableRow,
   TableCell,
-  Chip,
-  TextField,
-  Button,
-  Autocomplete,
-  Divider,
+  TableBody,
 } from "@mui/material";
+import moment from "moment";
+import "moment/locale/ru";
+
 import {
   useGetQuartersQuery,
   useGetSprintsQuery,
-  useGetCapacityQuery,
-  useUpsertRunVacationMutation,
-  useBulkRunVacationMutation,
+  useGetParticipantsQuery,
+  useGetTasksQuery,
 } from "../app/api";
-import type { Quarter, Sprint, CapacityRow, CapacityCell } from "../types";
+import type { Participant, Quarter, Sprint, BacklogItem } from "../types";
 
-/** Небольшой хук-дебаунсер (без внешних зависимостей) */
-function useDebouncedCallback<T extends (...args: any[]) => void>(
-  callback: T,
-  delay: number
+moment.locale("ru");
+
+const NORM = 0.75;
+const LS_KEY = "capacity.selectedQuarterNames";
+
+const ruDate = (iso: string) =>
+  moment(iso, "YYYY-MM-DD", true).format("DD.MM.YYYY");
+const round1 = (v: number) => Math.round(v * 10) / 10;
+
+function getCurrentQuarterName(
+  quarters: ReturnType<typeof useGetQuartersQuery>["data"] extends infer T
+    ? T extends Array<any>
+      ? string | null
+      : string | null
+    : string | null,
+  qts?: Quarter[]
 ) {
-  const cbRef = React.useRef(callback);
-  React.useEffect(() => {
-    cbRef.current = callback;
-  }, [callback]);
-
-  const timerRef = React.useRef<number | undefined>(undefined);
-
-  return React.useCallback(
-    (...args: Parameters<T>) => {
-      if (timerRef.current) {
-        window.clearTimeout(timerRef.current);
-      }
-      timerRef.current = window.setTimeout(() => {
-        cbRef.current(...args);
-      }, delay);
-    },
-    [delay]
-  );
+  const qs = (qts ?? []) as Quarter[];
+  const today = moment().format("YYYY-MM-DD");
+  const q = qs.find((x) => x.startDate <= today && today <= x.endDate);
+  return q ? q.name : null;
 }
 
-/** Выделение всего значения инпута при фокусе/клике */
-const selectAllOnFocus: React.FocusEventHandler<HTMLInputElement> = (e) => {
-  const input = e.currentTarget;
-  // после внутренних обработчиков MUI
-  setTimeout(() => {
-    try {
-      input.select();
-    } catch {}
-  }, 0);
-};
-const selectAllOnMouseDown: React.MouseEventHandler<HTMLInputElement> = (e) => {
-  const input = e.currentTarget;
-  // Если инпут ещё не в фокусе — не даём браузеру поставить каретку в место клика
-  if (document.activeElement !== input) {
-    e.preventDefault();
-    input.focus();
-    try {
-      input.select();
-    } catch {}
+function collectSprintIds(
+  quartersFilterNames: string[],
+  quarters: Quarter[],
+  allSprints: Sprint[]
+) {
+  const nameSet = new Set(quartersFilterNames);
+  const qids = quarters.filter((q) => nameSet.has(q.name)).map((q) => q.id);
+  const idSet = new HashSet(qids);
+  return allSprints
+    .filter((s) => idSet.has(s.quarterId))
+    .sort((a, b) => a.endDate.localeCompare(b.endDate));
+}
+
+class HashSet<T> extends Set<T> {
+  constructor(iter?: Iterable<T>) {
+    super(iter);
   }
-};
+}
 
-/** Редактор ячейки: локальное состояние + дебаунс + отправка пары значений */
-function CellEditor({
-  cell,
-  onCommit, // (runDays, vacationNormDays) => Promise<void>
-}: {
-  cell: CapacityCell;
-  onCommit: (runDays: number, vacationNormDays: number) => Promise<void>;
-}) {
-  // Локальные значения, чтобы не триггерить запрос на каждый кейдаун
-  const [runVal, setRunVal] = React.useState<number>(cell.runDays);
-  const [vacVal, setVacVal] = React.useState<number>(cell.vacationNormDays);
-
-  // Синхронизация с сервером/кэшем при смене ячейки или внешнем апдейте
-  const prevIds = React.useRef({ p: cell.participantId, s: cell.sprintId });
-  React.useEffect(() => {
-    const idChanged =
-      prevIds.current.p !== cell.participantId ||
-      prevIds.current.s !== cell.sprintId;
-    prevIds.current = { p: cell.participantId, s: cell.sprintId };
-
-    if (
-      idChanged ||
-      cell.runDays !== runVal ||
-      cell.vacationNormDays !== vacVal
-    ) {
-      setRunVal(cell.runDays);
-      setVacVal(cell.vacationNormDays);
+function buildWorkloadByParticipantSprint(
+  tasks: BacklogItem[],
+  sprintIds: string[]
+) {
+  const sset = new Set(sprintIds);
+  const map = new Map<string, number>(); // key = participantId|sprintId
+  for (const t of tasks) {
+    if (t.allocations) {
+      for (const [pid, perSprint] of Object.entries(t.allocations)) {
+        for (const [sid, days] of Object.entries(perSprint)) {
+          if (!sset.has(sid)) continue;
+          const key = `${pid}|${sid}`;
+          map.set(key, (map.get(key) || 0) + (Number(days) || 0));
+        }
+      }
+    } else if (t.loads) {
+      // Если нет распределения по участникам — не учитываем при раскраске
+      continue;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cell.participantId, cell.sprintId, cell.runDays, cell.vacationNormDays]);
+  }
+  return map;
+}
 
-  // Дебаунс-commit пары значений
-  const debouncedCommit = useDebouncedCallback(
-    (nextRun: number, nextVac: number) => {
-      // отправляем оба поля, чтобы не было «сброса» одного из них
-      onCommit(nextRun, nextVac);
-    },
-    400
-  );
-
-  const onRunChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = Math.max(0, Math.round(Number(e.target.value) || 0));
-    setRunVal(v);
-    debouncedCommit(v, vacVal);
-  };
-
-  const onVacChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = Math.max(0, Math.round(Number(e.target.value) || 0));
-    setVacVal(v);
-    debouncedCommit(runVal, v);
-  };
-
-  return (
-    <Stack spacing={0.5} alignItems="center">
-      {/* Доступно / База — уже округлены на сервере */}
-      <Box sx={{ fontSize: 13 }}>
-        <b>{cell.availableDays}</b> / <b>{cell.baseCapacity}</b>
-      </Box>
-
-      {/* RUN и Отпуск — редактируем нормированные значения с дебаунсом */}
-      <Stack direction="row" spacing={1}>
-        <TextField
-          size="small"
-          type="number"
-          value={runVal}
-          onChange={onRunChange}
-          inputProps={{
-            step: 1,
-            min: 0,
-            style: { width: 64 },
-            onFocus: selectAllOnFocus,
-            onMouseDown: selectAllOnMouseDown,
-          }}
-          label="RUN"
-        />
-        <TextField
-          size="small"
-          type="number"
-          value={vacVal}
-          onChange={onVacChange}
-          inputProps={{
-            step: 1,
-            min: 0,
-            style: { width: 64 },
-            onFocus: selectAllOnFocus,
-            onMouseDown: selectAllOnMouseDown,
-          }}
-          label="Отп"
-        />
-      </Stack>
-    </Stack>
-  );
+/**
+ * Раскраска ячейки:
+ * - если workload < 0.75 * available  -> Оранжевый
+ * - если workload > 1.25 * available  -> Красный
+ * - иначе                              -> Зелёный
+ * Частный случай: available === 0 -> workload>0 красный, иначе зелёный
+ */
+function cellColor(workload: number, available: number): string {
+  if (available === 0) {
+    return workload > 0 ? "#ffebee" : "#e8f5e9";
+  }
+  const low = 0.75 * available;
+  const high = 1.25 * available;
+  if (workload < low) return "#fff3e0"; // оранжевый
+  if (workload > high) return "#ffebee"; // красный
+  return "#e8f5e9"; // зелёный
 }
 
 export default function CapacityPage() {
   const { data: quarters = [] } = useGetQuartersQuery();
-  const [quarterId, setQuarterId] = React.useState<string | null>(null);
+  const { data: sprints = [] } = useGetSprintsQuery(undefined);
+  const { data: participants = [] } = useGetParticipantsQuery();
+  const { data: tasks = [] } = useGetTasksQuery(undefined);
+
+  const [selectedQuarterNames, setSelectedQuarterNames] = React.useState<
+    string[]
+  >(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return [];
+  });
 
   React.useEffect(() => {
-    if (!quarterId && quarters.length) setQuarterId(quarters[0].id);
-  }, [quarters, quarterId]);
+    const existing = new Set(quarters.map((q) => q.name));
+    const filtered = selectedQuarterNames.filter((n) => existing.has(n));
+    if (filtered.length !== selectedQuarterNames.length) {
+      setSelectedQuarterNames(filtered);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quarters.length]);
 
-  const { data: sprints = [] } = useGetSprintsQuery(
-    quarterId ? { quarterId } : (undefined as any)
-  );
-  const { data: rows = [] } = useGetCapacityQuery(
-    quarterId ? { quarterId } : (null as any)
-  );
+  React.useEffect(() => {
+    if (!quarters.length) return;
+    if (selectedQuarterNames.length === 0) {
+      const current = getCurrentQuarterName(null, quarters);
+      if (current) {
+        setSelectedQuarterNames([current]);
+      }
+    }
+  }, [quarters, selectedQuarterNames.length]);
 
-  const [upsertRun] = useUpsertRunVacationMutation();
-  const [bulkRun, { isLoading: bulkBusy }] = useBulkRunVacationMutation();
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(selectedQuarterNames));
+    } catch {}
+  }, [selectedQuarterNames]);
 
-  // роли для фильтра/массового применения
-  const roleOptions = React.useMemo(
-    () =>
-      Array.from(new Set(rows.map((r) => r.participant.role).filter(Boolean))),
-    [rows]
-  );
+  const displaySprints = React.useMemo(() => {
+    const list = collectSprintIds(selectedQuarterNames, quarters, sprints);
+    return list.sort((a, b) => a.endDate.localeCompare(b.endDate));
+  }, [selectedQuarterNames, quarters, sprints]);
 
-  // массовое редактирование RUN
-  const [massDays, setMassDays] = React.useState<number>(2);
-  const [massMultiplyByRate, setMassMultiplyByRate] =
-    React.useState<boolean>(true);
-  const [massRoles, setMassRoles] = React.useState<string[]>([]);
+  const workloadMap = React.useMemo(() => {
+    const sprintIds = displaySprints.map((s) => s.id);
+    return buildWorkloadByParticipantSprint(tasks, sprintIds);
+  }, [tasks, displaySprints]);
 
-  const applyBulk = async () => {
-    if (!quarterId) return;
-    await bulkRun({
-      quarterId,
-      roles: massRoles.length ? massRoles : undefined,
-      daysPerSprint: Number.isFinite(massDays) ? massDays : 0,
-      multiplyByRate: massMultiplyByRate,
-    }).unwrap();
+  const sprintIndex = React.useMemo(() => {
+    const m = new Map<string, number>();
+    displaySprints.forEach((s, idx) => m.set(s.id, idx));
+    return m;
+  }, [displaySprints]);
+
+  const allQuarterNamesSorted = React.useMemo(() => {
+    return [...quarters]
+      .sort((a, b) => a.endDate.localeCompare(b.endDate))
+      .map((q) => q.name);
+  }, [quarters]);
+
+  const handleFilterChange = (value: string[]) => {
+    const existing = new Set(quarters.map((q) => q.name));
+    const filtered = value.filter((v) => existing.has(v));
+    setSelectedQuarterNames(filtered);
   };
 
-  // Коммит из ячейки: ВСЕГДА отправляем оба поля (фикс баг с «обнулением»)
-  const commitCell = React.useCallback(
-    async (
-      participantId: string,
-      sprintId: string,
-      runDays: number,
-      vacationNormDays: number
-    ) => {
-      await upsertRun({
-        participantId,
-        sprintId,
-        runDays,
-        vacationNormDays,
-      }).unwrap();
+  const getAvailable = (p: Participant, s: Sprint) =>
+    s.workingDays * p.rate * NORM;
+
+  const getWorkload = (pid: string, sid: string) =>
+    workloadMap.get(`${pid}|${sid}`) || 0;
+
+  const rowTotals = React.useCallback(
+    (p: Participant) => {
+      let sumWork = 0;
+      let sumAvail = 0;
+      for (const s of displaySprints) {
+        sumWork += getWorkload(p.id, s.id);
+        sumAvail += getAvailable(p, s);
+      }
+      return { sumWork: round1(sumWork), sumAvail: round1(sumAvail) };
     },
-    [upsertRun]
+    [displaySprints, getWorkload]
   );
 
   return (
-    <Paper elevation={0} sx={{ p: 2 }}>
-      <Typography variant="h6" sx={{ mb: 2 }}>
-        Нагрузка по спринтам (нормировано × 0.75)
-      </Typography>
+    <Paper
+      elevation={0}
+      sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
+    >
+      <Typography variant="h6">Нагрузка по спринтам</Typography>
 
-      {/* выбор квартала */}
-      <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: "wrap" }}>
-        <Autocomplete
-          size="small"
-          options={quarters}
-          getOptionLabel={(q: Quarter) => q.name}
-          value={quarters.find((q) => q.id === quarterId) || null}
-          onChange={(_, v) => setQuarterId(v ? v.id : null)}
-          renderInput={(params) => <TextField {...params} label="Квартал" />}
-          sx={{ minWidth: 280 }}
-        />
+      <Stack
+        direction="row"
+        spacing={2}
+        alignItems="center"
+        sx={{ flexWrap: "wrap" }}
+      >
+        <FormControl sx={{ minWidth: 320 }} size="small">
+          <InputLabel id="capacity-q-filter">Фильтр по кварталам</InputLabel>
+          <Select
+            labelId="capacity-q-filter"
+            multiple
+            value={selectedQuarterNames}
+            onChange={(e) => handleFilterChange(e.target.value as string[])}
+            input={<OutlinedInput label="Фильтр по кварталам" />}
+            renderValue={(selected) => (
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                {selected.map((name) => (
+                  <Chip key={name} label={name} size="small" />
+                ))}
+              </Box>
+            )}
+          >
+            {allQuarterNamesSorted.map((name) => (
+              <MenuItem key={name} value={name}>
+                {name}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
       </Stack>
 
-      {/* массовое редактирование RUN */}
-      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <Stack
-          direction={{ xs: "column", md: "row" }}
-          spacing={2}
-          alignItems="center"
-        >
-          <Autocomplete
-            multiple
-            size="small"
-            options={roleOptions}
-            value={massRoles}
-            onChange={(_, v) => setMassRoles(v)}
-            renderInput={(p) => (
-              <TextField {...p} label="Роли (по умолчанию — все)" />
-            )}
-            sx={{ minWidth: 260, flex: 1 }}
-          />
-          <TextField
-            size="small"
-            type="number"
-            label="RUN, дней на спринт"
-            value={massDays}
-            onChange={(e) => setMassDays(Number(e.target.value))}
-            InputProps={{ inputProps: { step: 0.25, min: 0 } }}
-            sx={{ width: 200 }}
-          />
-          <Autocomplete
-            size="small"
-            options={["× ставка", "без учёта ставки"]}
-            value={massMultiplyByRate ? "× ставка" : "без учёта ставки"}
-            onChange={(_, v) => setMassMultiplyByRate(v === "× ставка")}
-            renderInput={(p) => <TextField {...p} label="Множитель" />}
-            sx={{ width: 200 }}
-          />
-          <Button
-            variant="contained"
-            disabled={!quarterId || bulkBusy}
-            onClick={applyBulk}
-          >
-            Применить RUN массово
-          </Button>
-        </Stack>
-        <Typography variant="caption" sx={{ color: "text.secondary" }}>
-          Значение автоматически нормируется × 0.75 и округляется на сервере. «×
-          ставка» — умножать заданные дни на ставку.
-        </Typography>
-      </Paper>
-
-      {/* таблица */}
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell sx={{ minWidth: 260 }}>Участник</TableCell>
-            {sprints.map((s: Sprint) => (
-              <TableCell key={s.id} align="center">
-                <Box sx={{ fontWeight: 700 }}>
-                  {s.startDate} → {s.endDate}
-                </Box>
-                <Box sx={{ color: "text.secondary", fontSize: 12 }}>
-                  {s.name}
-                </Box>
-              </TableCell>
-            ))}
-            <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
-              Итого за квартал
-            </TableCell>
-          </TableRow>
-          <TableRow>
-            <TableCell />
-            {sprints.map((s) => (
-              <TableCell
-                key={s.id}
-                align="center"
-                sx={{ color: "text.secondary" }}
-              >
-                Доступно / База / RUN / Отпуск
-              </TableCell>
-            ))}
-            <TableCell />
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {rows.map((r: CapacityRow) => (
-            <TableRow key={r.participant.id}>
-              <TableCell>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                  <Typography>{r.participant.fullName}</Typography>
-                  <Chip label={r.participant.role || "—"} size="small" />
-                  <Chip
-                    label={`ставка ${r.participant.rate}`}
-                    size="small"
-                    variant="outlined"
-                  />
-                </Box>
-              </TableCell>
-              {r.cells.map((cell) => (
-                <TableCell key={cell.sprintId} align="center">
-                  <CellEditor
-                    cell={cell}
-                    onCommit={(run, vac) =>
-                      commitCell(cell.participantId, cell.sprintId, run, vac)
-                    }
-                  />
-                </TableCell>
-              ))}
-              <TableCell align="right">
-                <b>{r.totalQuarterAvailable}</b>
-              </TableCell>
-            </TableRow>
-          ))}
-          {!rows.length && (
+      <Box sx={{ overflowX: "auto" }}>
+        <Table stickyHeader size="small">
+          <TableHead>
             <TableRow>
               <TableCell
-                colSpan={2 + sprints.length}
-                align="center"
-                sx={{ py: 3, color: "text.secondary" }}
+                sx={{
+                  whiteSpace: "nowrap",
+                  fontWeight: 700,
+                  position: "sticky",
+                  left: 0,
+                  zIndex: (theme) => theme.zIndex.appBar, // выше остальных ячеек
+                  backgroundColor: "background.paper",
+                  minWidth: 260,
+                }}
               >
-                Нет данных. Добавьте квартал/спринты и участников.
+                Участник
+              </TableCell>
+              {displaySprints.map((s) => (
+                <TableCell
+                  key={s.id}
+                  align="center"
+                  sx={{ minWidth: 140, whiteSpace: "nowrap" }}
+                >
+                  <Box sx={{ fontWeight: 700 }}>
+                    {ruDate(s.startDate)} — {ruDate(s.endDate)}
+                  </Box>
+                  <Box sx={{ color: "text.secondary" }}>{s.name}</Box>
+                </TableCell>
+              ))}
+              <TableCell align="center" sx={{ minWidth: 140, fontWeight: 700 }}>
+                Итого
               </TableCell>
             </TableRow>
-          )}
-        </TableBody>
-      </Table>
+          </TableHead>
 
-      <Divider sx={{ my: 2 }} />
-      <Typography variant="caption" color="text.secondary">
-        Все значения в таблице — нормированные (× 0.75). «Доступно / База» —
-        округлены до целых.
-      </Typography>
+          <TableBody>
+            {participants.map((p) => {
+              const totals = rowTotals(p);
+              return (
+                <TableRow key={p.id} hover>
+                  <TableCell
+                    sx={{
+                      whiteSpace: "nowrap",
+                      position: "sticky",
+                      left: 0,
+                      zIndex: (theme) => theme.zIndex.appBar - 1,
+                      backgroundColor: "background.paper",
+                      minWidth: 260,
+                    }}
+                  >
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <Chip size="small" label={p.role || "—"} />
+                      <Typography sx={{ fontWeight: 500 }}>
+                        {p.fullName}
+                      </Typography>
+                    </Box>
+                  </TableCell>
+
+                  {displaySprints.map((s) => {
+                    const availRaw = getAvailable(p, s);
+                    const workRaw = getWorkload(p.id, s.id);
+                    const avail = round1(availRaw);
+                    const work = round1(workRaw);
+                    const bg = cellColor(workRaw, availRaw);
+
+                    return (
+                      <TableCell
+                        key={`${p.id}-${s.id}`}
+                        align="center"
+                        sx={{ backgroundColor: bg }}
+                        title={`Нагрузка: ${work.toFixed(1)} дн • Доступно: ${o(
+                          avail
+                        )} дн`}
+                      >
+                        {work.toFixed(1)} / {o(avail)}
+                      </TableCell>
+                    );
+                  })}
+
+                  <TableCell align="center" sx={{ fontWeight: 600 }}>
+                    {totals.sumWork.toFixed(1)} / {totals.sumAvail.toFixed(1)}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+
+            {!participants.length && (
+              <TableRow>
+                <TableCell
+                  colSpan={displaySprints.length + 2}
+                  align="center"
+                  sx={{ color: "text.secondary" }}
+                >
+                  Нет участников для отображения
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Box>
     </Paper>
   );
+}
+
+// helper just to format decimals with one fraction
+function o(n: number) {
+  return n.toFixed(1);
 }
