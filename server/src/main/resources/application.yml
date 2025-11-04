@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: sprints-planning
+  datasource:
+    url: jdbc:postgresql://localhost:5432/sprints
+    username: sprints
+    password: sprints
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+    open-in-view: false
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+server:
+  port: 8080
+app:
+  capacity:
+    norm-factor: 0.75
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
