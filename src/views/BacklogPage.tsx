@@ -21,6 +21,7 @@ import {
   Tooltip,
   Divider,
   InputBase,
+  CircularProgress,
 } from "@mui/material";
 import {
   Add,
@@ -57,7 +58,11 @@ import type {
   TaskStatus,
 } from "../types";
 import { setBacklogFilters } from "../app/uiSlice";
-import { useAppDispatch, useAppSelector } from "./hooks";
+import {
+  useAppDispatch,
+  useAppSelector,
+  useDebouncedCallback,
+} from "./hooks";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 
 moment.locale("ru");
@@ -251,6 +256,8 @@ const PRIORITY_VALUES: readonly number[] = [1, 2, 3];
 type StatusMap = Record<string, TaskStatus>;
 type LeaderMap = Record<string, string | undefined>;
 type OrderMap = Record<string, number>;
+type TaskDraftField = "title" | "dod" | "customer" | "stream";
+type TaskDraftState = Record<string, Partial<Record<TaskDraftField, string>>>;
 
 function readLS<T>(key: string, def: T): T {
   try {
@@ -285,6 +292,7 @@ export default function BacklogPage() {
   const [selectedQuarterIds, setSelectedQuarterIds] = React.useState<string[]>(
     []
   );
+  const [isQuarterPending, startQuarterTransition] = React.useTransition();
   React.useEffect(() => {
     if (!quarters.length) return;
     // если пользователь ещё не выбирал — выберем текущий
@@ -330,6 +338,46 @@ export default function BacklogPage() {
 
   // Источник задач — всегда берём все, фильтруем на клиенте (т.к. мульти-кварталы)
   const { data: allTasks = [], isFetching } = useGetTasksQuery(undefined);
+
+  React.useEffect(() => {
+    if (!allTasks.length) return;
+    const taskMap = new Map(allTasks.map((task) => [task.id, task]));
+    setTaskDrafts((prev) => {
+      if (Object.keys(prev).length === 0) return prev;
+      let changed = false;
+      const next: TaskDraftState = {};
+      for (const [taskId, draft] of Object.entries(prev)) {
+        const task = taskMap.get(taskId);
+        if (!task) {
+          changed = true;
+          continue;
+        }
+        const cleaned: Partial<Record<TaskDraftField, string>> = {};
+        let hasDifference = false;
+        for (const key of Object.keys(draft) as TaskDraftField[]) {
+          const value = draft[key];
+          if (value === undefined) continue;
+          const originalRaw = (task as any)[key];
+          const original = typeof originalRaw === "string" ? originalRaw : "";
+          if (value !== original) {
+            cleaned[key] = value;
+            hasDifference = true;
+          } else {
+            changed = true;
+          }
+        }
+        if (hasDifference) {
+          next[taskId] = cleaned;
+          if (Object.keys(cleaned).length !== Object.keys(draft).length) {
+            changed = true;
+          }
+        } else if (draft && Object.keys(draft).length) {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [allTasks]);
 
   // Локальные статусы/лидеры/порядок
   const [statusMap, setStatusMap] = React.useState<StatusMap>(() =>
@@ -386,9 +434,11 @@ export default function BacklogPage() {
       const filtered = ids.filter((id) => existing.has(id));
       const unique = Array.from(new Set(filtered));
       if (shallowArrayEqual(unique, selectedQuarterIds)) return;
-      setSelectedQuarterIds(unique);
+      startQuarterTransition(() => {
+        setSelectedQuarterIds(unique);
+      });
     },
-    [quarters, selectedQuarterIds]
+    [quarters, selectedQuarterIds, startQuarterTransition]
   );
 
   const handlePriorityFilterChange = React.useCallback(
@@ -494,6 +544,10 @@ export default function BacklogPage() {
     orderMap,
   ]);
 
+  const deferredFilteredTasks = React.useDeferredValue(filteredTasks);
+  const isTasksPending = deferredFilteredTasks !== filteredTasks;
+  const isUiPending = isQuarterPending || isTasksPending;
+
   // Мутации
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
@@ -502,6 +556,55 @@ export default function BacklogPage() {
 
   // Локальные allocations (для быстрого редактирования)
   const [allocations, setAllocations] = React.useState<Allocations>({});
+  const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
+
+  const debouncedTaskUpdate = useDebouncedCallback(
+    (taskId: string, patch: Partial<BacklogItem>) => {
+      updateTask({ id: taskId, ...patch }).unwrap().catch((err) => {
+        console.error("Failed to update task", err);
+      });
+    },
+    400
+  );
+
+  const stageTaskField = React.useCallback(
+    (task: BacklogItem, key: TaskDraftField, value: string) => {
+      const sanitized = value ?? "";
+      setTaskDrafts((prev) => {
+        const originalRaw = (task as any)[key];
+        const original = typeof originalRaw === "string" ? originalRaw : "";
+        const next = { ...prev } as TaskDraftState;
+        if (sanitized === original) {
+          const current = next[task.id];
+          if (!current || current[key] === undefined) {
+            return prev;
+          }
+          const rest = { ...current };
+          delete rest[key];
+          if (Object.keys(rest).length === 0) {
+            delete next[task.id];
+          } else {
+            next[task.id] = rest;
+          }
+          return next;
+        }
+        next[task.id] = { ...(next[task.id] ?? {}), [key]: sanitized };
+        return next;
+      });
+      debouncedTaskUpdate(task.id, { [key]: sanitized } as Partial<BacklogItem>);
+    },
+    [debouncedTaskUpdate]
+  );
+
+  const resolveTaskFieldValue = React.useCallback(
+    (task: BacklogItem, key: TaskDraftField) => {
+      const draftValue = taskDrafts[task.id]?.[key];
+      if (draftValue !== undefined) return draftValue;
+      const originalRaw = (task as any)[key];
+      return typeof originalRaw === "string" ? originalRaw : "";
+    },
+    [taskDrafts]
+  );
 
   // Инициализация локальных allocations из задач
   React.useEffect(() => {
@@ -818,16 +921,16 @@ export default function BacklogPage() {
           <Box sx={{ flex: 1, minWidth: 260 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
               <EditableText
-                value={task.title}
-                onChange={(v) => updateField(task, { title: v })}
+                value={resolveTaskFieldValue(task, "title")}
+                onChange={(v) => stageTaskField(task, "title", v)}
                 placeholder="Название"
               />
             </Typography>
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
               DOD:{" "}
               <EditableText
-                value={task.dod || ""}
-                onChange={(v) => updateField(task, { dod: v })}
+                value={resolveTaskFieldValue(task, "dod")}
+                onChange={(v) => stageTaskField(task, "dod", v)}
                 placeholder="Definition of Done"
               />
             </Typography>
@@ -895,8 +998,8 @@ export default function BacklogPage() {
                 size="small"
                 freeSolo
                 options={customerOptions}
-                value={task.customer || ""}
-                onInputChange={(_, v) => updateField(task, { customer: v })}
+                value={resolveTaskFieldValue(task, "customer")}
+                onInputChange={(_, v) => stageTaskField(task, "customer", v || "")}
                 renderInput={(params) => (
                   <TextField {...params} size="small" sx={{ ml: 1 }} />
                 )}
@@ -912,8 +1015,8 @@ export default function BacklogPage() {
                 size="small"
                 freeSolo
                 options={streamOptions}
-                value={task.stream || ""}
-                onInputChange={(_, v) => updateField(task, { stream: v })}
+                value={resolveTaskFieldValue(task, "stream")}
+                onInputChange={(_, v) => stageTaskField(task, "stream", v || "")}
                 renderInput={(params) => (
                   <TextField {...params} size="small" sx={{ ml: 1 }} />
                 )}
@@ -1211,6 +1314,10 @@ export default function BacklogPage() {
             sx={{ minWidth: 220, flex: 1 }}
           />
 
+          {isUiPending && (
+            <CircularProgress size={18} sx={{ color: "text.secondary" }} />
+          )}
+
           <Button
             variant="contained"
             startIcon={<Add />}
@@ -1224,8 +1331,8 @@ export default function BacklogPage() {
 
       {/* Список задач */}
       <Stack spacing={2}>
-        {filteredTasks.map((t) => renderTaskTable(t))}
-        {!filteredTasks.length && !isFetching && (
+        {deferredFilteredTasks.map((t) => renderTaskTable(t))}
+        {!deferredFilteredTasks.length && !isFetching && (
           <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
             <Typography color="text.secondary">
               Нет задач по текущим фильтрам

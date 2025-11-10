@@ -11,7 +11,7 @@ import com.sprints.planning.repository.QuarterRepository;
 import com.sprints.planning.repository.SprintRepository;
 import com.sprints.planning.util.DateUtils;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
@@ -29,6 +29,7 @@ public class SprintService {
         this.quarterRepository = quarterRepository;
     }
 
+    @Transactional(readOnly = true)
     public List<SprintDto> findAll(UUID quarterId) {
         List<SprintEntity> sprints;
         if (quarterId != null) {

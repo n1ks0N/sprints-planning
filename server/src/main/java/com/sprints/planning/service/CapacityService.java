@@ -46,6 +46,7 @@ public class CapacityService {
         List<ParticipantEntity> participants = participantRepository.findAllByOrderByDisplayOrderAsc();
         List<CapacityRowDto> rows = new ArrayList<>();
         for (ParticipantEntity participant : participants) {
+            double participantRate = participant.getRate() != null ? participant.getRate().doubleValue() : 0.0;
             List<CapacityCellDto> cells = new ArrayList<>();
             int total = 0;
             for (SprintEntity sprint : sprints) {
@@ -53,13 +54,13 @@ public class CapacityService {
                 RunVacationEntity rv = runVacationMap.get(id);
                 int runDays = rv != null ? rv.getRunDays() : 0;
                 int vacationDays = rv != null ? rv.getVacationNormDays() : 0;
-                int baseCapacity = (int) Math.round(sprint.getWorkingDays() * participant.getRate() * normFactor);
+                int baseCapacity = (int) Math.round(sprint.getWorkingDays() * participantRate * normFactor);
                 int available = Math.max(0, baseCapacity - runDays - vacationDays);
                 cells.add(new CapacityCellDto(
                     participant.getId().toString(),
                     sprint.getId().toString(),
                     sprint.getWorkingDays(),
-                    participant.getRate(),
+                    participantRate,
                     normFactor,
                     baseCapacity,
                     runDays,
@@ -73,7 +74,7 @@ public class CapacityService {
                     participant.getId().toString(),
                     participant.getFullName(),
                     participant.getRole(),
-                    participant.getRate()
+                    participantRate
                 ),
                 cells,
                 total

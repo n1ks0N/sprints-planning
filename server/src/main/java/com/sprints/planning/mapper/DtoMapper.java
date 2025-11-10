@@ -55,7 +55,7 @@ public final class DtoMapper {
             entity.getId().toString(),
             entity.getFullName(),
             entity.getRole(),
-            entity.getRate()
+            entity.getRate() != null ? entity.getRate().doubleValue() : 0.0
         );
     }
 

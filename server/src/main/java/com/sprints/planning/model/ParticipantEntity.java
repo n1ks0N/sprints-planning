@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 import java.util.UUID;
 import org.hibernate.annotations.UuidGenerator;
 
@@ -24,8 +25,8 @@ public class ParticipantEntity {
     @Column(nullable = false)
     private String role;
 
-    @Column(nullable = false)
-    private double rate;
+    @Column(nullable = false, precision = 4, scale = 2)
+    private BigDecimal rate;
 
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
@@ -54,11 +55,11 @@ public class ParticipantEntity {
         this.role = role;
     }
 
-    public double getRate() {
+    public BigDecimal getRate() {
         return rate;
     }
 
-    public void setRate(double rate) {
+    public void setRate(BigDecimal rate) {
         this.rate = rate;
     }
 

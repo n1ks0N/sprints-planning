@@ -10,6 +10,7 @@ import com.sprints.planning.model.ParticipantEntity;
 import com.sprints.planning.repository.ParticipantRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
+import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
@@ -35,7 +36,7 @@ public class ParticipantService {
         ParticipantEntity entity = new ParticipantEntity();
         entity.setFullName(request.fullName());
         entity.setRole(request.role());
-        entity.setRate(request.rate());
+        entity.setRate(BigDecimal.valueOf(request.rate()));
         int nextOrder = participantRepository.findAll().stream()
             .map(ParticipantEntity::getDisplayOrder)
             .max(Comparator.naturalOrder())
@@ -56,7 +57,7 @@ public class ParticipantService {
             entity.setRole(request.role());
         }
         if (request.rate() != null) {
-            entity.setRate(request.rate());
+            entity.setRate(BigDecimal.valueOf(request.rate()));
         }
         return DtoMapper.toParticipantDto(entity);
     }

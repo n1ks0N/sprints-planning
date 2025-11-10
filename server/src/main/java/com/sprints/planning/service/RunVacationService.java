@@ -83,6 +83,7 @@ public class RunVacationService {
             if (roles != null && !roles.contains(participant.getRole())) {
                 continue;
             }
+            double participantRate = participant.getRate() != null ? participant.getRate().doubleValue() : 0.0;
             for (SprintEntity sprint : sprints) {
                 RunVacationId id = new RunVacationId(participant.getId(), sprint.getId());
                 RunVacationEntity entity = runVacationRepository.findById(id)
@@ -97,7 +98,7 @@ public class RunVacationService {
                     });
                 double value = baseDays;
                 if (multiplyByRate) {
-                    value = baseDays * participant.getRate();
+                    value = baseDays * participantRate;
                 }
                 entity.setRunDays((int) Math.max(0, Math.round(value)));
                 runVacationRepository.save(entity);

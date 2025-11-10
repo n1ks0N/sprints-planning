@@ -38,7 +38,7 @@ public class SprintEntity {
     @Column(name = "working_days", nullable = false)
     private int workingDays;
 
-    @Column(name = "order", nullable = false)
+    @Column(name = "\"order\"", nullable = false)
     private int order;
 
     public UUID getId() {

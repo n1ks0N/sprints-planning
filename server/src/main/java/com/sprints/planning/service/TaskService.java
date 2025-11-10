@@ -20,7 +20,6 @@ import com.sprints.planning.repository.ParticipantRepository;
 import com.sprints.planning.repository.SprintRepository;
 import com.sprints.planning.repository.TaskAllocationRepository;
 import com.sprints.planning.repository.TaskLoadRepository;
-import com.sprints.planning.repository.TaskParticipantRepository;
 import com.sprints.planning.repository.TaskRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
@@ -38,20 +37,17 @@ import org.springframework.stereotype.Service;
 public class TaskService {
 
     private final TaskRepository taskRepository;
-    private final TaskParticipantRepository taskParticipantRepository;
     private final TaskLoadRepository taskLoadRepository;
     private final TaskAllocationRepository taskAllocationRepository;
     private final ParticipantRepository participantRepository;
     private final SprintRepository sprintRepository;
 
     public TaskService(TaskRepository taskRepository,
-        TaskParticipantRepository taskParticipantRepository,
         TaskLoadRepository taskLoadRepository,
         TaskAllocationRepository taskAllocationRepository,
         ParticipantRepository participantRepository,
         SprintRepository sprintRepository) {
         this.taskRepository = taskRepository;
-        this.taskParticipantRepository = taskParticipantRepository;
         this.taskLoadRepository = taskLoadRepository;
         this.taskAllocationRepository = taskAllocationRepository;
         this.participantRepository = participantRepository;
@@ -84,7 +80,7 @@ public class TaskService {
         if (request.releaseDate() != null) {
             entity.setReleaseDate(request.releaseDate());
         }
-        if (request.releaseSprintId() != null) {
+        if (request.releaseSprintId() != null && !request.releaseSprintId().isBlank()) {
             entity.setReleaseSprint(fetchSprint(request.releaseSprintId()));
         }
         TaskEntity saved = taskRepository.save(entity);
@@ -118,7 +114,11 @@ public class TaskService {
             entity.setReleaseDate(request.releaseDate());
         }
         if (request.releaseSprintId() != null) {
-            entity.setReleaseSprint(fetchSprint(request.releaseSprintId()));
+            if (request.releaseSprintId().isBlank()) {
+                entity.setReleaseSprint(null);
+            } else {
+                entity.setReleaseSprint(fetchSprint(request.releaseSprintId()));
+            }
         }
         if (request.notes() != null) {
             entity.setNotes(convertNotes(request.notes()));
@@ -165,7 +165,6 @@ public class TaskService {
                 return created;
             });
         allocation.setDays(Math.max(0, request.days() != null ? request.days() : 0));
-        taskAllocationRepository.save(allocation);
         recalcLoad(task, sprint);
         task.setUpdatedAt(LocalDate.now());
         ensureLoadsForAllSprints(task);
@@ -189,7 +188,6 @@ public class TaskService {
                 return created;
             });
         load.setDays(Math.max(0, request.days() != null ? request.days() : 0));
-        taskLoadRepository.save(load);
         task.setUpdatedAt(LocalDate.now());
         ensureLoadsForAllSprints(task);
         return DtoMapper.toTaskDto(task);
@@ -212,7 +210,6 @@ public class TaskService {
                 link.setTask(entity);
                 link.setParticipant(participant);
                 entity.getParticipants().add(link);
-                taskParticipantRepository.save(link);
             }
         }
     }
@@ -235,7 +232,6 @@ public class TaskService {
                     return created;
                 });
             load.setDays(Math.max(0, entry.getValue() != null ? entry.getValue() : 0));
-            taskLoadRepository.save(load);
         }
     }
 
@@ -264,7 +260,6 @@ public class TaskService {
                         return created;
                     });
                 allocation.setDays(Math.max(0, sprintEntry.getValue() != null ? sprintEntry.getValue() : 0));
-                taskAllocationRepository.save(allocation);
                 recalcLoad(entity, sprint);
             }
         }
@@ -289,7 +284,7 @@ public class TaskService {
                         return created;
                     });
                 load.setDays(Math.max(0, load.getDays()));
-                taskLoadRepository.save(load);
+                existing.add(sprint.getId());
             }
         }
     }
@@ -311,7 +306,6 @@ public class TaskService {
                 return created;
             });
         load.setDays(total);
-        taskLoadRepository.save(load);
     }
 
     private SprintEntity fetchSprint(String sprintId) {
@@ -324,7 +318,11 @@ public class TaskService {
             return null;
         }
         Map<UUID, String> map = new HashMap<>();
-        notes.forEach((key, value) -> map.put(UUID.fromString(key), value));
+        notes.forEach((key, value) -> {
+            if (key != null && !key.isBlank()) {
+                map.put(UUID.fromString(key), value);
+            }
+        });
         return map;
     }
 }
