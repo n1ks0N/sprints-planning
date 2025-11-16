@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "cross-env USE_MOCK=true webpack serve --mode development --open",
-    "dev:api": "webpack serve --mode development --open",
+    "dev:api": "cross-env USE_MOCK=false API_URL=/api webpack serve --mode development --open",
     "build": "webpack --mode production",
     "typecheck": "tsc --noEmit"
   },
