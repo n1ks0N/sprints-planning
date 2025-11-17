@@ -33,6 +33,9 @@ public class TaskEntity {
     private String title;
 
     @Column(nullable = false)
+    private String description;
+
+    @Column(nullable = false)
     private String dod;
 
     @Column(nullable = false)
@@ -54,6 +57,10 @@ public class TaskEntity {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private Map<UUID, String> notes;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "leader_participant_id")
+    private ParticipantEntity leaderParticipant;
 
     @Column(name = "created_at", nullable = false)
     private LocalDate createdAt;
@@ -84,6 +91,14 @@ public class TaskEntity {
 
     public void setTitle(String title) {
         this.title = title;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
     }
 
     public String getDod() {
@@ -140,6 +155,14 @@ public class TaskEntity {
 
     public void setNotes(Map<UUID, String> notes) {
         this.notes = notes;
+    }
+
+    public ParticipantEntity getLeaderParticipant() {
+        return leaderParticipant;
+    }
+
+    public void setLeaderParticipant(ParticipantEntity leaderParticipant) {
+        this.leaderParticipant = leaderParticipant;
     }
 
     public LocalDate getCreatedAt() {

@@ -6,6 +6,7 @@ import java.util.Map;
 
 public record TaskCreateRequest(
     String title,
+    String description,
     String dod,
     Short priority,
     String customer,
@@ -15,6 +16,7 @@ public record TaskCreateRequest(
     Map<String, Map<String, Integer>> allocations,
     Map<String, String> notes,
     LocalDate releaseDate,
-    String releaseSprintId
+    String releaseSprintId,
+    String leaderId
 ) {
 }

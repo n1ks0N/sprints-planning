@@ -28,6 +28,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -70,6 +71,7 @@ public class TaskService {
         TaskEntity entity = new TaskEntity();
         String title = request.title() == null || request.title().isBlank() ? "Новая задача" : request.title();
         entity.setTitle(title);
+        entity.setDescription(request.description() != null ? request.description() : "");
         entity.setDod(request.dod() != null ? request.dod() : "");
         entity.setPriority(request.priority() != null ? request.priority() : (short) 2);
         entity.setCustomer(request.customer() != null ? request.customer() : "");
@@ -82,6 +84,9 @@ public class TaskService {
         }
         if (request.releaseSprintId() != null && !request.releaseSprintId().isBlank()) {
             entity.setReleaseSprint(fetchSprint(request.releaseSprintId()));
+        }
+        if (request.leaderId() != null && !request.leaderId().isBlank()) {
+            entity.setLeaderParticipant(fetchParticipant(request.leaderId()));
         }
         TaskEntity saved = taskRepository.save(entity);
         updateParticipants(saved, request.participantIds());
@@ -97,6 +102,9 @@ public class TaskService {
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         if (request.title() != null) {
             entity.setTitle(request.title());
+        }
+        if (request.description() != null) {
+            entity.setDescription(request.description());
         }
         if (request.dod() != null) {
             entity.setDod(request.dod());
@@ -122,6 +130,13 @@ public class TaskService {
         }
         if (request.notes() != null) {
             entity.setNotes(convertNotes(request.notes()));
+        }
+        if (request.leaderId() != null) {
+            if (request.leaderId().isBlank()) {
+                entity.setLeaderParticipant(null);
+            } else {
+                entity.setLeaderParticipant(fetchParticipant(request.leaderId()));
+            }
         }
         if (request.participantIds() != null) {
             updateParticipants(entity, request.participantIds());
@@ -194,23 +209,28 @@ public class TaskService {
     }
 
     private void updateParticipants(TaskEntity entity, List<String> participantIds) {
-        Set<UUID> newIds = participantIds != null
-            ? participantIds.stream().map(UUID::fromString).collect(Collectors.toSet())
-            : new HashSet<>();
+        List<UUID> orderedIds = participantIds != null
+            ? participantIds.stream().filter(id -> id != null && !id.isBlank()).map(UUID::fromString).toList()
+            : List.of();
+        Set<UUID> newIds = new LinkedHashSet<>(orderedIds);
+
         entity.getParticipants().removeIf(tp -> !newIds.contains(tp.getParticipant().getId()));
-        Set<UUID> existing = entity.getParticipants().stream()
-            .map(tp -> tp.getParticipant().getId())
-            .collect(Collectors.toSet());
+
+        Map<UUID, TaskParticipantEntity> existing = entity.getParticipants().stream()
+            .collect(Collectors.toMap(tp -> tp.getParticipant().getId(), tp -> tp));
+
+        int order = 0;
         for (UUID id : newIds) {
-            if (!existing.contains(id)) {
-                ParticipantEntity participant = participantRepository.findById(id)
-                    .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
-                TaskParticipantEntity link = new TaskParticipantEntity();
+            TaskParticipantEntity link = existing.get(id);
+            if (link == null) {
+                ParticipantEntity participant = fetchParticipant(id.toString());
+                link = new TaskParticipantEntity();
                 link.setId(new TaskParticipantId(entity.getId(), participant.getId()));
                 link.setTask(entity);
                 link.setParticipant(participant);
                 entity.getParticipants().add(link);
             }
+            link.setDisplayOrder(order++);
         }
     }
 
@@ -311,6 +331,11 @@ public class TaskService {
     private SprintEntity fetchSprint(String sprintId) {
         return sprintRepository.findById(UUID.fromString(sprintId))
             .orElseThrow(() -> new EntityNotFoundException("Sprint not found"));
+    }
+
+    private ParticipantEntity fetchParticipant(String participantId) {
+        return participantRepository.findById(UUID.fromString(participantId))
+            .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
     }
 
     private Map<UUID, String> convertNotes(Map<String, String> notes) {

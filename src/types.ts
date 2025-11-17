@@ -61,6 +61,7 @@ export type TaskStatus =
 export type BacklogItem = {
   id: string;
   title: string;
+  description: string;
   dod: string;
   priority: TaskPriority;
   customer: string;
@@ -71,6 +72,7 @@ export type BacklogItem = {
   notes?: Record<string, string>;
   releaseDate?: string;
   releaseSprintId?: string;
+  leaderId?: string | null;
   createdAt: string;
   updatedAt: string;
 };

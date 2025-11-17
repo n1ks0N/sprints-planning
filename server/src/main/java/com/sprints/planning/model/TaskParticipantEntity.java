@@ -7,6 +7,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.MapsId;
 import jakarta.persistence.Table;
+import jakarta.persistence.Column;
 
 @Entity
 @Table(name = "task_participants")
@@ -24,6 +25,9 @@ public class TaskParticipantEntity {
     @MapsId("participantId")
     @JoinColumn(name = "participant_id")
     private ParticipantEntity participant;
+
+    @Column(name = "display_order", nullable = false)
+    private int displayOrder;
 
     public TaskParticipantId getId() {
         return id;
@@ -47,5 +51,13 @@ public class TaskParticipantEntity {
 
     public void setParticipant(ParticipantEntity participant) {
         this.participant = participant;
+    }
+
+    public int getDisplayOrder() {
+        return displayOrder;
+    }
+
+    public void setDisplayOrder(int displayOrder) {
+        this.displayOrder = displayOrder;
     }
 }
