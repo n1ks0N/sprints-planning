@@ -5,6 +5,7 @@ export type UIState = {
   backlog: {
     quarterId: string; // "all" | qid
     releaseSprintFilter: string; // "all" | "" | sprintId
+    releaseFilter: string[]; // список дат релизов (ISO) или маркер "none"
     priorityFilter: number[]; // [1,2,3]
     streamFilter: string;
     statusFilter: TaskStatus[];
@@ -43,6 +44,7 @@ function defaultState(): UIState {
     backlog: {
       quarterId: "all",
       releaseSprintFilter: "all",
+      releaseFilter: [],
       priorityFilter: [],
       streamFilter: "",
       statusFilter: [],
@@ -75,6 +77,12 @@ function sanitizeBacklog(
       )
     : defaults.statusFilter.slice();
 
+  const releaseFilter = Array.isArray(input?.releaseFilter)
+    ? input.releaseFilter
+        .map((s: any) => (typeof s === "string" ? s : ""))
+        .filter(Boolean)
+    : defaults.releaseFilter.slice();
+
   return {
     quarterId:
       typeof input?.quarterId === "string"
@@ -84,6 +92,7 @@ function sanitizeBacklog(
       typeof input?.releaseSprintFilter === "string"
         ? input.releaseSprintFilter
         : defaults.releaseSprintFilter,
+    releaseFilter,
     priorityFilter,
     streamFilter:
       typeof input?.streamFilter === "string"
