@@ -33,6 +33,7 @@ import {
   StarBorder,
   ArrowUpward,
   ArrowDownward,
+  DragIndicator,
 } from "@mui/icons-material";
 import moment from "moment";
 import "moment/locale/ru";
@@ -58,12 +59,23 @@ import type {
   TaskStatus,
 } from "../types";
 import { setBacklogFilters } from "../app/uiSlice";
-import {
-  useAppDispatch,
-  useAppSelector,
-  useDebouncedCallback,
-} from "./hooks";
+import { useAppDispatch, useAppSelector } from "./hooks";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 moment.locale("ru");
 
@@ -259,6 +271,11 @@ type OrderMap = Record<string, number>;
 type TaskDraftField = "title" | "dod" | "customer" | "stream";
 type TaskDraftState = Record<string, Partial<Record<TaskDraftField, string>>>;
 
+type DragHandleProps = {
+  listeners: any;
+  attributes: any;
+};
+
 function readLS<T>(key: string, def: T): T {
   try {
     const v = localStorage.getItem(key);
@@ -332,9 +349,8 @@ export default function BacklogPage() {
   }, [sprintsGlobalOrdered]);
 
   const dispatch = useAppDispatch();
-  const { priorityFilter, streamFilter, statusFilter } = useAppSelector(
-    (s) => s.ui.backlog
-  );
+  const { priorityFilter, streamFilter, statusFilter, releaseSprintFilter } =
+    useAppSelector((s) => s.ui.backlog);
 
   // Источник задач — всегда берём все, фильтруем на клиенте (т.к. мульти-кварталы)
   const { data: allTasks = [], isFetching } = useGetTasksQuery(undefined);
@@ -462,6 +478,15 @@ export default function BacklogPage() {
     [dispatch, statusFilter]
   );
 
+  const handleReleaseFilterChange = React.useCallback(
+    (value: string) => {
+      const normalized = value?.trim() || "all";
+      if (normalized === releaseSprintFilter) return;
+      dispatch(setBacklogFilters({ releaseSprintFilter: normalized }));
+    },
+    [dispatch, releaseSprintFilter]
+  );
+
   // Фильтрация задач
   const filteredTasks = React.useMemo(() => {
     const selectedSprintIds =
@@ -514,11 +539,20 @@ export default function BacklogPage() {
         )
       : byPriority;
 
+    // релиз (по дате пром)
+    const byRelease =
+      releaseSprintFilter === "all" || releaseSprintFilter.trim() === ""
+        ? byStream
+        : byStream.filter((t) => {
+            const rel = (t.releaseDate || "").trim();
+            return rel === releaseSprintFilter.trim();
+          });
+
     // статус (по локальной карте)
     const byStatus =
       statusFilter.length === 0
-        ? byStream
-        : byStream.filter((t) => {
+        ? byRelease
+        : byRelease.filter((t) => {
             const st = statusMap[t.id] || "inprogress";
             return statusFilter.includes(st);
           });
@@ -539,6 +573,7 @@ export default function BacklogPage() {
     selectedQuarterIds,
     priorityFilter,
     streamFilter,
+    releaseSprintFilter,
     statusFilter,
     statusMap,
     orderMap,
@@ -558,13 +593,34 @@ export default function BacklogPage() {
   const [allocations, setAllocations] = React.useState<Allocations>({});
   const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
 
-  const debouncedTaskUpdate = useDebouncedCallback(
-    (taskId: string, patch: Partial<BacklogItem>) => {
-      updateTask({ id: taskId, ...patch }).unwrap().catch((err) => {
-        console.error("Failed to update task", err);
-      });
+  const taskUpdateTimers = React.useRef<
+    Map<string, ReturnType<typeof setTimeout>>
+  >(new Map());
+
+  React.useEffect(() => {
+    return () => {
+      taskUpdateTimers.current.forEach((timer) => clearTimeout(timer));
+      taskUpdateTimers.current.clear();
+    };
+  }, []);
+
+  const scheduleTaskUpdate = React.useCallback(
+    (taskId: string, field: TaskDraftField, value: string) => {
+      const key = `${taskId}:${field}`;
+      const timers = taskUpdateTimers.current;
+      const existing = timers.get(key);
+      if (existing) clearTimeout(existing);
+
+      const timeout = setTimeout(() => {
+        updateTask({ id: taskId, [field]: value }).unwrap().catch((err) => {
+          console.error("Failed to update task", err);
+        });
+        timers.delete(key);
+      }, 400);
+
+      timers.set(key, timeout);
     },
-    400
+    [updateTask]
   );
 
   const stageTaskField = React.useCallback(
@@ -591,9 +647,8 @@ export default function BacklogPage() {
         next[task.id] = { ...(next[task.id] ?? {}), [key]: sanitized };
         return next;
       });
-      debouncedTaskUpdate(task.id, { [key]: sanitized } as Partial<BacklogItem>);
     },
-    [debouncedTaskUpdate]
+    []
   );
 
   const resolveTaskFieldValue = React.useCallback(
@@ -604,6 +659,18 @@ export default function BacklogPage() {
       return typeof originalRaw === "string" ? originalRaw : "";
     },
     [taskDrafts]
+  );
+
+  const commitTaskField = React.useCallback(
+    (task: BacklogItem, key: TaskDraftField) => {
+      const draftValue = taskDrafts[task.id]?.[key];
+      const value = draftValue ?? resolveTaskFieldValue(task, key);
+      const originalRaw = (task as any)[key];
+      const original = typeof originalRaw === "string" ? originalRaw : "";
+      if (value === original) return;
+      scheduleTaskUpdate(task.id, key, value);
+    },
+    [resolveTaskFieldValue, scheduleTaskUpdate, taskDrafts]
   );
 
   // Инициализация локальных allocations из задач
@@ -646,6 +713,22 @@ export default function BacklogPage() {
       }))
       .filter((x) => x.promDate);
   }, [releases]);
+
+  const releaseFilterOptions = React.useMemo(() => {
+    const dates = new Set<string>();
+    promReleases.forEach((r) => dates.add(r.promDate));
+    allTasks.forEach((t) => {
+      const d = t.releaseDate?.trim();
+      if (d) dates.add(d);
+    });
+    return Array.from(dates)
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b))
+      .map((iso) => ({
+        value: iso,
+        label: moment(iso).format("DD.MM.YYYY"),
+      }));
+  }, [allTasks, promReleases]);
 
   // По дате релиза определить спринт
   const detectSprintByDate = (iso?: string): string | undefined => {
@@ -860,6 +943,32 @@ export default function BacklogPage() {
     });
   };
 
+  const taskSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  const handleTaskDragEnd = React.useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      const currentIds = deferredFilteredTasks.map((t) => t.id);
+      const oldIndex = currentIds.indexOf(String(active.id));
+      const newIndex = currentIds.indexOf(String(over.id));
+      if (oldIndex < 0 || newIndex < 0) return;
+
+      const reordered = arrayMove(currentIds, oldIndex, newIndex);
+      setOrderMap((prev) => {
+        const next = { ...prev };
+        reordered.forEach((id, idx) => {
+          next[id] = idx;
+        });
+        return next;
+      });
+    },
+    [deferredFilteredTasks]
+  );
+
   // Визуал заголовка спринта (с подсветкой колонки релиза для конкретной задачи)
   const HeaderSprint = ({
     s,
@@ -885,8 +994,31 @@ export default function BacklogPage() {
     </TableCell>
   );
 
+  const SortableTask = ({
+    task,
+    children,
+  }: {
+    task: BacklogItem;
+    children: (props: DragHandleProps) => React.ReactNode;
+  }) => {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+      useSortable({ id: task.id });
+
+    const style: React.CSSProperties = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      opacity: isDragging ? 0.95 : 1,
+    };
+
+    return (
+      <Box ref={setNodeRef} style={style} sx={{ width: "100%" }}>
+        {children({ attributes, listeners })}
+      </Box>
+    );
+  };
+
   // Рендер одной задачи
-  const renderTaskTable = (task: BacklogItem) => {
+  const renderTaskTable = (task: BacklogItem, dragHandle?: DragHandleProps) => {
     const rows = allocations[task.id] || {};
     const participantRows: Participant[] = task.participantIds
       .map((id) => participantMap.get(id))
@@ -923,6 +1055,7 @@ export default function BacklogPage() {
               <EditableText
                 value={resolveTaskFieldValue(task, "title")}
                 onChange={(v) => stageTaskField(task, "title", v)}
+                onBlur={() => commitTaskField(task, "title")}
                 placeholder="Название"
               />
             </Typography>
@@ -931,6 +1064,7 @@ export default function BacklogPage() {
               <EditableText
                 value={resolveTaskFieldValue(task, "dod")}
                 onChange={(v) => stageTaskField(task, "dod", v)}
+                onBlur={() => commitTaskField(task, "dod")}
                 placeholder="Definition of Done"
               />
             </Typography>
@@ -1000,6 +1134,7 @@ export default function BacklogPage() {
                 options={customerOptions}
                 value={resolveTaskFieldValue(task, "customer")}
                 onInputChange={(_, v) => stageTaskField(task, "customer", v || "")}
+                onBlur={() => commitTaskField(task, "customer")}
                 renderInput={(params) => (
                   <TextField {...params} size="small" sx={{ ml: 1 }} />
                 )}
@@ -1017,6 +1152,7 @@ export default function BacklogPage() {
                 options={streamOptions}
                 value={resolveTaskFieldValue(task, "stream")}
                 onInputChange={(_, v) => stageTaskField(task, "stream", v || "")}
+                onBlur={() => commitTaskField(task, "stream")}
                 renderInput={(params) => (
                   <TextField {...params} size="small" sx={{ ml: 1 }} />
                 )}
@@ -1058,6 +1194,19 @@ export default function BacklogPage() {
 
             {/* Дублирование + порядок + удаление */}
             <Stack direction="row" spacing={0.5}>
+              {dragHandle && (
+                <Tooltip title="Перетащите, чтобы изменить порядок">
+                  <span
+                    {...dragHandle.attributes}
+                    {...dragHandle.listeners}
+                    style={{ display: "inline-flex" }}
+                  >
+                    <IconButton size="small">
+                      <DragIndicator fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              )}
               <Tooltip title="Дублировать">
                 <IconButton size="small" onClick={() => duplicateTask(task)}>
                   <ContentCopy fontSize="small" />
@@ -1299,6 +1448,16 @@ export default function BacklogPage() {
           />
 
           <FilterAutocomplete
+            label="Релиз"
+            allowCustom={false}
+            options={releaseFilterOptions}
+            value={releaseSprintFilter === "all" ? "" : releaseSprintFilter}
+            onChange={handleReleaseFilterChange}
+            sx={{ minWidth: 200, flex: 1 }}
+            placeholder="Все релизы"
+          />
+
+          <FilterAutocomplete
             label="Стрим"
             options={streamOptions}
             value={streamFilter}
@@ -1330,16 +1489,31 @@ export default function BacklogPage() {
       </Paper>
 
       {/* Список задач */}
-      <Stack spacing={2}>
-        {deferredFilteredTasks.map((t) => renderTaskTable(t))}
-        {!deferredFilteredTasks.length && !isFetching && (
-          <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
-            <Typography color="text.secondary">
-              Нет задач по текущим фильтрам
-            </Typography>
-          </Paper>
-        )}
-      </Stack>
+      <DndContext
+        sensors={taskSensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleTaskDragEnd}
+      >
+        <SortableContext
+          items={deferredFilteredTasks.map((t) => t.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          <Stack spacing={2}>
+            {deferredFilteredTasks.map((t) => (
+              <SortableTask key={t.id} task={t}>
+                {(dragHandleProps) => renderTaskTable(t, dragHandleProps)}
+              </SortableTask>
+            ))}
+            {!deferredFilteredTasks.length && !isFetching && (
+              <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
+                <Typography color="text.secondary">
+                  Нет задач по текущим фильтрам
+                </Typography>
+              </Paper>
+            )}
+          </Stack>
+        </SortableContext>
+      </DndContext>
 
       <Divider sx={{ my: 2 }} />
       <Typography variant="caption" color="text.secondary">
