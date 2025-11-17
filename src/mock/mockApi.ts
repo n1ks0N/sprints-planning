@@ -329,6 +329,7 @@ export const mockBaseQuery: BaseQueryFn<
       const item: BacklogItem = {
         id,
         title: body.title || "Новая задача",
+        description: body.description || "",
         dod: body.dod || "",
         priority: body.priority ?? 2,
         customer: body.customer || "",
@@ -339,6 +340,7 @@ export const mockBaseQuery: BaseQueryFn<
         loads: {},
         releaseDate: body.releaseDate,
         releaseSprintId: body.releaseSprintId,
+        leaderId: body.leaderId ?? null,
         createdAt: nowISO,
         updatedAt: nowISO,
       };

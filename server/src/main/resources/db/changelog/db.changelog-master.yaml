@@ -1,0 +1,7 @@
+databaseChangeLog:
+  - include:
+      file: classpath:db/changelog/changes/001-init.sql
+      relativeToChangelogFile: false
+  - include:
+      file: classpath:db/changelog/changes/002-task-leader-order.sql
+      relativeToChangelogFile: false

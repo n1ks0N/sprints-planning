@@ -21,6 +21,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Comparator;
 
 public final class DtoMapper {
 
@@ -70,9 +71,9 @@ public final class DtoMapper {
 
     public static TaskDto toTaskDto(TaskEntity entity) {
         List<String> participantIds = new ArrayList<>();
-        for (TaskParticipantEntity participant : entity.getParticipants()) {
-            participantIds.add(participant.getParticipant().getId().toString());
-        }
+        entity.getParticipants().stream()
+            .sorted(Comparator.comparingInt(TaskParticipantEntity::getDisplayOrder))
+            .forEach(participant -> participantIds.add(participant.getParticipant().getId().toString()));
         Map<String, Integer> loads = new HashMap<>();
         for (TaskLoadEntity load : entity.getLoads()) {
             loads.put(load.getSprint().getId().toString(), load.getDays());
@@ -92,6 +93,7 @@ public final class DtoMapper {
         return new TaskDto(
             entity.getId().toString(),
             entity.getTitle(),
+            entity.getDescription(),
             entity.getDod(),
             entity.getPriority(),
             entity.getCustomer(),
@@ -102,6 +104,7 @@ public final class DtoMapper {
             notes,
             toIso(entity.getReleaseDate()),
             entity.getReleaseSprint() != null ? entity.getReleaseSprint().getId().toString() : null,
+            entity.getLeaderParticipant() != null ? entity.getLeaderParticipant().getId().toString() : null,
             toIso(entity.getCreatedAt()),
             toIso(entity.getUpdatedAt())
         );

@@ -33,6 +33,7 @@ import {
   StarBorder,
   ArrowUpward,
   ArrowDownward,
+  DragIndicator,
 } from "@mui/icons-material";
 import moment from "moment";
 import "moment/locale/ru";
@@ -58,12 +59,23 @@ import type {
   TaskStatus,
 } from "../types";
 import { setBacklogFilters } from "../app/uiSlice";
-import {
-  useAppDispatch,
-  useAppSelector,
-  useDebouncedCallback,
-} from "./hooks";
+import { useAppDispatch, useAppSelector } from "./hooks";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 moment.locale("ru");
 
@@ -230,7 +242,6 @@ function EditableNumberCell({
 
 /** локальное хранение статусов/лидеров/порядка */
 const LS_STATUS = "backlog.statusMap";
-const LS_LEADER = "backlog.leaderMap";
 const LS_TASK_ORDER = "backlog.orderMap";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
@@ -254,10 +265,14 @@ const STATUS_COLOR: Record<
 const PRIORITY_VALUES: readonly number[] = [1, 2, 3];
 
 type StatusMap = Record<string, TaskStatus>;
-type LeaderMap = Record<string, string | undefined>;
 type OrderMap = Record<string, number>;
-type TaskDraftField = "title" | "dod" | "customer" | "stream";
+type TaskDraftField = "title" | "description" | "dod" | "customer" | "stream";
 type TaskDraftState = Record<string, Partial<Record<TaskDraftField, string>>>;
+
+type DragHandleProps = {
+  listeners: any;
+  attributes: any;
+};
 
 function readLS<T>(key: string, def: T): T {
   try {
@@ -332,9 +347,8 @@ export default function BacklogPage() {
   }, [sprintsGlobalOrdered]);
 
   const dispatch = useAppDispatch();
-  const { priorityFilter, streamFilter, statusFilter } = useAppSelector(
-    (s) => s.ui.backlog
-  );
+  const { priorityFilter, streamFilter, statusFilter, releaseSprintFilter } =
+    useAppSelector((s) => s.ui.backlog);
 
   // Источник задач — всегда берём все, фильтруем на клиенте (т.к. мульти-кварталы)
   const { data: allTasks = [], isFetching } = useGetTasksQuery(undefined);
@@ -383,14 +397,10 @@ export default function BacklogPage() {
   const [statusMap, setStatusMap] = React.useState<StatusMap>(() =>
     readLS<StatusMap>(LS_STATUS, {})
   );
-  const [leaderMap, setLeaderMap] = React.useState<LeaderMap>(() =>
-    readLS<LeaderMap>(LS_LEADER, {})
-  );
   const [orderMap, setOrderMap] = React.useState<OrderMap>(() =>
     readLS<OrderMap>(LS_TASK_ORDER, {})
   );
   React.useEffect(() => writeLS(LS_STATUS, statusMap), [statusMap]);
-  React.useEffect(() => writeLS(LS_LEADER, leaderMap), [leaderMap]);
   React.useEffect(() => writeLS(LS_TASK_ORDER, orderMap), [orderMap]);
 
   // Список всех возможных значений «стрима» и «заказчика» (для автокомплита)
@@ -462,6 +472,15 @@ export default function BacklogPage() {
     [dispatch, statusFilter]
   );
 
+  const handleReleaseFilterChange = React.useCallback(
+    (value: string) => {
+      const normalized = value?.trim() || "all";
+      if (normalized === releaseSprintFilter) return;
+      dispatch(setBacklogFilters({ releaseSprintFilter: normalized }));
+    },
+    [dispatch, releaseSprintFilter]
+  );
+
   // Фильтрация задач
   const filteredTasks = React.useMemo(() => {
     const selectedSprintIds =
@@ -514,11 +533,20 @@ export default function BacklogPage() {
         )
       : byPriority;
 
+    // релиз (по дате пром)
+    const byRelease =
+      releaseSprintFilter === "all" || releaseSprintFilter.trim() === ""
+        ? byStream
+        : byStream.filter((t) => {
+            const rel = (t.releaseDate || "").trim();
+            return rel === releaseSprintFilter.trim();
+          });
+
     // статус (по локальной карте)
     const byStatus =
       statusFilter.length === 0
-        ? byStream
-        : byStream.filter((t) => {
+        ? byRelease
+        : byRelease.filter((t) => {
             const st = statusMap[t.id] || "inprogress";
             return statusFilter.includes(st);
           });
@@ -539,6 +567,7 @@ export default function BacklogPage() {
     selectedQuarterIds,
     priorityFilter,
     streamFilter,
+    releaseSprintFilter,
     statusFilter,
     statusMap,
     orderMap,
@@ -558,13 +587,34 @@ export default function BacklogPage() {
   const [allocations, setAllocations] = React.useState<Allocations>({});
   const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
 
-  const debouncedTaskUpdate = useDebouncedCallback(
-    (taskId: string, patch: Partial<BacklogItem>) => {
-      updateTask({ id: taskId, ...patch }).unwrap().catch((err) => {
-        console.error("Failed to update task", err);
-      });
+  const taskUpdateTimers = React.useRef<
+    Map<string, ReturnType<typeof setTimeout>>
+  >(new Map());
+
+  React.useEffect(() => {
+    return () => {
+      taskUpdateTimers.current.forEach((timer) => clearTimeout(timer));
+      taskUpdateTimers.current.clear();
+    };
+  }, []);
+
+  const scheduleTaskUpdate = React.useCallback(
+    (taskId: string, field: TaskDraftField, value: string) => {
+      const key = `${taskId}:${field}`;
+      const timers = taskUpdateTimers.current;
+      const existing = timers.get(key);
+      if (existing) clearTimeout(existing);
+
+      const timeout = setTimeout(() => {
+        updateTask({ id: taskId, [field]: value }).unwrap().catch((err) => {
+          console.error("Failed to update task", err);
+        });
+        timers.delete(key);
+      }, 400);
+
+      timers.set(key, timeout);
     },
-    400
+    [updateTask]
   );
 
   const stageTaskField = React.useCallback(
@@ -591,9 +641,8 @@ export default function BacklogPage() {
         next[task.id] = { ...(next[task.id] ?? {}), [key]: sanitized };
         return next;
       });
-      debouncedTaskUpdate(task.id, { [key]: sanitized } as Partial<BacklogItem>);
     },
-    [debouncedTaskUpdate]
+    []
   );
 
   const resolveTaskFieldValue = React.useCallback(
@@ -604,6 +653,18 @@ export default function BacklogPage() {
       return typeof originalRaw === "string" ? originalRaw : "";
     },
     [taskDrafts]
+  );
+
+  const commitTaskField = React.useCallback(
+    (task: BacklogItem, key: TaskDraftField) => {
+      const draftValue = taskDrafts[task.id]?.[key];
+      const value = draftValue ?? resolveTaskFieldValue(task, key);
+      const originalRaw = (task as any)[key];
+      const original = typeof originalRaw === "string" ? originalRaw : "";
+      if (value === original) return;
+      scheduleTaskUpdate(task.id, key, value);
+    },
+    [resolveTaskFieldValue, scheduleTaskUpdate, taskDrafts]
   );
 
   // Инициализация локальных allocations из задач
@@ -647,6 +708,22 @@ export default function BacklogPage() {
       .filter((x) => x.promDate);
   }, [releases]);
 
+  const releaseFilterOptions = React.useMemo(() => {
+    const dates = new Set<string>();
+    promReleases.forEach((r) => dates.add(r.promDate));
+    allTasks.forEach((t) => {
+      const d = t.releaseDate?.trim();
+      if (d) dates.add(d);
+    });
+    return Array.from(dates)
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b))
+      .map((iso) => ({
+        value: iso,
+        label: moment(iso).format("DD.MM.YYYY"),
+      }));
+  }, [allTasks, promReleases]);
+
   // По дате релиза определить спринт
   const detectSprintByDate = (iso?: string): string | undefined => {
     if (!iso) return undefined;
@@ -660,6 +737,7 @@ export default function BacklogPage() {
   const createTask = async () => {
     const created = await addTask({
       title: "Новая задача",
+      description: "",
       dod: "",
       priority: 2 as TaskPriority,
       customer: "",
@@ -674,6 +752,7 @@ export default function BacklogPage() {
   const duplicateTask = async (task: BacklogItem) => {
     const copy = await addTask({
       title: `${task.title} (копия)`,
+      description: task.description,
       dod: task.dod,
       priority: task.priority,
       customer: task.customer,
@@ -722,11 +801,6 @@ export default function BacklogPage() {
       return copy;
     });
     setStatusMap((prev) => {
-      const copy = { ...prev };
-      delete copy[t.id];
-      return copy;
-    });
-    setLeaderMap((prev) => {
       const copy = { ...prev };
       delete copy[t.id];
       return copy;
@@ -785,18 +859,13 @@ export default function BacklogPage() {
       }
       return copy;
     });
-    updateField(task, {
+    const patch: Partial<BacklogItem> = {
       participantIds: task.participantIds.filter((x) => x !== pid),
-    });
-    // снимем лидера если он удалён
-    setLeaderMap((prev) => {
-      if (prev[task.id] === pid) {
-        const cp = { ...prev };
-        delete cp[task.id];
-        return cp;
-      }
-      return prev;
-    });
+    };
+    if (task.leaderId === pid) {
+      patch.leaderId = "";
+    }
+    updateField(task, patch);
   };
 
   // Сдвиг влево/вправо распределения по спринтам для участника
@@ -860,6 +929,36 @@ export default function BacklogPage() {
     });
   };
 
+  const taskSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  const participantSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+  );
+
+  const handleTaskDragEnd = React.useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      const currentIds = deferredFilteredTasks.map((t) => t.id);
+      const oldIndex = currentIds.indexOf(String(active.id));
+      const newIndex = currentIds.indexOf(String(over.id));
+      if (oldIndex < 0 || newIndex < 0) return;
+
+      const reordered = arrayMove(currentIds, oldIndex, newIndex);
+      setOrderMap((prev) => {
+        const next = { ...prev };
+        reordered.forEach((id, idx) => {
+          next[id] = idx;
+        });
+        return next;
+      });
+    },
+    [deferredFilteredTasks]
+  );
+
   // Визуал заголовка спринта (с подсветкой колонки релиза для конкретной задачи)
   const HeaderSprint = ({
     s,
@@ -885,8 +984,55 @@ export default function BacklogPage() {
     </TableCell>
   );
 
+  const SortableTask = ({
+    task,
+    children,
+  }: {
+    task: BacklogItem;
+    children: (props: DragHandleProps) => React.ReactNode;
+  }) => {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+      useSortable({ id: task.id });
+
+    const style: React.CSSProperties = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      opacity: isDragging ? 0.95 : 1,
+    };
+
+    return (
+      <Box ref={setNodeRef} style={style} sx={{ width: "100%" }}>
+        {children({ attributes, listeners })}
+      </Box>
+    );
+  };
+
+  const SortableParticipantRow = ({
+    participant,
+    children,
+  }: {
+    participant: Participant;
+    children: (
+      props: DragHandleProps,
+      style: React.CSSProperties,
+      isDragging: boolean,
+      setNodeRef: (element: HTMLElement | null) => void
+    ) => React.ReactNode;
+  }) => {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+      useSortable({ id: participant.id });
+
+    const style: React.CSSProperties = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      background: isDragging ? "rgba(0,0,0,0.04)" : undefined,
+    };
+
+    return children({ attributes, listeners }, style, isDragging, setNodeRef);
+  };
+
   // Рендер одной задачи
-  const renderTaskTable = (task: BacklogItem) => {
+  const renderTaskTable = (task: BacklogItem, dragHandle?: DragHandleProps) => {
     const rows = allocations[task.id] || {};
     const participantRows: Participant[] = task.participantIds
       .map((id) => participantMap.get(id))
@@ -902,11 +1048,36 @@ export default function BacklogPage() {
 
     // статус + лидер
     const st: TaskStatus = statusMap[task.id] || "inprogress";
-    const leaderPid = leaderMap[task.id];
+    const leaderPid = task.leaderId || undefined;
 
     // релиз: подсветка колонки
     const relISO = task.releaseDate || "";
     const relSprintId = task.releaseSprintId || detectSprintByDate(relISO);
+
+    const tooltipContent = (
+      <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+          Заголовок: {resolveTaskFieldValue(task, "title") || "—"}
+        </Typography>
+        <Typography variant="body2">
+          Описание: {resolveTaskFieldValue(task, "description") || "—"}
+        </Typography>
+        <Typography variant="body2">
+          DOD: {resolveTaskFieldValue(task, "dod") || "—"}
+        </Typography>
+      </Stack>
+    );
+
+    const handleParticipantDragEnd = (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const ids = task.participantIds || [];
+      const oldIndex = ids.indexOf(String(active.id));
+      const newIndex = ids.indexOf(String(over.id));
+      if (oldIndex < 0 || newIndex < 0) return;
+      const reordered = arrayMove(ids, oldIndex, newIndex);
+      updateField(task, { participantIds: reordered });
+    };
 
     return (
       <Paper key={task.id} variant="outlined" sx={{ p: 2 }}>
@@ -918,23 +1089,36 @@ export default function BacklogPage() {
           justifyContent="space-between"
           sx={{ mb: 1 }}
         >
-          <Box sx={{ flex: 1, minWidth: 260 }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-              <EditableText
-                value={resolveTaskFieldValue(task, "title")}
-                onChange={(v) => stageTaskField(task, "title", v)}
-                placeholder="Название"
-              />
-            </Typography>
-            <Typography variant="body2" sx={{ color: "text.secondary" }}>
-              DOD:{" "}
-              <EditableText
-                value={resolveTaskFieldValue(task, "dod")}
-                onChange={(v) => stageTaskField(task, "dod", v)}
-                placeholder="Definition of Done"
-              />
-            </Typography>
-          </Box>
+          <Tooltip title={tooltipContent} arrow placement="top-start">
+            <Box sx={{ flex: 1, minWidth: 260, cursor: "help" }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                <EditableText
+                  value={resolveTaskFieldValue(task, "title")}
+                  onChange={(v) => stageTaskField(task, "title", v)}
+                  onBlur={() => commitTaskField(task, "title")}
+                  placeholder="Название"
+                />
+              </Typography>
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                Описание:{" "}
+                <EditableText
+                  value={resolveTaskFieldValue(task, "description")}
+                  onChange={(v) => stageTaskField(task, "description", v)}
+                  onBlur={() => commitTaskField(task, "description")}
+                  placeholder="Описание"
+                />
+              </Typography>
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                DOD:{" "}
+                <EditableText
+                  value={resolveTaskFieldValue(task, "dod")}
+                  onChange={(v) => stageTaskField(task, "dod", v)}
+                  onBlur={() => commitTaskField(task, "dod")}
+                  placeholder="Definition of Done"
+                />
+              </Typography>
+            </Box>
+          </Tooltip>
 
           <Stack
             direction="row"
@@ -1000,6 +1184,7 @@ export default function BacklogPage() {
                 options={customerOptions}
                 value={resolveTaskFieldValue(task, "customer")}
                 onInputChange={(_, v) => stageTaskField(task, "customer", v || "")}
+                onBlur={() => commitTaskField(task, "customer")}
                 renderInput={(params) => (
                   <TextField {...params} size="small" sx={{ ml: 1 }} />
                 )}
@@ -1017,6 +1202,7 @@ export default function BacklogPage() {
                 options={streamOptions}
                 value={resolveTaskFieldValue(task, "stream")}
                 onInputChange={(_, v) => stageTaskField(task, "stream", v || "")}
+                onBlur={() => commitTaskField(task, "stream")}
                 renderInput={(params) => (
                   <TextField {...params} size="small" sx={{ ml: 1 }} />
                 )}
@@ -1058,6 +1244,19 @@ export default function BacklogPage() {
 
             {/* Дублирование + порядок + удаление */}
             <Stack direction="row" spacing={0.5}>
+              {dragHandle && (
+                <Tooltip title="Перетащите, чтобы изменить порядок">
+                  <span
+                    {...dragHandle.attributes}
+                    {...dragHandle.listeners}
+                    style={{ display: "inline-flex" }}
+                  >
+                    <IconButton size="small">
+                      <DragIndicator fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              )}
               <Tooltip title="Дублировать">
                 <IconButton size="small" onClick={() => duplicateTask(task)}>
                   <ContentCopy fontSize="small" />
@@ -1093,6 +1292,7 @@ export default function BacklogPage() {
           <Table size="small" stickyHeader>
             <TableHead>
               <TableRow>
+                <TableCell sx={{ width: 52 }} />
                 <TableCell sx={{ minWidth: 260 }}>Участник</TableCell>
                 {visibleSprints.map((s) => (
                   <HeaderSprint
@@ -1110,94 +1310,125 @@ export default function BacklogPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {participantRows.map((p) => {
-                const row = rows[p.id] || {};
-                const rowSum = visibleSprints.reduce(
-                  (acc, s) => acc + toInt(Number(row[s.id] || 0)),
-                  0
-                );
-                const isLeader = leaderPid === p.id;
-                return (
-                  <TableRow key={p.id} hover>
-                    <TableCell
-                      sx={{
-                        bgcolor: isLeader ? "warning.light" : undefined,
-                      }}
-                    >
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <IconButton
-                          size="small"
-                          onClick={() =>
-                            setLeaderMap((prev) => ({
-                              ...prev,
-                              [task.id]:
-                                prev[task.id] === p.id ? undefined : p.id,
-                            }))
-                          }
-                        >
-                          {isLeader ? (
-                            <Star fontSize="small" color="warning" />
-                          ) : (
-                            <StarBorder fontSize="small" />
-                          )}
-                        </IconButton>
-                        <Chip label={p.role} size="small" />
-                        <Typography>{p.fullName}</Typography>
-                      </Stack>
-                    </TableCell>
+              <DndContext
+                sensors={participantSensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleParticipantDragEnd}
+              >
+                <SortableContext
+                  items={task.participantIds}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {participantRows.map((p) => {
+                    const row = rows[p.id] || {};
+                    const rowSum = visibleSprints.reduce(
+                      (acc, s) => acc + toInt(Number(row[s.id] || 0)),
+                      0
+                    );
+                    const isLeader = leaderPid === p.id;
+                    return (
+                      <SortableParticipantRow key={p.id} participant={p}>
+                        {(dragHandle, style, isDragging, setNodeRef) => (
+                          <TableRow
+                            ref={setNodeRef}
+                            hover
+                            style={style}
+                            sx={{ opacity: isDragging ? 0.95 : 1 }}
+                          >
+                            <TableCell width={52} align="center">
+                              <span
+                                {...dragHandle.attributes}
+                                {...dragHandle.listeners}
+                                style={{ display: "inline-flex", cursor: "grab" }}
+                              >
+                                <IconButton size="small">
+                                  <DragIndicator fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </TableCell>
+                            <TableCell
+                              sx={{
+                                bgcolor: isLeader ? "warning.light" : undefined,
+                              }}
+                            >
+                              <Stack direction="row" spacing={1} alignItems="center">
+                                <IconButton
+                                  size="small"
+                                  onClick={() =>
+                                    updateField(task, {
+                                      leaderId: leaderPid === p.id ? "" : p.id,
+                                    })
+                                  }
+                                >
+                                  {isLeader ? (
+                                    <Star fontSize="small" color="warning" />
+                                  ) : (
+                                    <StarBorder fontSize="small" />
+                                  )}
+                                </IconButton>
+                                <Chip label={p.role} size="small" />
+                                <Typography>{p.fullName}</Typography>
+                              </Stack>
+                            </TableCell>
 
-                    {visibleSprints.map((s) => (
-                      <TableCell key={s.id} align="center">
-                        <EditableNumberCell
-                          value={Number(row[s.id] || 0)}
-                          onChange={(v) => {
-                            setAllocations((prev) => {
-                              const copy = { ...prev };
-                              if (!copy[task.id]) copy[task.id] = {};
-                              if (!copy[task.id][p.id])
-                                copy[task.id][p.id] = {};
-                              copy[task.id][p.id][s.id] = v;
-                              return copy;
-                            });
-                          }}
-                          onCommit={() => commitCell(task.id, p.id, s.id)}
-                        />
-                      </TableCell>
-                    ))}
+                            {visibleSprints.map((s) => (
+                              <TableCell key={s.id} align="center">
+                                <EditableNumberCell
+                                  value={Number(row[s.id] || 0)}
+                                  onChange={(v) => {
+                                    setAllocations((prev) => {
+                                      const copy = { ...prev };
+                                      if (!copy[task.id]) copy[task.id] = {};
+                                      if (!copy[task.id][p.id])
+                                        copy[task.id][p.id] = {};
+                                      copy[task.id][p.id][s.id] = v;
+                                      return copy;
+                                    });
+                                  }}
+                                  onCommit={() => commitCell(task.id, p.id, s.id)}
+                                />
+                              </TableCell>
+                            ))}
 
-                    <TableCell align="center" sx={{ fontWeight: 700 }}>
-                      {toInt(rowSum)}
-                    </TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 700 }}>
+                              {toInt(rowSum)}
+                            </TableCell>
 
-                    <TableCell align="right">
-                      <Tooltip title="Сдвинуть влево (по всем спринтам)">
-                        <IconButton
-                          size="small"
-                          onClick={() => shiftRow(task.id, p.id, "left")}
-                        >
-                          <ArrowBack fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Сдвинуть вправо (по всем спринтам)">
-                        <IconButton
-                          size="small"
-                          onClick={() => shiftRow(task.id, p.id, "right")}
-                        >
-                          <ArrowForward fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Удалить участника из задачи">
-                        <IconButton
-                          size="small"
-                          onClick={() => removeParticipantFromTask(task, p.id)}
-                        >
-                          <Delete fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+                            <TableCell align="right">
+                              <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                                <Tooltip title="Сдвинуть влево (по всем спринтам)">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => shiftRow(task.id, p.id, "left")}
+                                  >
+                                    <ArrowBack fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Сдвинуть вправо (по всем спринтам)">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => shiftRow(task.id, p.id, "right")}
+                                  >
+                                    <ArrowForward fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Удалить участника из задачи">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => removeParticipantFromTask(task, p.id)}
+                                  >
+                                    <Delete fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              </Stack>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </SortableParticipantRow>
+                    );
+                  })}
+                </SortableContext>
+              </DndContext>
 
               {/* Добавление участника */}
               <TableRow>
@@ -1234,6 +1465,7 @@ export default function BacklogPage() {
 
               {/* Итоги по спринтам */}
               <TableRow>
+                <TableCell />
                 <TableCell sx={{ fontWeight: 700 }}>
                   Итого по спринтам
                 </TableCell>
@@ -1299,6 +1531,16 @@ export default function BacklogPage() {
           />
 
           <FilterAutocomplete
+            label="Релиз"
+            allowCustom={false}
+            options={releaseFilterOptions}
+            value={releaseSprintFilter === "all" ? "" : releaseSprintFilter}
+            onChange={handleReleaseFilterChange}
+            sx={{ minWidth: 200, flex: 1 }}
+            placeholder="Все релизы"
+          />
+
+          <FilterAutocomplete
             label="Стрим"
             options={streamOptions}
             value={streamFilter}
@@ -1330,16 +1572,31 @@ export default function BacklogPage() {
       </Paper>
 
       {/* Список задач */}
-      <Stack spacing={2}>
-        {deferredFilteredTasks.map((t) => renderTaskTable(t))}
-        {!deferredFilteredTasks.length && !isFetching && (
-          <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
-            <Typography color="text.secondary">
-              Нет задач по текущим фильтрам
-            </Typography>
-          </Paper>
-        )}
-      </Stack>
+      <DndContext
+        sensors={taskSensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleTaskDragEnd}
+      >
+        <SortableContext
+          items={deferredFilteredTasks.map((t) => t.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          <Stack spacing={2}>
+            {deferredFilteredTasks.map((t) => (
+              <SortableTask key={t.id} task={t}>
+                {(dragHandleProps) => renderTaskTable(t, dragHandleProps)}
+              </SortableTask>
+            ))}
+            {!deferredFilteredTasks.length && !isFetching && (
+              <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
+                <Typography color="text.secondary">
+                  Нет задач по текущим фильтрам
+                </Typography>
+              </Paper>
+            )}
+          </Stack>
+        </SortableContext>
+      </DndContext>
 
       <Divider sx={{ my: 2 }} />
       <Typography variant="caption" color="text.secondary">
