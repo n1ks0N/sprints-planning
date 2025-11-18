@@ -47,6 +47,7 @@ import {
   useUpdateTaskMutation,
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
+  useUpsertTaskAllocationBulkMutation,
   // для релизов
   useGetReleasesQuery,
 } from "../app/api";
@@ -582,6 +583,7 @@ export default function BacklogPage() {
   const [updateTask] = useUpdateTaskMutation();
   const [deleteTask] = useDeleteTaskMutation();
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
+  const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
 
   // Локальные allocations (для быстрого редактирования)
   const [allocations, setAllocations] = React.useState<Allocations>({});
@@ -590,6 +592,19 @@ export default function BacklogPage() {
   const taskUpdateTimers = React.useRef<
     Map<string, ReturnType<typeof setTimeout>>
   >(new Map());
+
+  const cancelTaskUpdate = React.useCallback(
+    (taskId: string, field: TaskDraftField) => {
+      const key = `${taskId}:${field}`;
+      const timers = taskUpdateTimers.current;
+      const existing = timers.get(key);
+      if (existing) {
+        clearTimeout(existing);
+        timers.delete(key);
+      }
+    },
+    []
+  );
 
   React.useEffect(() => {
     return () => {
@@ -620,11 +635,12 @@ export default function BacklogPage() {
   const stageTaskField = React.useCallback(
     (task: BacklogItem, key: TaskDraftField, value: string) => {
       const sanitized = value ?? "";
+      const originalRaw = (task as any)[key];
+      const original = typeof originalRaw === "string" ? originalRaw : "";
       setTaskDrafts((prev) => {
-        const originalRaw = (task as any)[key];
-        const original = typeof originalRaw === "string" ? originalRaw : "";
         const next = { ...prev } as TaskDraftState;
         if (sanitized === original) {
+          cancelTaskUpdate(task.id, key);
           const current = next[task.id];
           if (!current || current[key] === undefined) {
             return prev;
@@ -641,8 +657,11 @@ export default function BacklogPage() {
         next[task.id] = { ...(next[task.id] ?? {}), [key]: sanitized };
         return next;
       });
+      if (sanitized !== original) {
+        scheduleTaskUpdate(task.id, key, sanitized);
+      }
     },
-    []
+    [cancelTaskUpdate, scheduleTaskUpdate]
   );
 
   const resolveTaskFieldValue = React.useCallback(
@@ -893,23 +912,20 @@ export default function BacklogPage() {
       cp[taskId] = { ...cp[taskId], [participantId]: next };
       return cp;
     });
-    // коммитим только изменения
     (async () => {
       try {
-        const ops: Promise<any>[] = [];
-        for (const sid of ids) {
-          const v = toInt(Number(next[sid] || 0));
-          ops.push(
-            upsertTaskAllocation({
-              taskId,
-              participantId,
-              sprintId: sid,
-              days: v,
-            }).unwrap()
-          );
-        }
-        await Promise.all(ops);
-      } catch {}
+        const bulkAllocations = ids.reduce<Record<string, number>>((acc, sid) => {
+          acc[sid] = toInt(Number(next[sid] || 0));
+          return acc;
+        }, {});
+        await upsertTaskAllocationBulk({
+          taskId,
+          participantId,
+          allocations: bulkAllocations,
+        }).unwrap();
+      } catch (error) {
+        console.error("Failed to bulk save allocations", error);
+      }
     })();
   };
 

@@ -286,6 +286,17 @@ export const api = createApi({
       ],
     }),
 
+    upsertTaskAllocationBulk: b.mutation<
+      BacklogItem,
+      { taskId: string; participantId: string; allocations: Record<string, number> }
+    >({
+      query: (body) => ({ url: "/taskalloc/bulk", method: "POST", body }),
+      invalidatesTags: (result, error, arg) => [
+        { type: "Task" as const, id: arg.taskId },
+        { type: "Task" as const, id: "LIST" as const },
+      ],
+    }),
+
     // Легаси-алиас для совместимости с undoSlice и старым кодом
     upsertTaskLoad: b.mutation<
       BacklogItem,
@@ -363,6 +374,7 @@ export const {
   useUpdateTaskMutation,
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
+  useUpsertTaskAllocationBulkMutation,
   useUpsertTaskLoadMutation,
 
   useGetReleasesQuery,

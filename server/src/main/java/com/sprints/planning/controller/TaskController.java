@@ -2,6 +2,7 @@ package com.sprints.planning.controller;
 
 import com.sprints.planning.dto.TaskDto;
 import com.sprints.planning.dto.request.IdRequest;
+import com.sprints.planning.dto.request.TaskAllocationBulkRequest;
 import com.sprints.planning.dto.request.TaskAllocationRequest;
 import com.sprints.planning.dto.request.TaskCreateRequest;
 import com.sprints.planning.dto.request.TaskLoadRequest;
@@ -48,6 +49,11 @@ public class TaskController {
     @PostMapping("/taskalloc")
     public TaskDto upsertAllocation(@RequestBody @Valid TaskAllocationRequest request) {
         return taskService.upsertAllocation(request);
+    }
+
+    @PostMapping("/taskalloc/bulk")
+    public TaskDto upsertAllocations(@RequestBody @Valid TaskAllocationBulkRequest request) {
+        return taskService.upsertAllocations(request);
     }
 
     @PostMapping("/taskload")

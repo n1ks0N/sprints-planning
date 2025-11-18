@@ -389,6 +389,26 @@ export const mockBaseQuery: BaseQueryFn<
       return { data: clone(t) };
     }
 
+    if (url === "/taskalloc/bulk" && method === "POST") {
+      const { taskId, participantId, allocations = {} } = body || {};
+      const t = tasks.find((x) => x.id === taskId);
+      if (!t) return { error: { status: 404, data: "Task not found" } as any };
+      t.allocations = t.allocations || {};
+      t.allocations[participantId] = t.allocations[participantId] || {};
+      Object.entries(allocations || {}).forEach(([sprintId, days]) => {
+        t.allocations[participantId][sprintId] = Math.max(
+          0,
+          Math.round(Number(days) || 0)
+        );
+        t.loads[sprintId] = Object.values(t.allocations)
+          .map((m) => m[sprintId] || 0)
+          .reduce((a, b) => a + b, 0);
+      });
+      t.updatedAt = new Date().toISOString().slice(0, 10);
+      ensureTaskLoadsForAllSprints(t);
+      return { data: clone(t) };
+    }
+
     // Легаси путь для upsertTaskLoad (суммарная нагрузка по спринту)
     if (url === "/taskload" && method === "POST") {
       const { taskId, sprintId, days = 0 } = body || {};
