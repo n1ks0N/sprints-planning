@@ -513,6 +513,13 @@ export const mockBaseQuery: BaseQueryFn<
       return { data: clone(deleted) };
     }
 
+    if (url === "/export/excel" && method === "GET") {
+      const blob = new Blob(["Mock export. Switch to real API for XLSX."], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      return { data: blob };
+    }
+
     return { error: { status: 404, data: "Unknown endpoint" } as any };
   } catch (e) {
     return { error: { status: 500, data: String(e) } as any };

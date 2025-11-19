@@ -33,6 +33,7 @@ import {
   StarBorder,
   ArrowUpward,
   ArrowDownward,
+  Download,
   DragIndicator,
 } from "@mui/icons-material";
 import moment from "moment";
@@ -48,6 +49,7 @@ import {
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
   useUpsertTaskAllocationBulkMutation,
+  useLazyExportExcelQuery,
   // для релизов
   useGetReleasesQuery,
 } from "../app/api";
@@ -586,6 +588,23 @@ export default function BacklogPage() {
   const [deleteTask] = useDeleteTaskMutation();
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
+  const [exportExcel, { isFetching: isExporting }] = useLazyExportExcelQuery();
+
+  const handleExportExcel = React.useCallback(async () => {
+    try {
+      const blob = await exportExcel().unwrap();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `sprints-planning-${moment().format("YYYY-MM-DD")}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Не удалось экспортировать Excel", error);
+    }
+  }, [exportExcel]);
 
   const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
 
@@ -1594,14 +1613,23 @@ export default function BacklogPage() {
             <CircularProgress size={18} sx={{ color: "text.secondary" }} />
           )}
 
-          <Button
-            variant="contained"
-            startIcon={<Add />}
-            onClick={createTask}
-            sx={{ ml: "auto", flexShrink: 0 }}
-          >
-            Добавить задачу
-          </Button>
+          <Stack direction="row" spacing={1} sx={{ ml: "auto", flexShrink: 0 }}>
+            <Button
+              variant="outlined"
+              startIcon={<Download />}
+              onClick={handleExportExcel}
+              disabled={isExporting}
+            >
+              {isExporting ? "Экспорт..." : "Экспорт в Excel"}
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<Add />}
+              onClick={createTask}
+            >
+              Добавить задачу
+            </Button>
+          </Stack>
         </Stack>
       </Paper>
 

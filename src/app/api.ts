@@ -344,6 +344,15 @@ export const api = createApi({
         { type: "Release" as const, id: "LIST" as const },
       ],
     }),
+
+    // ---- Export ----
+    exportExcel: b.query<Blob, void>({
+      query: () => ({
+        url: "/export/excel",
+        method: "GET",
+        responseHandler: (response) => response.blob(),
+      }),
+    }),
   }),
 });
 
@@ -381,4 +390,6 @@ export const {
   useAddReleaseMutation,
   useUpdateReleaseMutation,
   useDeleteReleaseMutation,
+
+  useLazyExportExcelQuery,
 } = api;
