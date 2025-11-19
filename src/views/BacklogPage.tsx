@@ -68,7 +68,9 @@ import {
   closestCenter,
   useSensor,
   useSensors,
+  DragOverlay,
   DragEndEvent,
+  DragStartEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -585,6 +587,8 @@ export default function BacklogPage() {
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
 
+  const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
+
   // Локальные allocations (для быстрого редактирования)
   const [allocations, setAllocations] = React.useState<Allocations>({});
   const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
@@ -953,9 +957,23 @@ export default function BacklogPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
 
+  const activeTask = React.useMemo(
+    () => deferredFilteredTasks.find((t) => t.id === activeTaskId) || null,
+    [activeTaskId, deferredFilteredTasks]
+  );
+
+  const handleTaskDragStart = React.useCallback((event: DragStartEvent) => {
+    setActiveTaskId(String(event.active.id));
+  }, []);
+
+  const handleTaskDragCancel = React.useCallback(() => {
+    setActiveTaskId(null);
+  }, []);
+
   const handleTaskDragEnd = React.useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
+      setActiveTaskId(null);
       if (!over || active.id === over.id) return;
 
       const currentIds = deferredFilteredTasks.map((t) => t.id);
@@ -1591,7 +1609,9 @@ export default function BacklogPage() {
       <DndContext
         sensors={taskSensors}
         collisionDetection={closestCenter}
+        onDragStart={handleTaskDragStart}
         onDragEnd={handleTaskDragEnd}
+        onDragCancel={handleTaskDragCancel}
       >
         <SortableContext
           items={deferredFilteredTasks.map((t) => t.id)}
@@ -1612,6 +1632,21 @@ export default function BacklogPage() {
             )}
           </Stack>
         </SortableContext>
+        <DragOverlay dropAnimation={null}>
+          {activeTask ? (
+            <Paper variant="outlined" sx={{ p: 1.5, maxWidth: 960 }}>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <DragIndicator fontSize="small" color="disabled" />
+                <Stack spacing={0.25}>
+                  <Typography fontWeight={700}>{activeTask.title}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {activeTask.stream || "Без стрима"}
+                  </Typography>
+                </Stack>
+              </Stack>
+            </Paper>
+          ) : null}
+        </DragOverlay>
       </DndContext>
 
       <Divider sx={{ my: 2 }} />
