@@ -350,7 +350,7 @@ export const api = createApi({
       query: () => ({
         url: "/export/excel",
         method: "GET",
-        responseHandler: (response) => response.blob(),
+        responseHandler: (response: Response) => response.blob(),
       }),
     }),
   }),

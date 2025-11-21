@@ -393,14 +393,18 @@ export const mockBaseQuery: BaseQueryFn<
       const { taskId, participantId, allocations = {} } = body || {};
       const t = tasks.find((x) => x.id === taskId);
       if (!t) return { error: { status: 404, data: "Task not found" } as any };
-      t.allocations = t.allocations || {};
-      t.allocations[participantId] = t.allocations[participantId] || {};
+      const allocationsByParticipant: Record<string, Record<string, number>> =
+        t.allocations ?? (t.allocations = {});
+      const participantAllocations: Record<string, number> =
+        allocationsByParticipant[participantId] ??
+        (allocationsByParticipant[participantId] = {});
+
       Object.entries(allocations || {}).forEach(([sprintId, days]) => {
-        t.allocations[participantId][sprintId] = Math.max(
+        participantAllocations[sprintId] = Math.max(
           0,
           Math.round(Number(days) || 0)
         );
-        t.loads[sprintId] = Object.values(t.allocations)
+        t.loads[sprintId] = Object.values(allocationsByParticipant)
           .map((m) => m[sprintId] || 0)
           .reduce((a, b) => a + b, 0);
       });
