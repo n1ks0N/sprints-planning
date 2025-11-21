@@ -4,6 +4,11 @@ import {
   BaseQueryFn,
 } from "@reduxjs/toolkit/query/react";
 import type {
+  FetchBaseQueryError,
+  FetchBaseQueryMeta,
+  QueryReturnValue,
+} from "@reduxjs/toolkit/query";
+import type {
   Quarter,
   Sprint,
   Participant,
@@ -348,10 +353,10 @@ export const api = createApi({
     // ---- Export ----
     exportExcel: b.query<Blob, void>({
       async queryFn(_arg, _api, _extra, baseQuery) {
-        const result = await baseQuery({
+        const result = (await baseQuery({
           url: "/export/excel",
           method: "GET",
-          responseHandler: async (response) => {
+          responseHandler: async (response: Response) => {
             const blob = await response.blob();
             if (!response.ok) {
               const message = await blob.text();
@@ -359,12 +364,12 @@ export const api = createApi({
             }
             return blob;
           },
-        });
+        })) as QueryReturnValue<Blob, FetchBaseQueryError, FetchBaseQueryMeta>;
 
         if ("error" in result) {
           const data =
             typeof result.error?.data === "string" ? result.error.data : undefined;
-          return { error: { ...result.error, data } as any };
+          return { error: { ...result.error, data } as FetchBaseQueryError };
         }
 
         return { data: result.data as Blob };
