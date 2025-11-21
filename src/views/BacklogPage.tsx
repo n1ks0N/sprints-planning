@@ -1341,33 +1341,33 @@ export default function BacklogPage() {
         </Stack>
 
         {/* Таблица участники × спринты */}
-        <TableContainer component={Paper} variant="outlined" sx={{ mt: 1 }}>
-          <Table size="small" stickyHeader>
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ width: 52 }} />
-                <TableCell sx={{ minWidth: 260 }}>Участник</TableCell>
-                {visibleSprints.map((s) => (
-                  <HeaderSprint
-                    key={s.id}
-                    s={s}
-                    highlight={Boolean(relSprintId && relSprintId === s.id)}
-                  />
-                ))}
-                <TableCell align="center" sx={{ minWidth: 100 }}>
-                  Итого
-                </TableCell>
-                <TableCell align="right" sx={{ width: 180 }}>
-                  Действия
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <DndContext
-                sensors={participantSensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleParticipantDragEnd}
-              >
+        <DndContext
+          sensors={participantSensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleParticipantDragEnd}
+        >
+          <TableContainer component={Paper} variant="outlined" sx={{ mt: 1 }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ width: 52 }} />
+                  <TableCell sx={{ minWidth: 260 }}>Участник</TableCell>
+                  {visibleSprints.map((s) => (
+                    <HeaderSprint
+                      key={s.id}
+                      s={s}
+                      highlight={Boolean(relSprintId && relSprintId === s.id)}
+                    />
+                  ))}
+                  <TableCell align="center" sx={{ minWidth: 100 }}>
+                    Итого
+                  </TableCell>
+                  <TableCell align="right" sx={{ width: 180 }}>
+                    Действия
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
                 <SortableContext
                   items={task.participantIds}
                   strategy={verticalListSortingStrategy}
@@ -1481,60 +1481,60 @@ export default function BacklogPage() {
                     );
                   })}
                 </SortableContext>
-              </DndContext>
 
-              {/* Добавление участника */}
-              <TableRow>
-                <TableCell colSpan={visibleSprints.length + 2}>
-                  <Stack direction="row" spacing={2} alignItems="center">
-                    <Typography
-                      variant="body2"
-                      sx={{ color: "text.secondary" }}
-                    >
-                      Добавить участника:
-                    </Typography>
-                    <Autocomplete
-                      size="small"
-                      sx={{ minWidth: 280 }}
-                      options={participants.filter(
-                        (p) => !task.participantIds.includes(p.id)
-                      )}
-                      getOptionLabel={(p) =>
-                        p ? `${p.fullName} (${p.role})` : ""
-                      }
-                      renderInput={(params) => (
-                        <TextField {...params} label="Выберите участника" />
-                      )}
-                      onChange={(_, value) => {
-                        if (value) addParticipantToTask(task, value.id);
-                      }}
-                    />
-                  </Stack>
-                </TableCell>
-                <TableCell align="right">
-                  <Chip label="Автосумма" size="small" color="default" />
-                </TableCell>
-              </TableRow>
-
-              {/* Итоги по спринтам */}
-              <TableRow>
-                <TableCell />
-                <TableCell sx={{ fontWeight: 700 }}>
-                  Итого по спринтам
-                </TableCell>
-                {visibleSprints.map((s) => (
-                  <TableCell key={s.id} align="center" sx={{ fontWeight: 700 }}>
-                    {toInt(sumBySprint[s.id])}
+                {/* Добавление участника */}
+                <TableRow>
+                  <TableCell colSpan={visibleSprints.length + 2}>
+                    <Stack direction="row" spacing={2} alignItems="center">
+                      <Typography
+                        variant="body2"
+                        sx={{ color: "text.secondary" }}
+                      >
+                        Добавить участника:
+                      </Typography>
+                      <Autocomplete
+                        size="small"
+                        sx={{ minWidth: 280 }}
+                        options={participants.filter(
+                          (p) => !task.participantIds.includes(p.id)
+                        )}
+                        getOptionLabel={(p) =>
+                          p ? `${p.fullName} (${p.role})` : ""
+                        }
+                        renderInput={(params) => (
+                          <TextField {...params} label="Выберите участника" />
+                        )}
+                        onChange={(_, value) => {
+                          if (value) addParticipantToTask(task, value.id);
+                        }}
+                      />
+                    </Stack>
                   </TableCell>
-                ))}
-                <TableCell align="center" sx={{ fontWeight: 700 }}>
-                  {toInt(Object.values(sumBySprint).reduce((a, b) => a + b, 0))}
-                </TableCell>
-                <TableCell />
-              </TableRow>
-            </TableBody>
-          </Table>
-        </TableContainer>
+                  <TableCell align="right">
+                    <Chip label="Автосумма" size="small" color="default" />
+                  </TableCell>
+                </TableRow>
+
+                {/* Итоги по спринтам */}
+                <TableRow>
+                  <TableCell />
+                  <TableCell sx={{ fontWeight: 700 }}>
+                    Итого по спринтам
+                  </TableCell>
+                  {visibleSprints.map((s) => (
+                    <TableCell key={s.id} align="center" sx={{ fontWeight: 700 }}>
+                      {toInt(sumBySprint[s.id])}
+                    </TableCell>
+                  ))}
+                  <TableCell align="center" sx={{ fontWeight: 700 }}>
+                    {toInt(Object.values(sumBySprint).reduce((a, b) => a + b, 0))}
+                  </TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </DndContext>
       </Paper>
     );
   };

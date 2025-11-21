@@ -347,11 +347,28 @@ export const api = createApi({
 
     // ---- Export ----
     exportExcel: b.query<Blob, void>({
-      query: () => ({
-        url: "/export/excel",
-        method: "GET",
-        responseHandler: (response: Response) => response.blob(),
-      }),
+      async queryFn(_arg, _api, _extra, baseQuery) {
+        const result = await baseQuery({
+          url: "/export/excel",
+          method: "GET",
+          responseHandler: async (response) => {
+            const blob = await response.blob();
+            if (!response.ok) {
+              const message = await blob.text();
+              throw { status: response.status, data: message };
+            }
+            return blob;
+          },
+        });
+
+        if ("error" in result) {
+          const data =
+            typeof result.error?.data === "string" ? result.error.data : undefined;
+          return { error: { ...result.error, data } as any };
+        }
+
+        return { data: result.data as Blob };
+      },
     }),
   }),
 });
