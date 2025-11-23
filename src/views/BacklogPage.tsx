@@ -251,7 +251,7 @@ function EditableNumberCell({
       sx={{
         minWidth: 48,
         textAlign: "center",
-        cursor: editing ? "text" : "pointer",
+        cursor: controlledEditing ? "text" : "pointer",
       }}
       title={title || "Клик для редактирования"}
       onClick={() => !controlledEditing && startEditing()}
