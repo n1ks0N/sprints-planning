@@ -680,11 +680,8 @@ export default function BacklogPage() {
         next[task.id] = { ...(next[task.id] ?? {}), [key]: sanitized };
         return next;
       });
-      if (sanitized !== original) {
-        scheduleTaskUpdate(task.id, key, sanitized);
-      }
     },
-    [cancelTaskUpdate, scheduleTaskUpdate]
+    [cancelTaskUpdate]
   );
 
   const resolveTaskFieldValue = React.useCallback(
