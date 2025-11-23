@@ -57,6 +57,8 @@ public class ExportService {
         List<TaskDto> tasks = taskService.findAll(null);
         List<ReleaseDto> releases = releaseService.findAll();
 
+        java.util.Set<String> usedSheetNames = new java.util.HashSet<>();
+
         Map<String, SprintDto> sprintById = sprints.stream()
             .collect(Collectors.toMap(SprintDto::id, s -> s));
         Map<String, ParticipantDto> participantById = participants.stream()
@@ -65,12 +67,12 @@ public class ExportService {
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             CellStyle headerStyle = createHeaderStyle(workbook);
 
-            writeTimeSheet(workbook, headerStyle, quarters, sprints);
-            writeTeamSheet(workbook, headerStyle, participants);
-            writeBacklogSheet(workbook, headerStyle, tasks, sprintById, participantById);
-            writeParticipantWorkloadSheet(workbook, headerStyle, tasks, sprintById, participantById);
-            writeCapacitySheet(workbook, headerStyle, quarters, sprintById);
-            writeReleasesSheet(workbook, headerStyle, releases);
+            writeTimeSheet(workbook, usedSheetNames, headerStyle, quarters, sprints);
+            writeTeamSheet(workbook, usedSheetNames, headerStyle, participants);
+            writeBacklogSheet(workbook, usedSheetNames, headerStyle, tasks, sprintById, participantById);
+            writeParticipantWorkloadSheet(workbook, usedSheetNames, headerStyle, tasks, sprintById, participantById);
+            writeCapacitySheet(workbook, usedSheetNames, headerStyle, quarters, sprintById);
+            writeReleasesSheet(workbook, usedSheetNames, headerStyle, releases);
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             workbook.write(baos);
@@ -80,9 +82,9 @@ public class ExportService {
         }
     }
 
-    private void writeTimeSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<QuarterDto> quarters,
-        List<SprintDto> sprints) {
-        XSSFSheet sheet = workbook.createSheet(safeSheetName("Кварталы/Спринты"));
+    private void writeTimeSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, CellStyle headerStyle,
+        List<QuarterDto> quarters, List<SprintDto> sprints) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "Кварталы/Спринты");
         int rowIdx = 0;
 
         Row quartersTitle = sheet.createRow(rowIdx++);
@@ -114,8 +116,9 @@ public class ExportService {
         autoSize(sheet, 6);
     }
 
-    private void writeTeamSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<ParticipantDto> participants) {
-        XSSFSheet sheet = workbook.createSheet(safeSheetName("Участники"));
+    private void writeTeamSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, CellStyle headerStyle,
+        List<ParticipantDto> participants) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "Участники");
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle, "ФИО", "Роль", "Ставка");
         for (ParticipantDto participant : participants) {
             Row row = sheet.createRow(rowIdx++);
@@ -126,9 +129,9 @@ public class ExportService {
         autoSize(sheet, 3);
     }
 
-    private void writeBacklogSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<TaskDto> tasks,
-        Map<String, SprintDto> sprintById, Map<String, ParticipantDto> participantById) {
-        XSSFSheet sheet = workbook.createSheet(safeSheetName("Бэклог"));
+    private void writeBacklogSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, CellStyle headerStyle,
+        List<TaskDto> tasks, Map<String, SprintDto> sprintById, Map<String, ParticipantDto> participantById) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "Бэклог");
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Название",
             "Приоритет",
@@ -162,9 +165,10 @@ public class ExportService {
         autoSize(sheet, 10);
     }
 
-    private void writeParticipantWorkloadSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<TaskDto> tasks,
-        Map<String, SprintDto> sprintById, Map<String, ParticipantDto> participantById) {
-        XSSFSheet sheet = workbook.createSheet(safeSheetName("По сотрудникам"));
+    private void writeParticipantWorkloadSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames,
+        CellStyle headerStyle, List<TaskDto> tasks, Map<String, SprintDto> sprintById,
+        Map<String, ParticipantDto> participantById) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "По сотрудникам");
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Участник",
             "Роль",
@@ -209,9 +213,9 @@ public class ExportService {
         autoSize(sheet, 9);
     }
 
-    private void writeCapacitySheet(XSSFWorkbook workbook, CellStyle headerStyle, List<QuarterDto> quarters,
-        Map<String, SprintDto> sprintById) {
-        XSSFSheet sheet = workbook.createSheet(safeSheetName("Нагрузка"));
+    private void writeCapacitySheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, CellStyle headerStyle,
+        List<QuarterDto> quarters, Map<String, SprintDto> sprintById) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "Нагрузка");
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Квартал",
             "Участник",
@@ -250,8 +254,9 @@ public class ExportService {
         autoSize(sheet, 12);
     }
 
-    private void writeReleasesSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<ReleaseDto> releases) {
-        XSSFSheet sheet = workbook.createSheet(safeSheetName("Релизы"));
+    private void writeReleasesSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, CellStyle headerStyle,
+        List<ReleaseDto> releases) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "Релизы");
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Название",
             "ПРОМ",
@@ -309,25 +314,46 @@ public class ExportService {
         }
     }
 
-    private String safeSheetName(String name) {
+    private XSSFSheet createSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, String desiredName) {
+        String safe = safeSheetName(desiredName);
+        safe = uniqueSheetName(safe, usedSheetNames);
         try {
-            return WorkbookUtil.createSafeSheetName(name);
+            XSSFSheet sheet = workbook.createSheet(safe);
+            usedSheetNames.add(sheet.getSheetName());
+            return sheet;
         } catch (IllegalArgumentException e) {
-            String original = name == null ? "Sheet" : name;
-            StringBuilder sb = new StringBuilder(original.length());
-            for (char ch : original.toCharArray()) {
-                if (ch == '\\' || ch == '/' || ch == '?' || ch == '*' || ch == '[' || ch == ']' || ch == ':') {
-                    sb.append(' ');
-                } else {
-                    sb.append(ch);
-                }
-            }
-            String sanitized = sb.toString().trim();
+            String fallback = uniqueSheetName("Sheet", usedSheetNames);
+            XSSFSheet sheet = workbook.createSheet(fallback);
+            usedSheetNames.add(sheet.getSheetName());
+            return sheet;
+        }
+    }
+
+    private String safeSheetName(String name) {
+        String original = name == null ? "Sheet" : name;
+        try {
+            return WorkbookUtil.createSafeSheetName(original, ' ');
+        } catch (IllegalArgumentException e) {
+            String sanitized = original.replaceAll("[\\\\/?*\n\r\t\[\]:]", " ").trim();
             if (sanitized.isBlank()) {
                 sanitized = "Sheet";
             }
-            return WorkbookUtil.createSafeSheetName(sanitized);
+            return WorkbookUtil.createSafeSheetName(sanitized, ' ');
         }
+    }
+
+    private String uniqueSheetName(String baseName, java.util.Set<String> usedSheetNames) {
+        String candidate = baseName;
+        int counter = 1;
+        while (usedSheetNames.contains(candidate)) {
+            String suffix = " (" + counter++ + ")";
+            int maxBaseLength = Math.max(1, 31 - suffix.length());
+            String truncatedBase = candidate.length() > maxBaseLength
+                ? candidate.substring(0, maxBaseLength)
+                : candidate;
+            candidate = truncatedBase + suffix;
+        }
+        return candidate;
     }
 
     private String nullToEmpty(String value) {
