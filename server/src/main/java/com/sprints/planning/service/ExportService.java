@@ -310,7 +310,24 @@ public class ExportService {
     }
 
     private String safeSheetName(String name) {
-        return WorkbookUtil.createSafeSheetName(name);
+        try {
+            return WorkbookUtil.createSafeSheetName(name);
+        } catch (IllegalArgumentException e) {
+            String original = name == null ? "Sheet" : name;
+            StringBuilder sb = new StringBuilder(original.length());
+            for (char ch : original.toCharArray()) {
+                if (ch == '\\' || ch == '/' || ch == '?' || ch == '*' || ch == '[' || ch == ']' || ch == ':') {
+                    sb.append(' ');
+                } else {
+                    sb.append(ch);
+                }
+            }
+            String sanitized = sb.toString().trim();
+            if (sanitized.isBlank()) {
+                sanitized = "Sheet";
+            }
+            return WorkbookUtil.createSafeSheetName(sanitized);
+        }
     }
 
     private String nullToEmpty(String value) {
