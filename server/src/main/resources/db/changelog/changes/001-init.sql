@@ -4,7 +4,7 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-CREATE TABLE quarters (
+CREATE TABLE IF NOT EXISTS quarters (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     year INT NOT NULL,
     number SMALLINT NOT NULL CHECK (number BETWEEN 1 AND 4),
@@ -14,7 +14,7 @@ CREATE TABLE quarters (
     CONSTRAINT quarters_dates_chk CHECK (start_date <= end_date)
 );
 
-CREATE TABLE sprints (
+CREATE TABLE IF NOT EXISTS sprints (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     quarter_id UUID NOT NULL REFERENCES quarters(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -24,28 +24,28 @@ CREATE TABLE sprints (
     "order" INT NOT NULL,
     CONSTRAINT sprints_dates_chk CHECK (start_date <= end_date)
 );
-CREATE INDEX sprints_quarter_idx ON sprints(quarter_id);
-CREATE INDEX sprints_enddate_idx ON sprints(end_date);
+CREATE INDEX IF NOT EXISTS sprints_quarter_idx ON sprints(quarter_id);
+CREATE INDEX IF NOT EXISTS sprints_enddate_idx ON sprints(end_date);
 
-CREATE TABLE participants (
+CREATE TABLE IF NOT EXISTS participants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     full_name TEXT NOT NULL,
     role TEXT NOT NULL,
     rate NUMERIC(4,2) NOT NULL CHECK (rate >= 0 AND rate <= 1),
     display_order INT NOT NULL
 );
-CREATE INDEX participants_role_idx ON participants(role);
+CREATE INDEX IF NOT EXISTS participants_role_idx ON participants(role);
 
-CREATE TABLE run_vacation (
+CREATE TABLE IF NOT EXISTS run_vacation (
     participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
     sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
     run_days INT NOT NULL DEFAULT 0,
     vacation_norm_days INT NOT NULL DEFAULT 0,
     PRIMARY KEY (participant_id, sprint_id)
 );
-CREATE INDEX runvac_sprint_idx ON run_vacation(sprint_id);
+CREATE INDEX IF NOT EXISTS runvac_sprint_idx ON run_vacation(sprint_id);
 
-CREATE TABLE tasks (
+CREATE TABLE IF NOT EXISTS tasks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title TEXT NOT NULL,
     dod TEXT NOT NULL DEFAULT '',
@@ -58,35 +58,35 @@ CREATE TABLE tasks (
     created_at DATE NOT NULL,
     updated_at DATE NOT NULL
 );
-CREATE INDEX tasks_priority_idx ON tasks(priority);
-CREATE INDEX tasks_stream_idx ON tasks(stream);
-CREATE INDEX tasks_release_sprint_idx ON tasks(release_sprint_id);
+CREATE INDEX IF NOT EXISTS tasks_priority_idx ON tasks(priority);
+CREATE INDEX IF NOT EXISTS tasks_stream_idx ON tasks(stream);
+CREATE INDEX IF NOT EXISTS tasks_release_sprint_idx ON tasks(release_sprint_id);
 
-CREATE TABLE task_participants (
+CREATE TABLE IF NOT EXISTS task_participants (
     task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
     PRIMARY KEY (task_id, participant_id)
 );
 
-CREATE TABLE task_loads (
+CREATE TABLE IF NOT EXISTS task_loads (
     task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
     days INT NOT NULL DEFAULT 0,
     PRIMARY KEY (task_id, sprint_id)
 );
-CREATE INDEX task_loads_sprint_idx ON task_loads(sprint_id);
+CREATE INDEX IF NOT EXISTS task_loads_sprint_idx ON task_loads(sprint_id);
 
-CREATE TABLE task_allocations (
+CREATE TABLE IF NOT EXISTS task_allocations (
     task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
     sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
     days INT NOT NULL DEFAULT 0,
     PRIMARY KEY (task_id, participant_id, sprint_id)
 );
-CREATE INDEX task_alloc_sprint_idx ON task_allocations(sprint_id);
-CREATE INDEX task_alloc_participant_idx ON task_allocations(participant_id);
+CREATE INDEX IF NOT EXISTS task_alloc_sprint_idx ON task_allocations(sprint_id);
+CREATE INDEX IF NOT EXISTS task_alloc_participant_idx ON task_allocations(participant_id);
 
-CREATE TABLE releases (
+CREATE TABLE IF NOT EXISTS releases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT,
     prom_date DATE NOT NULL,
@@ -107,4 +107,4 @@ CREATE TABLE releases (
     created_at DATE NOT NULL,
     updated_at DATE NOT NULL
 );
-CREATE INDEX releases_prom_idx ON releases(prom_date);
+CREATE INDEX IF NOT EXISTS releases_prom_idx ON releases(prom_date);
