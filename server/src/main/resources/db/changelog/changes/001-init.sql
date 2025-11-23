@@ -1,6 +1,6 @@
 --liquibase formatted sql
 
---changeset sprints:001
+--changeset sprints:001 splitStatements:false endDelimiter:$$
 
 DO $$
 BEGIN
