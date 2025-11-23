@@ -21,6 +21,7 @@ import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.Font;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.util.WorkbookUtil;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
@@ -81,7 +82,7 @@ public class ExportService {
 
     private void writeTimeSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<QuarterDto> quarters,
         List<SprintDto> sprints) {
-        XSSFSheet sheet = workbook.createSheet("Кварталы/Спринты");
+        XSSFSheet sheet = workbook.createSheet(safeSheetName("Кварталы/Спринты"));
         int rowIdx = 0;
 
         Row quartersTitle = sheet.createRow(rowIdx++);
@@ -114,7 +115,7 @@ public class ExportService {
     }
 
     private void writeTeamSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<ParticipantDto> participants) {
-        XSSFSheet sheet = workbook.createSheet("Участники");
+        XSSFSheet sheet = workbook.createSheet(safeSheetName("Участники"));
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle, "ФИО", "Роль", "Ставка");
         for (ParticipantDto participant : participants) {
             Row row = sheet.createRow(rowIdx++);
@@ -127,7 +128,7 @@ public class ExportService {
 
     private void writeBacklogSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<TaskDto> tasks,
         Map<String, SprintDto> sprintById, Map<String, ParticipantDto> participantById) {
-        XSSFSheet sheet = workbook.createSheet("Бэклог");
+        XSSFSheet sheet = workbook.createSheet(safeSheetName("Бэклог"));
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Название",
             "Приоритет",
@@ -163,7 +164,7 @@ public class ExportService {
 
     private void writeParticipantWorkloadSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<TaskDto> tasks,
         Map<String, SprintDto> sprintById, Map<String, ParticipantDto> participantById) {
-        XSSFSheet sheet = workbook.createSheet("По сотрудникам");
+        XSSFSheet sheet = workbook.createSheet(safeSheetName("По сотрудникам"));
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Участник",
             "Роль",
@@ -210,7 +211,7 @@ public class ExportService {
 
     private void writeCapacitySheet(XSSFWorkbook workbook, CellStyle headerStyle, List<QuarterDto> quarters,
         Map<String, SprintDto> sprintById) {
-        XSSFSheet sheet = workbook.createSheet("Нагрузка");
+        XSSFSheet sheet = workbook.createSheet(safeSheetName("Нагрузка"));
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Квартал",
             "Участник",
@@ -250,7 +251,7 @@ public class ExportService {
     }
 
     private void writeReleasesSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<ReleaseDto> releases) {
-        XSSFSheet sheet = workbook.createSheet("Релизы");
+        XSSFSheet sheet = workbook.createSheet(safeSheetName("Релизы"));
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Название",
             "ПРОМ",
@@ -306,6 +307,10 @@ public class ExportService {
         for (int i = 0; i < columns; i++) {
             sheet.autoSizeColumn(i);
         }
+    }
+
+    private String safeSheetName(String name) {
+        return WorkbookUtil.createSafeSheetName(name);
     }
 
     private String nullToEmpty(String value) {
