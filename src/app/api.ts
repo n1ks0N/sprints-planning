@@ -3,6 +3,7 @@ import {
   fetchBaseQuery,
   BaseQueryFn,
 } from "@reduxjs/toolkit/query/react";
+import type { FetchBaseQueryError } from "@reduxjs/toolkit/query";
 import type {
   Quarter,
   Sprint,
@@ -286,6 +287,17 @@ export const api = createApi({
       ],
     }),
 
+    upsertTaskAllocationBulk: b.mutation<
+      BacklogItem,
+      { taskId: string; participantId: string; allocations: Record<string, number> }
+    >({
+      query: (body) => ({ url: "/taskalloc/bulk", method: "POST", body }),
+      invalidatesTags: (result, error, arg) => [
+        { type: "Task" as const, id: arg.taskId },
+        { type: "Task" as const, id: "LIST" as const },
+      ],
+    }),
+
     // Легаси-алиас для совместимости с undoSlice и старым кодом
     upsertTaskLoad: b.mutation<
       BacklogItem,
@@ -333,6 +345,34 @@ export const api = createApi({
         { type: "Release" as const, id: "LIST" as const },
       ],
     }),
+
+    // ---- Export ----
+    exportExcel: b.query<Blob, void>({
+      async queryFn() {
+        const baseUrl = process.env.API_URL || "/api";
+        try {
+          const response = await fetch(`${baseUrl}/export/excel`);
+          const blob = await response.blob();
+          if (!response.ok) {
+            const text = await blob.text();
+            return {
+              error: {
+                status: response.status,
+                data: typeof text === "string" ? text : "Export failed",
+              } as FetchBaseQueryError,
+            };
+          }
+          return { data: blob };
+        } catch (err: any) {
+          return {
+            error: {
+              status: 500,
+              data: err?.message || "Failed to export",
+            } as FetchBaseQueryError,
+          };
+        }
+      },
+    }),
   }),
 });
 
@@ -363,10 +403,13 @@ export const {
   useUpdateTaskMutation,
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
+  useUpsertTaskAllocationBulkMutation,
   useUpsertTaskLoadMutation,
 
   useGetReleasesQuery,
   useAddReleaseMutation,
   useUpdateReleaseMutation,
   useDeleteReleaseMutation,
+
+  useLazyExportExcelQuery,
 } = api;

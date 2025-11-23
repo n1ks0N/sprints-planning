@@ -2,6 +2,7 @@ package com.sprints.planning.service;
 
 import com.sprints.planning.dto.TaskDto;
 import com.sprints.planning.dto.request.IdRequest;
+import com.sprints.planning.dto.request.TaskAllocationBulkRequest;
 import com.sprints.planning.dto.request.TaskAllocationRequest;
 import com.sprints.planning.dto.request.TaskCreateRequest;
 import com.sprints.planning.dto.request.TaskLoadRequest;
@@ -181,6 +182,34 @@ public class TaskService {
             });
         allocation.setDays(Math.max(0, request.days() != null ? request.days() : 0));
         recalcLoad(task, sprint);
+        task.setUpdatedAt(LocalDate.now());
+        ensureLoadsForAllSprints(task);
+        return DtoMapper.toTaskDto(task);
+    }
+
+    @Transactional
+    public TaskDto upsertAllocations(TaskAllocationBulkRequest request) {
+        TaskEntity task = taskRepository.findById(UUID.fromString(request.taskId()))
+            .orElseThrow(() -> new EntityNotFoundException("Task not found"));
+        ParticipantEntity participant = participantRepository.findById(UUID.fromString(request.participantId()))
+            .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
+        for (Map.Entry<String, Integer> allocationEntry : request.allocations().entrySet()) {
+            SprintEntity sprint = fetchSprint(allocationEntry.getKey());
+            TaskAllocationId id = new TaskAllocationId(task.getId(), participant.getId(), sprint.getId());
+            TaskAllocationEntity allocation = taskAllocationRepository.findById(id)
+                .orElseGet(() -> {
+                    TaskAllocationEntity created = new TaskAllocationEntity();
+                    created.setId(id);
+                    created.setTask(task);
+                    created.setParticipant(participant);
+                    created.setSprint(sprint);
+                    created.setDays(0);
+                    task.getAllocations().add(created);
+                    return created;
+                });
+            allocation.setDays(Math.max(0, allocationEntry.getValue() != null ? allocationEntry.getValue() : 0));
+            recalcLoad(task, sprint);
+        }
         task.setUpdatedAt(LocalDate.now());
         ensureLoadsForAllSprints(task);
         return DtoMapper.toTaskDto(task);

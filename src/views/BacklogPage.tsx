@@ -33,6 +33,7 @@ import {
   StarBorder,
   ArrowUpward,
   ArrowDownward,
+  Download,
   DragIndicator,
 } from "@mui/icons-material";
 import moment from "moment";
@@ -47,6 +48,8 @@ import {
   useUpdateTaskMutation,
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
+  useUpsertTaskAllocationBulkMutation,
+  useLazyExportExcelQuery,
   // для релизов
   useGetReleasesQuery,
 } from "../app/api";
@@ -67,7 +70,9 @@ import {
   closestCenter,
   useSensor,
   useSensors,
+  DragOverlay,
   DragEndEvent,
+  DragStartEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -582,6 +587,26 @@ export default function BacklogPage() {
   const [updateTask] = useUpdateTaskMutation();
   const [deleteTask] = useDeleteTaskMutation();
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
+  const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
+  const [exportExcel, { isFetching: isExporting }] = useLazyExportExcelQuery();
+
+  const handleExportExcel = React.useCallback(async () => {
+    try {
+      const blob = await exportExcel().unwrap();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `sprints-planning-${moment().format("YYYY-MM-DD")}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Не удалось экспортировать Excel", error);
+    }
+  }, [exportExcel]);
+
+  const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
 
   // Локальные allocations (для быстрого редактирования)
   const [allocations, setAllocations] = React.useState<Allocations>({});
@@ -590,6 +615,19 @@ export default function BacklogPage() {
   const taskUpdateTimers = React.useRef<
     Map<string, ReturnType<typeof setTimeout>>
   >(new Map());
+
+  const cancelTaskUpdate = React.useCallback(
+    (taskId: string, field: TaskDraftField) => {
+      const key = `${taskId}:${field}`;
+      const timers = taskUpdateTimers.current;
+      const existing = timers.get(key);
+      if (existing) {
+        clearTimeout(existing);
+        timers.delete(key);
+      }
+    },
+    []
+  );
 
   React.useEffect(() => {
     return () => {
@@ -620,11 +658,12 @@ export default function BacklogPage() {
   const stageTaskField = React.useCallback(
     (task: BacklogItem, key: TaskDraftField, value: string) => {
       const sanitized = value ?? "";
+      const originalRaw = (task as any)[key];
+      const original = typeof originalRaw === "string" ? originalRaw : "";
       setTaskDrafts((prev) => {
-        const originalRaw = (task as any)[key];
-        const original = typeof originalRaw === "string" ? originalRaw : "";
         const next = { ...prev } as TaskDraftState;
         if (sanitized === original) {
+          cancelTaskUpdate(task.id, key);
           const current = next[task.id];
           if (!current || current[key] === undefined) {
             return prev;
@@ -641,8 +680,11 @@ export default function BacklogPage() {
         next[task.id] = { ...(next[task.id] ?? {}), [key]: sanitized };
         return next;
       });
+      if (sanitized !== original) {
+        scheduleTaskUpdate(task.id, key, sanitized);
+      }
     },
-    []
+    [cancelTaskUpdate, scheduleTaskUpdate]
   );
 
   const resolveTaskFieldValue = React.useCallback(
@@ -669,32 +711,53 @@ export default function BacklogPage() {
 
   // Инициализация локальных allocations из задач
   React.useEffect(() => {
-    setAllocations(() => {
-      const next: Allocations = {};
+    setAllocations((prev) => {
+      const next: Allocations = { ...prev };
       for (const t of allTasks) {
-        next[t.id] = {};
+        const taskAllocations: Record<string, Record<string, number>> =
+          next[t.id] ?? (next[t.id] = {});
         const pids = t.participantIds || [];
-        if (t.allocations && Object.keys(t.allocations).length) {
-          for (const pid of pids) {
-            next[t.id][pid] = {};
-            for (const s of allSprints) {
-              const v = t.allocations?.[pid]?.[s.id] ?? 0;
-              next[t.id][pid][s.id] = Number(v) || 0;
-            }
-          }
-        } else {
-          // если нет распределения — заполняем нулями
-          for (const pid of pids) {
-            next[t.id][pid] = {};
-            for (const s of allSprints) {
-              next[t.id][pid][s.id] = 0;
-            }
+        // удаляем удалённых участников
+        Object.keys(taskAllocations).forEach((pid) => {
+          if (!pids.includes(pid)) delete taskAllocations[pid];
+        });
+
+        for (const pid of pids) {
+          const participantAllocations: Record<string, number> =
+            taskAllocations[pid] ?? (taskAllocations[pid] = {});
+          for (const s of allSprints) {
+            const existing = participantAllocations[s.id];
+            const incoming = t.allocations?.[pid]?.[s.id];
+            const value = Number(incoming ?? existing ?? 0) || 0;
+            participantAllocations[s.id] = value;
           }
         }
       }
       return next;
     });
   }, [allTasks, allSprints]);
+
+  const [participantOrders, setParticipantOrders] = React.useState<
+    Record<string, string[]>
+  >({});
+
+  React.useEffect(() => {
+    setParticipantOrders((prev) => {
+      const next = { ...prev } as Record<string, string[]>;
+      for (const task of allTasks) {
+        const ids = task.participantIds || [];
+        const existing = next[task.id];
+        if (!existing) {
+          next[task.id] = ids.slice();
+          continue;
+        }
+        const kept = existing.filter((id) => ids.includes(id));
+        const added = ids.filter((id) => !kept.includes(id));
+        next[task.id] = [...kept, ...added];
+      }
+      return next;
+    });
+  }, [allTasks]);
 
   // Релизы: приведём к удобному виду (берём именно даты ПРОМ)
   type ReleaseLike = { id: string; promDate: string };
@@ -841,6 +904,10 @@ export default function BacklogPage() {
     if (!pid) return;
     if (task.participantIds?.includes(pid)) return;
     updateField(task, { participantIds: [...task.participantIds, pid] });
+    setParticipantOrders((prev) => ({
+      ...prev,
+      [task.id]: [...(prev[task.id] || task.participantIds), pid],
+    }));
     setAllocations((prev) => {
       const copy = { ...prev };
       if (!copy[task.id]) copy[task.id] = {};
@@ -858,6 +925,13 @@ export default function BacklogPage() {
         copy[task.id] = rows;
       }
       return copy;
+    });
+    setParticipantOrders((prev) => {
+      const next = { ...prev };
+      if (next[task.id]) {
+        next[task.id] = next[task.id].filter((id) => id !== pid);
+      }
+      return next;
     });
     const patch: Partial<BacklogItem> = {
       participantIds: task.participantIds.filter((x) => x !== pid),
@@ -893,23 +967,20 @@ export default function BacklogPage() {
       cp[taskId] = { ...cp[taskId], [participantId]: next };
       return cp;
     });
-    // коммитим только изменения
     (async () => {
       try {
-        const ops: Promise<any>[] = [];
-        for (const sid of ids) {
-          const v = toInt(Number(next[sid] || 0));
-          ops.push(
-            upsertTaskAllocation({
-              taskId,
-              participantId,
-              sprintId: sid,
-              days: v,
-            }).unwrap()
-          );
-        }
-        await Promise.all(ops);
-      } catch {}
+        const bulkAllocations = ids.reduce<Record<string, number>>((acc, sid) => {
+          acc[sid] = toInt(Number(next[sid] || 0));
+          return acc;
+        }, {});
+        await upsertTaskAllocationBulk({
+          taskId,
+          participantId,
+          allocations: bulkAllocations,
+        }).unwrap();
+      } catch (error) {
+        console.error("Failed to bulk save allocations", error);
+      }
     })();
   };
 
@@ -937,9 +1008,23 @@ export default function BacklogPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
 
+  const activeTask = React.useMemo(
+    () => deferredFilteredTasks.find((t) => t.id === activeTaskId) || null,
+    [activeTaskId, deferredFilteredTasks]
+  );
+
+  const handleTaskDragStart = React.useCallback((event: DragStartEvent) => {
+    setActiveTaskId(String(event.active.id));
+  }, []);
+
+  const handleTaskDragCancel = React.useCallback(() => {
+    setActiveTaskId(null);
+  }, []);
+
   const handleTaskDragEnd = React.useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
+      setActiveTaskId(null);
       if (!over || active.id === over.id) return;
 
       const currentIds = deferredFilteredTasks.map((t) => t.id);
@@ -1034,7 +1119,9 @@ export default function BacklogPage() {
   // Рендер одной задачи
   const renderTaskTable = (task: BacklogItem, dragHandle?: DragHandleProps) => {
     const rows = allocations[task.id] || {};
-    const participantRows: Participant[] = task.participantIds
+    const orderedParticipantIds =
+      participantOrders[task.id] || task.participantIds || [];
+    const participantRows: Participant[] = orderedParticipantIds
       .map((id) => participantMap.get(id))
       .filter(Boolean) as Participant[];
 
@@ -1071,11 +1158,12 @@ export default function BacklogPage() {
     const handleParticipantDragEnd = (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const ids = task.participantIds || [];
+      const ids = orderedParticipantIds || [];
       const oldIndex = ids.indexOf(String(active.id));
       const newIndex = ids.indexOf(String(over.id));
       if (oldIndex < 0 || newIndex < 0) return;
       const reordered = arrayMove(ids, oldIndex, newIndex);
+      setParticipantOrders((prev) => ({ ...prev, [task.id]: reordered }));
       updateField(task, { participantIds: reordered });
     };
 
@@ -1288,35 +1376,35 @@ export default function BacklogPage() {
         </Stack>
 
         {/* Таблица участники × спринты */}
-        <TableContainer component={Paper} variant="outlined" sx={{ mt: 1 }}>
-          <Table size="small" stickyHeader>
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ width: 52 }} />
-                <TableCell sx={{ minWidth: 260 }}>Участник</TableCell>
-                {visibleSprints.map((s) => (
-                  <HeaderSprint
-                    key={s.id}
-                    s={s}
-                    highlight={Boolean(relSprintId && relSprintId === s.id)}
-                  />
-                ))}
-                <TableCell align="center" sx={{ minWidth: 100 }}>
-                  Итого
-                </TableCell>
-                <TableCell align="right" sx={{ width: 180 }}>
-                  Действия
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <DndContext
-                sensors={participantSensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleParticipantDragEnd}
-              >
+        <DndContext
+          sensors={participantSensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleParticipantDragEnd}
+        >
+          <TableContainer component={Paper} variant="outlined" sx={{ mt: 1 }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ width: 52 }} />
+                  <TableCell sx={{ minWidth: 260 }}>Участник</TableCell>
+                  {visibleSprints.map((s) => (
+                    <HeaderSprint
+                      key={s.id}
+                      s={s}
+                      highlight={Boolean(relSprintId && relSprintId === s.id)}
+                    />
+                  ))}
+                  <TableCell align="center" sx={{ minWidth: 100 }}>
+                    Итого
+                  </TableCell>
+                  <TableCell align="right" sx={{ width: 180 }}>
+                    Действия
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
                 <SortableContext
-                  items={task.participantIds}
+                  items={orderedParticipantIds}
                   strategy={verticalListSortingStrategy}
                 >
                   {participantRows.map((p) => {
@@ -1428,60 +1516,60 @@ export default function BacklogPage() {
                     );
                   })}
                 </SortableContext>
-              </DndContext>
 
-              {/* Добавление участника */}
-              <TableRow>
-                <TableCell colSpan={visibleSprints.length + 2}>
-                  <Stack direction="row" spacing={2} alignItems="center">
-                    <Typography
-                      variant="body2"
-                      sx={{ color: "text.secondary" }}
-                    >
-                      Добавить участника:
-                    </Typography>
-                    <Autocomplete
-                      size="small"
-                      sx={{ minWidth: 280 }}
-                      options={participants.filter(
-                        (p) => !task.participantIds.includes(p.id)
-                      )}
-                      getOptionLabel={(p) =>
-                        p ? `${p.fullName} (${p.role})` : ""
-                      }
-                      renderInput={(params) => (
-                        <TextField {...params} label="Выберите участника" />
-                      )}
-                      onChange={(_, value) => {
-                        if (value) addParticipantToTask(task, value.id);
-                      }}
-                    />
-                  </Stack>
-                </TableCell>
-                <TableCell align="right">
-                  <Chip label="Автосумма" size="small" color="default" />
-                </TableCell>
-              </TableRow>
-
-              {/* Итоги по спринтам */}
-              <TableRow>
-                <TableCell />
-                <TableCell sx={{ fontWeight: 700 }}>
-                  Итого по спринтам
-                </TableCell>
-                {visibleSprints.map((s) => (
-                  <TableCell key={s.id} align="center" sx={{ fontWeight: 700 }}>
-                    {toInt(sumBySprint[s.id])}
+                {/* Добавление участника */}
+                <TableRow>
+                  <TableCell colSpan={visibleSprints.length + 2}>
+                    <Stack direction="row" spacing={2} alignItems="center">
+                      <Typography
+                        variant="body2"
+                        sx={{ color: "text.secondary" }}
+                      >
+                        Добавить участника:
+                      </Typography>
+                      <Autocomplete
+                        size="small"
+                        sx={{ minWidth: 280 }}
+                        options={participants.filter(
+                          (p) => !task.participantIds.includes(p.id)
+                        )}
+                        getOptionLabel={(p) =>
+                          p ? `${p.fullName} (${p.role})` : ""
+                        }
+                        renderInput={(params) => (
+                          <TextField {...params} label="Выберите участника" />
+                        )}
+                        onChange={(_, value) => {
+                          if (value) addParticipantToTask(task, value.id);
+                        }}
+                      />
+                    </Stack>
                   </TableCell>
-                ))}
-                <TableCell align="center" sx={{ fontWeight: 700 }}>
-                  {toInt(Object.values(sumBySprint).reduce((a, b) => a + b, 0))}
-                </TableCell>
-                <TableCell />
-              </TableRow>
-            </TableBody>
-          </Table>
-        </TableContainer>
+                  <TableCell align="right">
+                    <Chip label="Автосумма" size="small" color="default" />
+                  </TableCell>
+                </TableRow>
+
+                {/* Итоги по спринтам */}
+                <TableRow>
+                  <TableCell />
+                  <TableCell sx={{ fontWeight: 700 }}>
+                    Итого по спринтам
+                  </TableCell>
+                  {visibleSprints.map((s) => (
+                    <TableCell key={s.id} align="center" sx={{ fontWeight: 700 }}>
+                      {toInt(sumBySprint[s.id])}
+                    </TableCell>
+                  ))}
+                  <TableCell align="center" sx={{ fontWeight: 700 }}>
+                    {toInt(Object.values(sumBySprint).reduce((a, b) => a + b, 0))}
+                  </TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </DndContext>
       </Paper>
     );
   };
@@ -1560,14 +1648,23 @@ export default function BacklogPage() {
             <CircularProgress size={18} sx={{ color: "text.secondary" }} />
           )}
 
-          <Button
-            variant="contained"
-            startIcon={<Add />}
-            onClick={createTask}
-            sx={{ ml: "auto", flexShrink: 0 }}
-          >
-            Добавить задачу
-          </Button>
+          <Stack direction="row" spacing={1} sx={{ ml: "auto", flexShrink: 0 }}>
+            <Button
+              variant="outlined"
+              startIcon={<Download />}
+              onClick={handleExportExcel}
+              disabled={isExporting}
+            >
+              {isExporting ? "Экспорт..." : "Экспорт в Excel"}
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<Add />}
+              onClick={createTask}
+            >
+              Добавить задачу
+            </Button>
+          </Stack>
         </Stack>
       </Paper>
 
@@ -1575,7 +1672,9 @@ export default function BacklogPage() {
       <DndContext
         sensors={taskSensors}
         collisionDetection={closestCenter}
+        onDragStart={handleTaskDragStart}
         onDragEnd={handleTaskDragEnd}
+        onDragCancel={handleTaskDragCancel}
       >
         <SortableContext
           items={deferredFilteredTasks.map((t) => t.id)}
@@ -1596,6 +1695,21 @@ export default function BacklogPage() {
             )}
           </Stack>
         </SortableContext>
+        <DragOverlay dropAnimation={null}>
+          {activeTask ? (
+            <Paper variant="outlined" sx={{ p: 1.5, maxWidth: 960 }}>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <DragIndicator fontSize="small" color="disabled" />
+                <Stack spacing={0.25}>
+                  <Typography fontWeight={700}>{activeTask.title}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {activeTask.stream || "Без стрима"}
+                  </Typography>
+                </Stack>
+              </Stack>
+            </Paper>
+          ) : null}
+        </DragOverlay>
       </DndContext>
 
       <Divider sx={{ my: 2 }} />

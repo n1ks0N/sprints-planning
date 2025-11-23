@@ -389,6 +389,30 @@ export const mockBaseQuery: BaseQueryFn<
       return { data: clone(t) };
     }
 
+    if (url === "/taskalloc/bulk" && method === "POST") {
+      const { taskId, participantId, allocations = {} } = body || {};
+      const t = tasks.find((x) => x.id === taskId);
+      if (!t) return { error: { status: 404, data: "Task not found" } as any };
+      const allocationsByParticipant: Record<string, Record<string, number>> =
+        t.allocations ?? (t.allocations = {});
+      const participantAllocations: Record<string, number> =
+        allocationsByParticipant[participantId] ??
+        (allocationsByParticipant[participantId] = {});
+
+      Object.entries(allocations || {}).forEach(([sprintId, days]) => {
+        participantAllocations[sprintId] = Math.max(
+          0,
+          Math.round(Number(days) || 0)
+        );
+        t.loads[sprintId] = Object.values(allocationsByParticipant)
+          .map((m) => m[sprintId] || 0)
+          .reduce((a, b) => a + b, 0);
+      });
+      t.updatedAt = new Date().toISOString().slice(0, 10);
+      ensureTaskLoadsForAllSprints(t);
+      return { data: clone(t) };
+    }
+
     // Легаси путь для upsertTaskLoad (суммарная нагрузка по спринту)
     if (url === "/taskload" && method === "POST") {
       const { taskId, sprintId, days = 0 } = body || {};
@@ -491,6 +515,13 @@ export const mockBaseQuery: BaseQueryFn<
         return { error: { status: 404, data: "Release not found" } as any };
       const deleted = releases.splice(idx, 1)[0];
       return { data: clone(deleted) };
+    }
+
+    if (url === "/export/excel" && method === "GET") {
+      const blob = new Blob(["Mock export. Switch to real API for XLSX."], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      return { data: blob };
     }
 
     return { error: { status: 404, data: "Unknown endpoint" } as any };
