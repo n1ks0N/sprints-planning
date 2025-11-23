@@ -114,28 +114,51 @@ function EditableText({
   onBlur,
   placeholder,
   sx,
+  isEditing,
+  onStartEditing,
+  onStopEditing,
 }: {
   value: string;
   onChange: (v: string) => void;
   onBlur?: () => void;
   placeholder?: string;
   sx?: any;
+  isEditing?: boolean;
+  onStartEditing?: () => void;
+  onStopEditing?: () => void;
 }) {
-  const [editing, setEditing] = React.useState(false);
+  const [internalEditing, setInternalEditing] = React.useState(false);
+  const controlledEditing = isEditing ?? internalEditing;
   const ref = React.useRef<HTMLInputElement | null>(null);
 
+  const startEditing = React.useCallback(() => {
+    setInternalEditing(true);
+    onStartEditing?.();
+  }, [onStartEditing]);
+
+  const stopEditing = React.useCallback(() => {
+    setInternalEditing(false);
+    onStopEditing?.();
+  }, [onStopEditing]);
+
   React.useEffect(() => {
-    if (editing && ref.current) {
+    if (isEditing !== undefined) {
+      setInternalEditing(isEditing);
+    }
+  }, [isEditing]);
+
+  React.useEffect(() => {
+    if (controlledEditing && ref.current) {
       ref.current.focus();
       ref.current.select();
     }
-  }, [editing]);
+  }, [controlledEditing, value]);
 
-  return !editing ? (
+  return !controlledEditing ? (
     <Box
       component="span"
       sx={{ cursor: "text", display: "inline-block", minWidth: 8, ...sx }}
-      onClick={() => setEditing(true)}
+      onClick={startEditing}
       title="Нажмите, чтобы редактировать"
     >
       {value?.trim() ? (
@@ -156,7 +179,7 @@ function EditableText({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       onBlur={() => {
-        setEditing(false);
+        stopEditing();
         onBlur?.();
       }}
       onKeyDown={(e) => {
@@ -184,21 +207,44 @@ function EditableNumberCell({
   onChange,
   onCommit,
   title,
+  isEditing,
+  onStartEditing,
+  onStopEditing,
 }: {
   value: number;
   onChange: (next: number) => void;
   onCommit?: () => void;
   title?: string;
+  isEditing?: boolean;
+  onStartEditing?: () => void;
+  onStopEditing?: () => void;
 }) {
-  const [editing, setEditing] = React.useState(false);
+  const [internalEditing, setInternalEditing] = React.useState(false);
+  const controlledEditing = isEditing ?? internalEditing;
   const ref = React.useRef<HTMLInputElement | null>(null);
 
+  const startEditing = React.useCallback(() => {
+    setInternalEditing(true);
+    onStartEditing?.();
+  }, [onStartEditing]);
+
+  const stopEditing = React.useCallback(() => {
+    setInternalEditing(false);
+    onStopEditing?.();
+  }, [onStopEditing]);
+
   React.useEffect(() => {
-    if (editing && ref.current) {
+    if (isEditing !== undefined) {
+      setInternalEditing(isEditing);
+    }
+  }, [isEditing]);
+
+  React.useEffect(() => {
+    if (controlledEditing && ref.current) {
       ref.current.focus();
       ref.current.select();
     }
-  }, [editing]);
+  }, [controlledEditing, value]);
 
   return (
     <Box
@@ -208,9 +254,9 @@ function EditableNumberCell({
         cursor: editing ? "text" : "pointer",
       }}
       title={title || "Клик для редактирования"}
-      onClick={() => !editing && setEditing(true)}
+      onClick={() => !controlledEditing && startEditing()}
     >
-      {!editing ? (
+      {!controlledEditing ? (
         <Typography component="span">{toInt(value)}</Typography>
       ) : (
         <InputBase
@@ -222,7 +268,7 @@ function EditableNumberCell({
             onChange(Number.isFinite(v) ? v : 0);
           }}
           onBlur={() => {
-            setEditing(false);
+            stopEditing();
             onCommit?.();
           }}
           onKeyDown={(e) => {
@@ -611,6 +657,21 @@ export default function BacklogPage() {
   // Локальные allocations (для быстрого редактирования)
   const [allocations, setAllocations] = React.useState<Allocations>({});
   const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
+  const [activeEditors, setActiveEditors] = React.useState<Record<string, boolean>>(
+    {}
+  );
+
+  const startEditor = React.useCallback((key: string) => {
+    setActiveEditors((prev) => ({ ...prev, [key]: true }));
+  }, []);
+
+  const stopEditor = React.useCallback((key: string) => {
+    setActiveEditors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }, []);
 
   const taskUpdateTimers = React.useRef<
     Map<string, ReturnType<typeof setTimeout>>
@@ -1138,6 +1199,10 @@ export default function BacklogPage() {
     const relISO = task.releaseDate || "";
     const relSprintId = task.releaseSprintId || detectSprintByDate(relISO);
 
+    const textEditorKey = (field: TaskDraftField) => `${task.id}:${field}`;
+    const allocationEditorKey = (pid: string, sid: string) =>
+      `${task.id}:${pid}:${sid}`;
+
     const tooltipContent = (
       <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
         <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
@@ -1180,8 +1245,14 @@ export default function BacklogPage() {
                 <EditableText
                   value={resolveTaskFieldValue(task, "title")}
                   onChange={(v) => stageTaskField(task, "title", v)}
-                  onBlur={() => commitTaskField(task, "title")}
+                  onBlur={() => {
+                    stopEditor(textEditorKey("title"));
+                    commitTaskField(task, "title");
+                  }}
                   placeholder="Название"
+                  isEditing={activeEditors[textEditorKey("title")]}
+                  onStartEditing={() => startEditor(textEditorKey("title"))}
+                  onStopEditing={() => stopEditor(textEditorKey("title"))}
                 />
               </Typography>
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
@@ -1189,8 +1260,14 @@ export default function BacklogPage() {
                 <EditableText
                   value={resolveTaskFieldValue(task, "description")}
                   onChange={(v) => stageTaskField(task, "description", v)}
-                  onBlur={() => commitTaskField(task, "description")}
+                  onBlur={() => {
+                    stopEditor(textEditorKey("description"));
+                    commitTaskField(task, "description");
+                  }}
                   placeholder="Описание"
+                  isEditing={activeEditors[textEditorKey("description")]}
+                  onStartEditing={() => startEditor(textEditorKey("description"))}
+                  onStopEditing={() => stopEditor(textEditorKey("description"))}
                 />
               </Typography>
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
@@ -1198,8 +1275,14 @@ export default function BacklogPage() {
                 <EditableText
                   value={resolveTaskFieldValue(task, "dod")}
                   onChange={(v) => stageTaskField(task, "dod", v)}
-                  onBlur={() => commitTaskField(task, "dod")}
+                  onBlur={() => {
+                    stopEditor(textEditorKey("dod"));
+                    commitTaskField(task, "dod");
+                  }}
                   placeholder="Definition of Done"
+                  isEditing={activeEditors[textEditorKey("dod")]}
+                  onStartEditing={() => startEditor(textEditorKey("dod"))}
+                  onStopEditing={() => stopEditor(textEditorKey("dod"))}
                 />
               </Typography>
             </Box>
@@ -1470,7 +1553,21 @@ export default function BacklogPage() {
                                       return copy;
                                     });
                                   }}
-                                  onCommit={() => commitCell(task.id, p.id, s.id)}
+                                  onCommit={() => {
+                                    stopEditor(
+                                      allocationEditorKey(p.id, s.id)
+                                    );
+                                    commitCell(task.id, p.id, s.id);
+                                  }}
+                                  isEditing={
+                                    activeEditors[allocationEditorKey(p.id, s.id)]
+                                  }
+                                  onStartEditing={() =>
+                                    startEditor(allocationEditorKey(p.id, s.id))
+                                  }
+                                  onStopEditing={() =>
+                                    stopEditor(allocationEditorKey(p.id, s.id))
+                                  }
                                 />
                               </TableCell>
                             ))}
