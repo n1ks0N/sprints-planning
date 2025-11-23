@@ -711,32 +711,53 @@ export default function BacklogPage() {
 
   // Инициализация локальных allocations из задач
   React.useEffect(() => {
-    setAllocations(() => {
-      const next: Allocations = {};
+    setAllocations((prev) => {
+      const next: Allocations = { ...prev };
       for (const t of allTasks) {
-        next[t.id] = {};
+        const taskAllocations: Record<string, Record<string, number>> =
+          next[t.id] ?? (next[t.id] = {});
         const pids = t.participantIds || [];
-        if (t.allocations && Object.keys(t.allocations).length) {
-          for (const pid of pids) {
-            next[t.id][pid] = {};
-            for (const s of allSprints) {
-              const v = t.allocations?.[pid]?.[s.id] ?? 0;
-              next[t.id][pid][s.id] = Number(v) || 0;
-            }
-          }
-        } else {
-          // если нет распределения — заполняем нулями
-          for (const pid of pids) {
-            next[t.id][pid] = {};
-            for (const s of allSprints) {
-              next[t.id][pid][s.id] = 0;
-            }
+        // удаляем удалённых участников
+        Object.keys(taskAllocations).forEach((pid) => {
+          if (!pids.includes(pid)) delete taskAllocations[pid];
+        });
+
+        for (const pid of pids) {
+          const participantAllocations: Record<string, number> =
+            taskAllocations[pid] ?? (taskAllocations[pid] = {});
+          for (const s of allSprints) {
+            const existing = participantAllocations[s.id];
+            const incoming = t.allocations?.[pid]?.[s.id];
+            const value = Number(incoming ?? existing ?? 0) || 0;
+            participantAllocations[s.id] = value;
           }
         }
       }
       return next;
     });
   }, [allTasks, allSprints]);
+
+  const [participantOrders, setParticipantOrders] = React.useState<
+    Record<string, string[]>
+  >({});
+
+  React.useEffect(() => {
+    setParticipantOrders((prev) => {
+      const next = { ...prev } as Record<string, string[]>;
+      for (const task of allTasks) {
+        const ids = task.participantIds || [];
+        const existing = next[task.id];
+        if (!existing) {
+          next[task.id] = ids.slice();
+          continue;
+        }
+        const kept = existing.filter((id) => ids.includes(id));
+        const added = ids.filter((id) => !kept.includes(id));
+        next[task.id] = [...kept, ...added];
+      }
+      return next;
+    });
+  }, [allTasks]);
 
   // Релизы: приведём к удобному виду (берём именно даты ПРОМ)
   type ReleaseLike = { id: string; promDate: string };
@@ -883,6 +904,10 @@ export default function BacklogPage() {
     if (!pid) return;
     if (task.participantIds?.includes(pid)) return;
     updateField(task, { participantIds: [...task.participantIds, pid] });
+    setParticipantOrders((prev) => ({
+      ...prev,
+      [task.id]: [...(prev[task.id] || task.participantIds), pid],
+    }));
     setAllocations((prev) => {
       const copy = { ...prev };
       if (!copy[task.id]) copy[task.id] = {};
@@ -900,6 +925,13 @@ export default function BacklogPage() {
         copy[task.id] = rows;
       }
       return copy;
+    });
+    setParticipantOrders((prev) => {
+      const next = { ...prev };
+      if (next[task.id]) {
+        next[task.id] = next[task.id].filter((id) => id !== pid);
+      }
+      return next;
     });
     const patch: Partial<BacklogItem> = {
       participantIds: task.participantIds.filter((x) => x !== pid),
@@ -1087,7 +1119,9 @@ export default function BacklogPage() {
   // Рендер одной задачи
   const renderTaskTable = (task: BacklogItem, dragHandle?: DragHandleProps) => {
     const rows = allocations[task.id] || {};
-    const participantRows: Participant[] = task.participantIds
+    const orderedParticipantIds =
+      participantOrders[task.id] || task.participantIds || [];
+    const participantRows: Participant[] = orderedParticipantIds
       .map((id) => participantMap.get(id))
       .filter(Boolean) as Participant[];
 
@@ -1124,11 +1158,12 @@ export default function BacklogPage() {
     const handleParticipantDragEnd = (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const ids = task.participantIds || [];
+      const ids = orderedParticipantIds || [];
       const oldIndex = ids.indexOf(String(active.id));
       const newIndex = ids.indexOf(String(over.id));
       if (oldIndex < 0 || newIndex < 0) return;
       const reordered = arrayMove(ids, oldIndex, newIndex);
+      setParticipantOrders((prev) => ({ ...prev, [task.id]: reordered }));
       updateField(task, { participantIds: reordered });
     };
 
@@ -1369,7 +1404,7 @@ export default function BacklogPage() {
               </TableHead>
               <TableBody>
                 <SortableContext
-                  items={task.participantIds}
+                  items={orderedParticipantIds}
                   strategy={verticalListSortingStrategy}
                 >
                   {participantRows.map((p) => {

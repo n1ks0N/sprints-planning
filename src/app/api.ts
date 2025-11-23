@@ -3,11 +3,7 @@ import {
   fetchBaseQuery,
   BaseQueryFn,
 } from "@reduxjs/toolkit/query/react";
-import type {
-  FetchBaseQueryError,
-  FetchBaseQueryMeta,
-  QueryReturnValue,
-} from "@reduxjs/toolkit/query";
+import type { FetchBaseQueryError } from "@reduxjs/toolkit/query";
 import type {
   Quarter,
   Sprint,
@@ -352,27 +348,29 @@ export const api = createApi({
 
     // ---- Export ----
     exportExcel: b.query<Blob, void>({
-      async queryFn(_arg, _api, _extra, baseQuery) {
-        const result = (await baseQuery({
-          url: "/export/excel",
-          method: "GET",
-          responseHandler: async (response: Response) => {
-            const blob = await response.blob();
-            if (!response.ok) {
-              const message = await blob.text();
-              throw { status: response.status, data: message };
-            }
-            return blob;
-          },
-        })) as QueryReturnValue<Blob, FetchBaseQueryError, FetchBaseQueryMeta>;
-
-        if ("error" in result) {
-          const data =
-            typeof result.error?.data === "string" ? result.error.data : undefined;
-          return { error: { ...result.error, data } as FetchBaseQueryError };
+      async queryFn() {
+        const baseUrl = process.env.API_URL || "/api";
+        try {
+          const response = await fetch(`${baseUrl}/export/excel`);
+          const blob = await response.blob();
+          if (!response.ok) {
+            const text = await blob.text();
+            return {
+              error: {
+                status: response.status,
+                data: typeof text === "string" ? text : "Export failed",
+              } as FetchBaseQueryError,
+            };
+          }
+          return { data: blob };
+        } catch (err: any) {
+          return {
+            error: {
+              status: 500,
+              data: err?.message || "Failed to export",
+            } as FetchBaseQueryError,
+          };
         }
-
-        return { data: result.data as Blob };
       },
     }),
   }),
