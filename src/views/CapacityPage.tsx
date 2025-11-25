@@ -25,6 +25,11 @@ import type { Participant, Quarter, Sprint, BacklogItem } from "../types";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import { setCapacitySelectedQuarterIds } from "../app/uiSlice";
+import {
+  areStringArraysEqual,
+  filterExistingQuarterIds,
+  findCurrentQuarterId,
+} from "../utils/quarters";
 
 moment.locale("ru");
 
@@ -33,12 +38,6 @@ const NORM = 0.75;
 const ruDate = (iso: string) =>
   moment(iso, "YYYY-MM-DD", true).format("DD.MM.YYYY");
 const round1 = (v: number) => Math.round(v * 10) / 10;
-
-function getCurrentQuarterId(quarters: Quarter[]) {
-  const today = moment().format("YYYY-MM-DD");
-  const q = quarters.find((x) => x.startDate <= today && today <= x.endDate);
-  return q ? q.id : null;
-}
 
 function collectSprintIds(
   selectedQuarterIds: string[],
@@ -96,14 +95,6 @@ function cellColor(workload: number, available: number): string {
   return "#e8f5e9"; // зелёный
 }
 
-function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
-
 export default function CapacityPage() {
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: sprints = [] } = useGetSprintsQuery(undefined);
@@ -115,31 +106,33 @@ export default function CapacityPage() {
     (state) => state.ui.capacity.selectedQuarterIds
   );
 
-  React.useEffect(() => {
-    if (!quarters.length) return;
-    const actualIds = new Set(quarters.map((q) => q.id));
-    const filtered = selectedQuarterIds.filter((id) => actualIds.has(id));
-    const unique = Array.from(new Set(filtered));
-    if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
-      dispatch(setCapacitySelectedQuarterIds(unique));
-    }
-  }, [quarters, selectedQuarterIds, dispatch]);
+  const validQuarterIds = React.useMemo(
+    () => filterExistingQuarterIds(selectedQuarterIds, quarters),
+    [selectedQuarterIds, quarters]
+  );
 
   React.useEffect(() => {
-    if (!quarters.length || selectedQuarterIds.length > 0) return;
-    const currentId = getCurrentQuarterId(quarters);
+    if (!areStringArraysEqual(validQuarterIds, selectedQuarterIds)) {
+      dispatch(setCapacitySelectedQuarterIds(validQuarterIds));
+    }
+  }, [validQuarterIds, selectedQuarterIds, dispatch]);
+
+  React.useEffect(() => {
+    if (!quarters.length || validQuarterIds.length > 0) return;
+    const currentId = findCurrentQuarterId(quarters);
     if (currentId) {
       dispatch(setCapacitySelectedQuarterIds([currentId]));
     }
-  }, [quarters, selectedQuarterIds.length, dispatch]);
+  }, [quarters, validQuarterIds.length, dispatch]);
 
   const displaySprints = React.useMemo(() => {
-    return collectSprintIds(selectedQuarterIds, sprints);
-  }, [selectedQuarterIds, sprints]);
+    return collectSprintIds(validQuarterIds, sprints);
+  }, [validQuarterIds, sprints]);
 
   const workloadMap = React.useMemo(() => {
     const sprintIds = displaySprints.map((s) => s.id);
-    return buildWorkloadByParticipantSprint(tasks, sprintIds);
+    const prioritizedTasks = tasks.filter((t) => Number(t.priority) <= 2);
+    return buildWorkloadByParticipantSprint(prioritizedTasks, sprintIds);
   }, [tasks, displaySprints]);
 
   const sprintIndex = React.useMemo(() => {
@@ -160,11 +153,9 @@ export default function CapacityPage() {
 
   const handleQuarterFilterChange = React.useCallback(
     (ids: string[]) => {
-      const existing = new Set(quarters.map((q) => q.id));
-      const filtered = ids.filter((id) => existing.has(id));
-      const unique = Array.from(new Set(filtered));
-      if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
-        dispatch(setCapacitySelectedQuarterIds(unique));
+      const nextIds = filterExistingQuarterIds(ids, quarters);
+      if (!areStringArraysEqual(nextIds, selectedQuarterIds)) {
+        dispatch(setCapacitySelectedQuarterIds(nextIds));
       }
     },
     [quarters, dispatch, selectedQuarterIds]
@@ -207,7 +198,7 @@ export default function CapacityPage() {
           allowCustom={false}
           label="Фильтр по кварталам"
           options={quarterFilterOptions}
-          value={selectedQuarterIds}
+          value={validQuarterIds}
           onChange={handleQuarterFilterChange}
           sx={{ minWidth: 280, flex: 1 }}
         />

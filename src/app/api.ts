@@ -13,6 +13,7 @@ import type {
   BacklogItem,
   Release,
 } from "../types";
+import type { HistoryChangeInput, HistoryGroup } from "../types/history";
 import { mockBaseQuery } from "../mock/mockApi";
 
 const USE_MOCK = process.env.USE_MOCK === "true";
@@ -50,6 +51,7 @@ export const api = createApi({
     "Capacity",
     "Task",
     "Release",
+    "History",
   ],
   endpoints: (b) => ({
     // ---- Quarters ----
@@ -346,6 +348,45 @@ export const api = createApi({
       ],
     }),
 
+    // ---- History ----
+    getHistory: b.query<HistoryGroup[], void>({
+      query: () => ({ url: "/history", method: "GET" }),
+      providesTags: (result) =>
+        result
+          ? [listTag("History"), ...result.map((g) => entityTag("History", g.id))]
+          : [listTag("History")],
+    }),
+    addHistoryChange: b.mutation<HistoryGroup[], HistoryChangeInput>({
+      query: (body) => ({ url: "/history/change", method: "POST", body }),
+      invalidatesTags: [listTag("History")],
+    }),
+    updateHistoryDescription: b.mutation<
+      HistoryGroup[],
+      { id: string; description: string }
+    >({
+      query: (body) => ({ url: "/history/description", method: "POST", body }),
+      invalidatesTags: (result, error, arg) => [
+        entityTag("History", arg.id),
+        listTag("History"),
+      ],
+    }),
+    updateHistoryLock: b.mutation<HistoryGroup[], { id: string; locked: boolean }>(
+      {
+        query: (body) => ({ url: "/history/lock", method: "POST", body }),
+        invalidatesTags: (result, error, arg) => [
+          entityTag("History", arg.id),
+          listTag("History"),
+        ],
+      }
+    ),
+    markHistoryRolledBack: b.mutation<HistoryGroup[], { id: string }>({
+      query: (body) => ({ url: "/history/rollback", method: "POST", body }),
+      invalidatesTags: (result, error, arg) => [
+        entityTag("History", arg.id),
+        listTag("History"),
+      ],
+    }),
+
     // ---- Export ----
     exportExcel: b.query<Blob, void>({
       async queryFn() {
@@ -410,6 +451,12 @@ export const {
   useAddReleaseMutation,
   useUpdateReleaseMutation,
   useDeleteReleaseMutation,
+
+  useGetHistoryQuery,
+  useAddHistoryChangeMutation,
+  useUpdateHistoryDescriptionMutation,
+  useUpdateHistoryLockMutation,
+  useMarkHistoryRolledBackMutation,
 
   useLazyExportExcelQuery,
 } = api;
