@@ -35,6 +35,11 @@ import type { Quarter, Sprint } from "../types";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import { setTimeSelectedQuarterIds } from "../app/uiSlice";
+import {
+  areStringArraysEqual,
+  filterExistingQuarterIds,
+  findCurrentQuarterId,
+} from "../utils/quarters";
 
 moment.locale("ru");
 
@@ -47,14 +52,6 @@ const addMonths = (d: moment.Moment, n: number) => d.clone().add(n, "month");
 const quarterOfMonth0 = (m0: number) =>
   (Math.floor(m0 / 3) + 1) as 1 | 2 | 3 | 4;
 const fmtRU = (isoDate: string) => moment(isoDate, fmt).format("DD.MM.YYYY");
-
-function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
 
 const LS_HIDE_PAST = "timeSetup.hidePast";
 
@@ -126,6 +123,10 @@ export default function TimeSetupPage() {
   const selectedQuarterIds = useAppSelector(
     (state) => state.ui.time.selectedQuarterIds
   );
+  const validQuarterIds = React.useMemo(
+    () => filterExistingQuarterIds(selectedQuarterIds, quarters),
+    [selectedQuarterIds, quarters]
+  );
   const [hidePast, setHidePast] = React.useState<boolean>(() => {
     try {
       const hpRaw = localStorage.getItem(LS_HIDE_PAST);
@@ -137,14 +138,10 @@ export default function TimeSetupPage() {
   });
 
   React.useEffect(() => {
-    if (!quarters.length) return;
-    const actualIds = new Set(quarters.map((q) => q.id));
-    const filtered = selectedQuarterIds.filter((id) => actualIds.has(id));
-    const unique = Array.from(new Set(filtered));
-    if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
-      dispatch(setTimeSelectedQuarterIds(unique));
+    if (!areStringArraysEqual(validQuarterIds, selectedQuarterIds)) {
+      dispatch(setTimeSelectedQuarterIds(validQuarterIds));
     }
-  }, [quarters, selectedQuarterIds, dispatch]);
+  }, [validQuarterIds, selectedQuarterIds, dispatch]);
 
   const onToggleHidePast = (e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.checked;
@@ -156,15 +153,21 @@ export default function TimeSetupPage() {
 
   const handleQuarterFilterChange = React.useCallback(
     (ids: string[]) => {
-      const existing = new Set(quarters.map((q) => q.id));
-      const filtered = ids.filter((id) => existing.has(id));
-      const unique = Array.from(new Set(filtered));
-      if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
-        dispatch(setTimeSelectedQuarterIds(unique));
+      const next = filterExistingQuarterIds(ids, quarters);
+      if (!areStringArraysEqual(next, selectedQuarterIds)) {
+        dispatch(setTimeSelectedQuarterIds(next));
       }
     },
     [quarters, selectedQuarterIds, dispatch]
   );
+
+  React.useEffect(() => {
+    if (validQuarterIds.length > 0 || !quarters.length) return;
+    const current = findCurrentQuarterId(quarters);
+    if (current) {
+      dispatch(setTimeSelectedQuarterIds([current]));
+    }
+  }, [dispatch, quarters, validQuarterIds.length]);
 
   const [openSprintForQuarterId, setOpenSprintForQuarterId] = React.useState<
     string | null
@@ -232,13 +235,13 @@ export default function TimeSetupPage() {
 
   const visibleQuarters = React.useMemo(() => {
     const base =
-      selectedQuarterIds.length === 0
+      validQuarterIds.length === 0
         ? sortedQuarters
-        : sortedQuarters.filter((q) => selectedQuarterIds.includes(q.id));
+        : sortedQuarters.filter((q) => validQuarterIds.includes(q.id));
     if (!hidePast) return base;
     const today = moment().startOf("day");
     return base.filter((q) => !today.isAfter(parseISO(q.endDate), "day"));
-  }, [sortedQuarters, selectedQuarterIds, hidePast]);
+  }, [sortedQuarters, validQuarterIds, hidePast]);
 
   const openAddSprint = (quarterId: string) => {
     const q = quartersById.get(quarterId);
@@ -475,11 +478,11 @@ export default function TimeSetupPage() {
       endDate: qEnd,
     }).unwrap()) as Quarter;
 
-    if (selectedQuarterIds.length > 0) {
-      const set = new Set(selectedQuarterIds);
+    if (validQuarterIds.length > 0) {
+      const set = new Set(validQuarterIds);
       if (!set.has(created.id)) {
         dispatch(
-          setTimeSelectedQuarterIds([...selectedQuarterIds, created.id])
+          setTimeSelectedQuarterIds([...validQuarterIds, created.id])
         );
       }
     }
@@ -536,10 +539,10 @@ export default function TimeSetupPage() {
   const removeQuarter = async (id: string) => {
     if (!window.confirm("Удалить квартал и все его спринты?")) return;
     await deleteQuarter({ id }).unwrap();
-    if (selectedQuarterIds.includes(id)) {
+    if (validQuarterIds.includes(id)) {
       dispatch(
         setTimeSelectedQuarterIds(
-          selectedQuarterIds.filter((qid) => qid !== id)
+          validQuarterIds.filter((qid) => qid !== id)
         )
       );
     }
@@ -919,7 +922,7 @@ export default function TimeSetupPage() {
           allowCustom={false}
           label="Фильтр по кварталам"
           options={quarterFilterOptions}
-          value={selectedQuarterIds}
+          value={validQuarterIds}
           onChange={handleQuarterFilterChange}
           sx={{ minWidth: 280, flex: 1 }}
         />
