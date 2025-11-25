@@ -1066,7 +1066,7 @@ export default function BacklogPage() {
       return copy;
     });
   };
-  const removeParticipantFromTask = (task: BacklogItem, pid: string) => {
+  const removeParticipantFromTask = async (task: BacklogItem, pid: string) => {
     setAllocations((prev) => {
       const copy = { ...prev };
       if (copy[task.id]) {
@@ -1089,7 +1089,22 @@ export default function BacklogPage() {
     if (task.leaderId === pid) {
       patch.leaderId = "";
     }
-    updateField(task, patch);
+    const zeroAllocations = allSprints.reduce<Record<string, number>>((acc, s) => {
+      acc[s.id] = 0;
+      return acc;
+    }, {});
+    try {
+      await Promise.all([
+        updateTask({ id: task.id, ...patch }).unwrap(),
+        upsertTaskAllocationBulk({
+          taskId: task.id,
+          participantId: pid,
+          allocations: zeroAllocations,
+        }).unwrap(),
+      ]);
+    } catch (error) {
+      console.error("Failed to remove participant from task", error);
+    }
   };
 
   // Сдвиг влево/вправо распределения по спринтам для участника

@@ -8,3 +8,6 @@ databaseChangeLog:
   - include:
       file: classpath:db/changelog/changes/003-decimal-loads.sql
       relativeToChangelogFile: false
+  - include:
+      file: classpath:db/changelog/changes/004-history.sql
+      relativeToChangelogFile: false
