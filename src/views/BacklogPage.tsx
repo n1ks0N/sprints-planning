@@ -40,6 +40,7 @@ import moment from "moment";
 import "moment/locale/ru";
 
 import {
+  api,
   useGetParticipantsQuery,
   useGetQuartersQuery,
   useGetSprintsQuery,
@@ -130,6 +131,7 @@ function EditableText({
   const [internalEditing, setInternalEditing] = React.useState(false);
   const controlledEditing = isEditing ?? internalEditing;
   const ref = React.useRef<HTMLInputElement | null>(null);
+  const prevEditing = React.useRef(controlledEditing);
 
   const startEditing = React.useCallback(() => {
     setInternalEditing(true);
@@ -148,11 +150,14 @@ function EditableText({
   }, [isEditing]);
 
   React.useEffect(() => {
-    if (controlledEditing && ref.current) {
-      ref.current.focus();
-      ref.current.select();
+    const node = ref.current;
+    if (controlledEditing && !prevEditing.current && node) {
+      node.focus();
+      const len = node.value?.length ?? 0;
+      node.setSelectionRange?.(len, len);
     }
-  }, [controlledEditing, value]);
+    prevEditing.current = controlledEditing;
+  }, [controlledEditing]);
 
   return !controlledEditing ? (
     <Box
@@ -222,6 +227,7 @@ function EditableNumberCell({
   const [internalEditing, setInternalEditing] = React.useState(false);
   const controlledEditing = isEditing ?? internalEditing;
   const ref = React.useRef<HTMLInputElement | null>(null);
+  const prevEditing = React.useRef(controlledEditing);
 
   const startEditing = React.useCallback(() => {
     setInternalEditing(true);
@@ -240,11 +246,12 @@ function EditableNumberCell({
   }, [isEditing]);
 
   React.useEffect(() => {
-    if (controlledEditing && ref.current) {
+    if (controlledEditing && !prevEditing.current && ref.current) {
       ref.current.focus();
       ref.current.select();
     }
-  }, [controlledEditing, value]);
+    prevEditing.current = controlledEditing;
+  }, [controlledEditing]);
 
   return (
     <Box
@@ -400,6 +407,39 @@ export default function BacklogPage() {
   const dispatch = useAppDispatch();
   const { priorityFilter, streamFilter, statusFilter, releaseSprintFilter } =
     useAppSelector((s) => s.ui.backlog);
+
+  const applyTaskOrderOptimistic = React.useCallback(
+    (orderedIds: string[]) =>
+      dispatch(
+        api.util.updateQueryData("getTasks", undefined, (draft) => {
+          const byId = new Map(draft.map((t) => [t.id, t]));
+          const seen = new Set<string>();
+          const reordered = orderedIds
+            .map((id) => {
+              const item = byId.get(id);
+              if (item) seen.add(id);
+              return item;
+            })
+            .filter(Boolean) as BacklogItem[];
+          const untouched = draft.filter((t) => !seen.has(t.id));
+          draft.splice(0, draft.length, ...reordered, ...untouched);
+        })
+      ),
+    [dispatch]
+  );
+
+  const applyParticipantOrderOptimistic = React.useCallback(
+    (taskId: string, participantIds: string[]) =>
+      dispatch(
+        api.util.updateQueryData("getTasks", undefined, (draft) => {
+          const task = draft.find((t) => t.id === taskId);
+          if (task) {
+            task.participantIds = participantIds.slice();
+          }
+        })
+      ),
+    [dispatch]
+  );
 
   // Источник задач — всегда берём все, фильтруем на клиенте (т.к. мульти-кварталы)
   const { data: allTasks = [], isFetching } = useGetTasksQuery(undefined);
@@ -1098,8 +1138,9 @@ export default function BacklogPage() {
         });
         return next;
       });
+      applyTaskOrderOptimistic(reordered);
     },
-    [deferredFilteredTasks]
+    [applyTaskOrderOptimistic, deferredFilteredTasks]
   );
 
   // Визуал заголовка спринта (с подсветкой колонки релиза для конкретной задачи)
@@ -1217,7 +1258,7 @@ export default function BacklogPage() {
       </Stack>
     );
 
-    const handleParticipantDragEnd = (event: DragEndEvent) => {
+    const handleParticipantDragEnd = async (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
       const ids = orderedParticipantIds || [];
@@ -1225,8 +1266,16 @@ export default function BacklogPage() {
       const newIndex = ids.indexOf(String(over.id));
       if (oldIndex < 0 || newIndex < 0) return;
       const reordered = arrayMove(ids, oldIndex, newIndex);
+      const previous = ids.slice();
+      const patch = applyParticipantOrderOptimistic(task.id, reordered);
       setParticipantOrders((prev) => ({ ...prev, [task.id]: reordered }));
-      updateField(task, { participantIds: reordered });
+      try {
+        await updateField(task, { participantIds: reordered });
+      } catch (error) {
+        console.error("Failed to update participant order", error);
+        patch.undo?.();
+        setParticipantOrders((prev) => ({ ...prev, [task.id]: previous }));
+      }
     };
 
     return (
@@ -1670,79 +1719,21 @@ export default function BacklogPage() {
 
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
-      <Typography variant="h6" sx={{ mb: 2 }}>
-        Бэклог
-      </Typography>
-
-      {/* Панель фильтров */}
-      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+      <Stack spacing={2}>
         <Stack
-          direction="row"
-          spacing={2}
-          alignItems="center"
-          sx={{ flexWrap: { xs: "wrap", xl: "nowrap" } }}
+          direction={{ xs: "column", md: "row" }}
+          spacing={1.5}
+          alignItems={{ xs: "flex-start", md: "center" }}
+          justifyContent="space-between"
         >
-          <FilterAutocomplete
-            multiple
-            allowCustom={false}
-            label="Фильтр по кварталам"
-            options={quarterFilterOptions}
-            value={selectedQuarterIds}
-            onChange={handleQuarterFilterChange}
-            sx={{ minWidth: 240, flex: 1 }}
-          />
-
-          <FilterAutocomplete
-            multiple
-            allowCustom={false}
-            label="Приоритет"
-            options={priorityOptions}
-            value={priorityFilter.map(String)}
-            onChange={handlePriorityFilterChange}
-            sx={{ minWidth: 160 }}
-          />
-
-          <FilterAutocomplete
-            multiple
-            allowCustom={false}
-            label="Статусы"
-            options={statusOptions}
-            value={statusFilter}
-            onChange={handleStatusFilterChange}
-            sx={{ minWidth: 220, flex: 1 }}
-          />
-
-          <FilterAutocomplete
-            label="Релиз"
-            allowCustom={false}
-            options={releaseFilterOptions}
-            value={releaseSprintFilter === "all" ? "" : releaseSprintFilter}
-            onChange={handleReleaseFilterChange}
-            sx={{ minWidth: 200, flex: 1 }}
-            placeholder="Все релизы"
-          />
-
-          <FilterAutocomplete
-            label="Стрим"
-            options={streamOptions}
-            value={streamFilter}
-            onChange={(value) => {
-              if (value !== streamFilter) {
-                dispatch(
-                  setBacklogFilters({
-                    streamFilter: value,
-                  })
-                );
-              }
-            }}
-            sx={{ minWidth: 220, flex: 1 }}
-          />
-
-          {isUiPending && (
-            <CircularProgress size={18} sx={{ color: "text.secondary" }} />
-          )}
-
-          <Stack direction="row" spacing={1} sx={{ ml: "auto", flexShrink: 0 }}>
+          <Typography variant="h6">Бэклог</Typography>
+          <Stack
+            direction="row"
+            spacing={1}
+            flexWrap="wrap"
+            justifyContent={{ xs: "flex-start", md: "flex-end" }}
+            rowGap={1}
+          >
             <Button
               variant="outlined"
               startIcon={<Download />}
@@ -1760,59 +1751,136 @@ export default function BacklogPage() {
             </Button>
           </Stack>
         </Stack>
-      </Paper>
 
-      {/* Список задач */}
-      <DndContext
-        sensors={taskSensors}
-        collisionDetection={closestCenter}
-        onDragStart={handleTaskDragStart}
-        onDragEnd={handleTaskDragEnd}
-        onDragCancel={handleTaskDragCancel}
-      >
-        <SortableContext
-          items={deferredFilteredTasks.map((t) => t.id)}
-          strategy={verticalListSortingStrategy}
-        >
-          <Stack spacing={2}>
-            {deferredFilteredTasks.map((t) => (
-              <SortableTask key={t.id} task={t}>
-                {(dragHandleProps) => renderTaskTable(t, dragHandleProps)}
-              </SortableTask>
-            ))}
-            {!deferredFilteredTasks.length && !isFetching && (
-              <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
-                <Typography color="text.secondary">
-                  Нет задач по текущим фильтрам
-                </Typography>
-              </Paper>
+        {/* Панель фильтров */}
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "repeat(auto-fit, minmax(220px, 1fr))",
+                lg: "repeat(6, minmax(180px, 1fr))",
+              },
+              gap: 2,
+              alignItems: "center",
+            }}
+          >
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Фильтр по кварталам"
+              options={quarterFilterOptions}
+              value={selectedQuarterIds}
+              onChange={handleQuarterFilterChange}
+              sx={{ minWidth: 200 }}
+            />
+
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Приоритет"
+              options={priorityOptions}
+              value={priorityFilter.map(String)}
+              onChange={handlePriorityFilterChange}
+              sx={{ minWidth: 160 }}
+            />
+
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Статусы"
+              options={statusOptions}
+              value={statusFilter}
+              onChange={handleStatusFilterChange}
+              sx={{ minWidth: 200 }}
+            />
+
+            <FilterAutocomplete
+              label="Релиз"
+              allowCustom={false}
+              options={releaseFilterOptions}
+              value={releaseSprintFilter === "all" ? "" : releaseSprintFilter}
+              onChange={handleReleaseFilterChange}
+              sx={{ minWidth: 200 }}
+              placeholder="Все релизы"
+            />
+
+            <FilterAutocomplete
+              label="Стрим"
+              options={streamOptions}
+              value={streamFilter}
+              onChange={(value) => {
+                if (value !== streamFilter) {
+                  dispatch(
+                    setBacklogFilters({
+                      streamFilter: value,
+                    })
+                  );
+                }
+              }}
+              sx={{ minWidth: 200 }}
+            />
+
+            {isUiPending && (
+              <Box sx={{ display: "flex", justifyContent: "center" }}>
+                <CircularProgress size={18} sx={{ color: "text.secondary" }} />
+              </Box>
             )}
-          </Stack>
-        </SortableContext>
-        <DragOverlay dropAnimation={null}>
-          {activeTask ? (
-            <Paper variant="outlined" sx={{ p: 1.5, maxWidth: 960 }}>
-              <Stack direction="row" spacing={1} alignItems="center">
-                <DragIndicator fontSize="small" color="disabled" />
-                <Stack spacing={0.25}>
-                  <Typography fontWeight={700}>{activeTask.title}</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {activeTask.stream || "Без стрима"}
-                  </Typography>
-                </Stack>
-              </Stack>
-            </Paper>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+          </Box>
+        </Paper>
 
-      <Divider sx={{ my: 2 }} />
-      <Typography variant="caption" color="text.secondary">
-        Все поля редактируются по клику. Нагрузка задаётся в ячейках «участник ×
-        спринт». Статусы/лидер/порядок/копирование — локально на этой странице.
-        Выбор релиза (ПРОМ) автоматически определяет спринт и подсвечивает
-        соответствующую колонку.
-      </Typography>
+        {/* Список задач */}
+        <DndContext
+          sensors={taskSensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleTaskDragStart}
+          onDragEnd={handleTaskDragEnd}
+          onDragCancel={handleTaskDragCancel}
+        >
+          <SortableContext
+            items={deferredFilteredTasks.map((t) => t.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <Stack spacing={2}>
+              {deferredFilteredTasks.map((t) => (
+                <SortableTask key={t.id} task={t}>
+                  {(dragHandleProps) => renderTaskTable(t, dragHandleProps)}
+                </SortableTask>
+              ))}
+              {!deferredFilteredTasks.length && !isFetching && (
+                <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
+                  <Typography color="text.secondary">
+                    Нет задач по текущим фильтрам
+                  </Typography>
+                </Paper>
+              )}
+            </Stack>
+          </SortableContext>
+          <DragOverlay dropAnimation={null}>
+            {activeTask ? (
+              <Paper variant="outlined" sx={{ p: 1.5, maxWidth: 960 }}>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <DragIndicator fontSize="small" color="disabled" />
+                  <Stack spacing={0.25}>
+                    <Typography fontWeight={700}>{activeTask.title}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {activeTask.stream || "Без стрима"}
+                    </Typography>
+                  </Stack>
+                </Stack>
+              </Paper>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+
+        <Divider />
+        <Typography variant="caption" color="text.secondary">
+          Все поля редактируются по клику. Нагрузка задаётся в ячейках «участник ×
+          спринт». Статусы/лидер/порядок/копирование — локально на этой странице.
+          Выбор релиза (ПРОМ) автоматически определяет спринт и подсвечивает
+          соответствующую колонку.
+        </Typography>
+      </Stack>
     </Paper>
   );
 }
