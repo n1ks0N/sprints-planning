@@ -23,6 +23,7 @@ import {
   InputBase,
   CircularProgress,
   ClickAwayListener,
+  Popover,
 } from "@mui/material";
 import {
   Add,
@@ -119,6 +120,11 @@ function EditableText({
   isEditing,
   onStartEditing,
   onStopEditing,
+  multiline,
+  minRows,
+  maxRows,
+  displaySx,
+  inputSx,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -128,6 +134,11 @@ function EditableText({
   isEditing?: boolean;
   onStartEditing?: () => void;
   onStopEditing?: () => void;
+  multiline?: boolean;
+  minRows?: number;
+  maxRows?: number;
+  displaySx?: any;
+  inputSx?: any;
 }) {
   const [internalEditing, setInternalEditing] = React.useState(false);
   const controlledEditing = isEditing ?? internalEditing;
@@ -171,7 +182,13 @@ function EditableText({
       {!controlledEditing ? (
         <Box
           component="span"
-          sx={{ cursor: "text", display: "inline-block", minWidth: 8, ...sx }}
+          sx={{
+            cursor: "text",
+            display: "inline-block",
+            minWidth: 8,
+            ...sx,
+            ...displaySx,
+          }}
           onClick={startEditing}
           title="Нажмите, чтобы редактировать"
         >
@@ -188,29 +205,33 @@ function EditableText({
           )}
         </Box>
       ) : (
-        <InputBase
-          inputRef={ref}
-          autoFocus
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
+          <InputBase
+            inputRef={ref}
+            multiline={multiline}
+            minRows={minRows}
+            maxRows={maxRows}
+            autoFocus
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
           onBlur={closeEditing}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === "Escape") {
               e.currentTarget.blur();
             }
           }}
-          sx={{
-            px: 0.5,
-            borderRadius: 1,
-            bgcolor: "background.paper",
-            outline: "1px solid",
-            outlineColor: "divider",
-            fontSize: "inherit",
-            lineHeight: "inherit",
-            ...sx,
-          }}
-        />
-      )}
+            sx={{
+              px: 0.5,
+              borderRadius: 1,
+              bgcolor: "background.paper",
+              outline: "1px solid",
+              outlineColor: "divider",
+              fontSize: "inherit",
+              lineHeight: "inherit",
+              ...sx,
+              ...inputSx,
+            }}
+          />
+        )}
     </ClickAwayListener>
   );
 }
@@ -724,6 +745,9 @@ export default function BacklogPage() {
   const [activeEditors, setActiveEditors] = React.useState<Record<string, boolean>>(
     {}
   );
+  const [participantPicker, setParticipantPicker] = React.useState<
+    { taskId: string; anchorEl: HTMLElement | null } | null
+  >(null);
 
   const startEditor = React.useCallback((key: string) => {
     setActiveEditors((prev) => ({ ...prev, [key]: true }));
@@ -735,6 +759,10 @@ export default function BacklogPage() {
       delete next[key];
       return next;
     });
+  }, []);
+
+  const closeParticipantPicker = React.useCallback(() => {
+    setParticipantPicker(null);
   }, []);
 
   const taskUpdateTimers = React.useRef<
@@ -1247,6 +1275,11 @@ export default function BacklogPage() {
     const participantRows: Participant[] = orderedParticipantIds
       .map((id) => participantMap.get(id))
       .filter(Boolean) as Participant[];
+    const pickerOpen = participantPicker?.taskId === task.id;
+    const pickerAnchor = pickerOpen ? participantPicker?.anchorEl : null;
+    const availableParticipants = participants.filter(
+      (p) => !task.participantIds.includes(p.id)
+    );
 
     const sumBySprint: Record<string, number> = {};
     for (const s of visibleSprints) {
@@ -1267,6 +1300,14 @@ export default function BacklogPage() {
     const textEditorKey = (field: TaskDraftField) => `${task.id}:${field}`;
     const allocationEditorKey = (pid: string, sid: string) =>
       `${task.id}:${pid}:${sid}`;
+
+    const clampedTextSx = {
+      display: "-webkit-box",
+      WebkitLineClamp: 2,
+      WebkitBoxOrient: "vertical" as const,
+      overflow: "hidden",
+      wordBreak: "break-word" as const,
+    };
 
     const tooltipContent = (
       <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
@@ -1326,6 +1367,11 @@ export default function BacklogPage() {
                   isEditing={activeEditors[textEditorKey("title")]}
                   onStartEditing={() => startEditor(textEditorKey("title"))}
                   onStopEditing={() => stopEditor(textEditorKey("title"))}
+                  multiline
+                  minRows={1}
+                  maxRows={4}
+                  displaySx={clampedTextSx}
+                  inputSx={{ width: "100%" }}
                 />
               </Typography>
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
@@ -1341,6 +1387,11 @@ export default function BacklogPage() {
                   isEditing={activeEditors[textEditorKey("description")]}
                   onStartEditing={() => startEditor(textEditorKey("description"))}
                   onStopEditing={() => stopEditor(textEditorKey("description"))}
+                  multiline
+                  minRows={2}
+                  maxRows={6}
+                  displaySx={clampedTextSx}
+                  inputSx={{ width: "100%" }}
                 />
               </Typography>
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
@@ -1356,134 +1407,128 @@ export default function BacklogPage() {
                   isEditing={activeEditors[textEditorKey("dod")]}
                   onStartEditing={() => startEditor(textEditorKey("dod"))}
                   onStopEditing={() => stopEditor(textEditorKey("dod"))}
+                  multiline
+                  minRows={2}
+                  maxRows={6}
+                  displaySx={clampedTextSx}
+                  inputSx={{ width: "100%" }}
                 />
               </Typography>
             </Box>
           </Tooltip>
 
           <Stack
-            direction="row"
+            direction={{ xs: "column", md: "row" }}
             spacing={2}
-            alignItems="center"
+            alignItems="flex-start"
             flexWrap="wrap"
           >
-            {/* Статус */}
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Статус
-              </Typography>
-              <Select
-                size="small"
-                value={st}
-                onChange={(e) => {
-                  const value = e.target.value as TaskStatus;
-                  setStatusMap((prev) => ({ ...prev, [task.id]: value }));
-                }}
-                sx={{ ml: 1, minWidth: 160 }}
-              >
-                {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((k) => (
-                  <MenuItem key={k} value={k}>
+            <TextField
+              select
+              size="small"
+              label="Статус"
+              value={st}
+              onChange={(e) => {
+                const value = e.target.value as TaskStatus;
+                setStatusMap((prev) => ({ ...prev, [task.id]: value }));
+              }}
+              sx={{ minWidth: 190 }}
+              SelectProps={{
+                renderValue: (value) => {
+                  const key = value as TaskStatus;
+                  return (
                     <Chip
                       size="small"
-                      color={STATUS_COLOR[k]}
-                      label={STATUS_LABEL[k]}
+                      color={STATUS_COLOR[key]}
+                      label={STATUS_LABEL[key]}
                     />
+                  );
+                },
+              }}
+            >
+              {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((k) => (
+                <MenuItem key={k} value={k}>
+                  <Chip
+                    size="small"
+                    color={STATUS_COLOR[k]}
+                    label={STATUS_LABEL[k]}
+                  />
+                </MenuItem>
+              ))}
+            </TextField>
+
+            <TextField
+              select
+              size="small"
+              label="Приоритет"
+              value={task.priority}
+              onChange={(e) =>
+                updateField(task, {
+                  priority: Number(e.target.value) as TaskPriority,
+                })
+              }
+              sx={{ minWidth: 120 }}
+            >
+              <MenuItem value={1}>1</MenuItem>
+              <MenuItem value={2}>2</MenuItem>
+              <MenuItem value={3}>3</MenuItem>
+            </TextField>
+
+            <Autocomplete
+              size="small"
+              freeSolo
+              options={customerOptions}
+              value={resolveTaskFieldValue(task, "customer")}
+              onInputChange={(_, v) => stageTaskField(task, "customer", v || "")}
+              onBlur={() => commitTaskField(task, "customer")}
+              renderInput={(params) => (
+                <TextField {...params} label="Заказчик" size="small" />
+              )}
+              sx={{ minWidth: 220, flexShrink: 0 }}
+            />
+
+            <Autocomplete
+              size="small"
+              freeSolo
+              options={streamOptions}
+              value={resolveTaskFieldValue(task, "stream")}
+              onInputChange={(_, v) => stageTaskField(task, "stream", v || "")}
+              onBlur={() => commitTaskField(task, "stream")}
+              renderInput={(params) => (
+                <TextField {...params} label="Стрим" size="small" />
+              )}
+              sx={{ minWidth: 200, flexShrink: 0 }}
+            />
+
+            <TextField
+              select
+              size="small"
+              label="Релиз (ПРОМ)"
+              value={task.releaseDate || ""}
+              onChange={(e) => {
+                const iso = String(e.target.value) || "";
+                const sid = detectSprintByDate(iso) || "";
+                updateField(task, {
+                  releaseDate: iso,
+                  releaseSprintId: sid,
+                });
+              }}
+              sx={{ minWidth: 220 }}
+              SelectProps={{ displayEmpty: true }}
+            >
+              <MenuItem value="">
+                <em>—</em>
+              </MenuItem>
+              {promReleases
+                .slice()
+                .sort((a, b) => a.promDate.localeCompare(b.promDate))
+                .map((r) => (
+                  <MenuItem key={r.id} value={r.promDate}>
+                    {moment(r.promDate).format("DD.MM.YYYY")}
                   </MenuItem>
                 ))}
-              </Select>
-            </Box>
+            </TextField>
 
-            {/* Приоритет */}
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Приоритет
-              </Typography>
-              <Select
-                size="small"
-                value={task.priority}
-                onChange={(e) =>
-                  updateField(task, {
-                    priority: Number(e.target.value) as TaskPriority,
-                  })
-                }
-                sx={{ ml: 1, minWidth: 80 }}
-              >
-                <MenuItem value={1}>1</MenuItem>
-                <MenuItem value={2}>2</MenuItem>
-                <MenuItem value={3}>3</MenuItem>
-              </Select>
-            </Box>
-
-            {/* Заказчик */}
-            <Box sx={{ minWidth: 180 }}>
-              <Typography variant="caption" color="text.secondary">
-                Заказчик
-              </Typography>
-              <Autocomplete
-                size="small"
-                freeSolo
-                options={customerOptions}
-                value={resolveTaskFieldValue(task, "customer")}
-                onInputChange={(_, v) => stageTaskField(task, "customer", v || "")}
-                onBlur={() => commitTaskField(task, "customer")}
-                renderInput={(params) => (
-                  <TextField {...params} size="small" sx={{ ml: 1 }} />
-                )}
-              />
-            </Box>
-
-            {/* Стрим */}
-            <Box sx={{ minWidth: 180 }}>
-              <Typography variant="caption" color="text.secondary">
-                Стрим
-              </Typography>
-              <Autocomplete
-                size="small"
-                freeSolo
-                options={streamOptions}
-                value={resolveTaskFieldValue(task, "stream")}
-                onInputChange={(_, v) => stageTaskField(task, "stream", v || "")}
-                onBlur={() => commitTaskField(task, "stream")}
-                renderInput={(params) => (
-                  <TextField {...params} size="small" sx={{ ml: 1 }} />
-                )}
-              />
-            </Box>
-
-            {/* Релиз (ПРОМ) — список с релизами */}
-            <Box sx={{ minWidth: 200 }}>
-              <Typography variant="caption" color="text.secondary">
-                Релиз (ПРОМ)
-              </Typography>
-              <Select
-                size="small"
-                value={task.releaseDate || ""}
-                displayEmpty
-                onChange={(e) => {
-                  const iso = String(e.target.value) || "";
-                  const sid = detectSprintByDate(iso) || "";
-                  updateField(task, {
-                    releaseDate: iso,
-                    releaseSprintId: sid,
-                  });
-                }}
-                sx={{ ml: 1, minWidth: 200 }}
-              >
-                <MenuItem value="">
-                  <em>—</em>
-                </MenuItem>
-                {promReleases
-                  .slice()
-                  .sort((a, b) => a.promDate.localeCompare(b.promDate))
-                  .map((r) => (
-                    <MenuItem key={r.id} value={r.promDate}>
-                      {moment(r.promDate).format("DD.MM.YYYY")}
-                    </MenuItem>
-                  ))}
-              </Select>
-            </Box>
-
-            {/* Дублирование + порядок + удаление */}
             <Stack direction="row" spacing={0.5}>
               {dragHandle && (
                 <Tooltip title="Перетащите, чтобы изменить порядок">
@@ -1686,31 +1731,58 @@ export default function BacklogPage() {
 
                 {/* Добавление участника */}
                 <TableRow>
-                  <TableCell colSpan={visibleSprints.length + 2}>
-                    <Stack direction="row" spacing={2} alignItems="center">
-                      <Typography
-                        variant="body2"
-                        sx={{ color: "text.secondary" }}
-                      >
-                        Добавить участника:
-                      </Typography>
-                      <Autocomplete
-                        size="small"
-                        sx={{ minWidth: 280 }}
-                        options={participants.filter(
-                          (p) => !task.participantIds.includes(p.id)
-                        )}
-                        getOptionLabel={(p) =>
-                          p ? `${p.fullName} (${p.role})` : ""
-                        }
-                        renderInput={(params) => (
-                          <TextField {...params} label="Выберите участника" />
-                        )}
-                        onChange={(_, value) => {
-                          if (value) addParticipantToTask(task, value.id);
-                        }}
-                      />
-                    </Stack>
+                  <TableCell
+                    colSpan={visibleSprints.length + 3}
+                    align="center"
+                    sx={{ py: 0.5, borderStyle: "dashed", borderColor: "divider" }}
+                  >
+                    <Tooltip title="Добавить участника">
+                      <span>
+                        <IconButton
+                          size="small"
+                          color="primary"
+                          disabled={!availableParticipants.length}
+                          onClick={(e) =>
+                            setParticipantPicker({
+                              taskId: task.id,
+                              anchorEl: e.currentTarget,
+                            })
+                          }
+                        >
+                          <Add />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <Popover
+                      open={pickerOpen}
+                      anchorEl={pickerAnchor}
+                      onClose={closeParticipantPicker}
+                      anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+                      transformOrigin={{ vertical: "top", horizontal: "center" }}
+                    >
+                      <Box sx={{ p: 2, width: 320, maxWidth: "90vw" }}>
+                        <Autocomplete
+                          size="small"
+                          autoHighlight
+                          options={availableParticipants}
+                          getOptionLabel={(p) =>
+                            p ? `${p.fullName} (${p.role})` : ""
+                          }
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              label="Добавить участника"
+                              size="small"
+                            />
+                          )}
+                          onChange={(_, value) => {
+                            if (value) addParticipantToTask(task, value.id);
+                            closeParticipantPicker();
+                          }}
+                          noOptionsText="Свободных участников нет"
+                        />
+                      </Box>
+                    </Popover>
                   </TableCell>
                   <TableCell align="right">
                     <Chip label="Автосумма" size="small" color="default" />
@@ -1783,8 +1855,9 @@ export default function BacklogPage() {
               display: "grid",
               gridTemplateColumns: {
                 xs: "repeat(auto-fit, minmax(220px, 1fr))",
-                lg: "repeat(6, minmax(180px, 1fr))",
+                md: "repeat(auto-fit, minmax(200px, 1fr))",
               },
+              gridAutoFlow: "row dense",
               gap: 2,
               alignItems: "center",
             }}
