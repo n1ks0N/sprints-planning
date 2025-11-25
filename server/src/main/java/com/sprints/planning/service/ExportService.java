@@ -184,13 +184,14 @@ public class ExportService {
             if (task.allocations() == null) {
                 continue;
             }
-            for (Map.Entry<String, Map<String, Integer>> participantAlloc : task.allocations().entrySet()) {
+            for (Map.Entry<String, Map<String, java.math.BigDecimal>> participantAlloc : task.allocations().entrySet()) {
                 ParticipantDto participant = participantById.get(participantAlloc.getKey());
                 String participantName = renderParticipant(participantAlloc.getKey(), participantById);
                 String participantRole = participant != null ? nullToEmpty(participant.role()) : "";
-                for (Map.Entry<String, Integer> sprintAlloc : participantAlloc.getValue().entrySet()) {
-                    int days = Optional.ofNullable(sprintAlloc.getValue()).orElse(0);
-                    if (days <= 0) {
+                for (Map.Entry<String, java.math.BigDecimal> sprintAlloc : participantAlloc.getValue().entrySet()) {
+                    java.math.BigDecimal days = Optional.ofNullable(sprintAlloc.getValue())
+                        .orElse(java.math.BigDecimal.ZERO);
+                    if (days.compareTo(java.math.BigDecimal.ZERO) <= 0) {
                         continue;
                     }
                     SprintDto sprint = sprintById.get(sprintAlloc.getKey());
@@ -205,7 +206,7 @@ public class ExportService {
                     row.createCell(5).setCellValue(task.priority());
                     row.createCell(6).setCellValue(nullToEmpty(task.stream()));
                     row.createCell(7).setCellValue(nullToEmpty(task.customer()));
-                    row.createCell(8).setCellValue(days);
+                    row.createCell(8).setCellValue(days.doubleValue());
                 }
             }
         }
@@ -385,40 +386,42 @@ public class ExportService {
         return sprint != null ? sprint.name() : sprintId;
     }
 
-    private String renderLoads(Map<String, Integer> loads, List<SprintDto> sprints) {
+    private String renderLoads(Map<String, java.math.BigDecimal> loads, List<SprintDto> sprints) {
         if (loads == null || loads.isEmpty()) {
             return "";
         }
         List<String> chunks = new ArrayList<>();
         for (SprintDto sprint : sprints) {
-            Integer days = loads.get(sprint.id());
-            if (days != null && days > 0) {
+            java.math.BigDecimal days = loads.get(sprint.id());
+            if (days != null && days.compareTo(java.math.BigDecimal.ZERO) > 0) {
                 chunks.add(sprint.name() + ": " + days + " дн.");
             }
         }
-        for (Map.Entry<String, Integer> entry : loads.entrySet()) {
+        for (Map.Entry<String, java.math.BigDecimal> entry : loads.entrySet()) {
             boolean knownSprint = sprints.stream().anyMatch(s -> Objects.equals(s.id(), entry.getKey()));
-            if (!knownSprint && entry.getValue() != null && entry.getValue() > 0) {
+            if (!knownSprint && entry.getValue() != null
+                && entry.getValue().compareTo(java.math.BigDecimal.ZERO) > 0) {
                 chunks.add(entry.getKey() + ": " + entry.getValue() + " дн.");
             }
         }
         return String.join("; ", chunks);
     }
 
-    private String renderAllocations(Map<String, Map<String, Integer>> allocations,
+    private String renderAllocations(Map<String, Map<String, java.math.BigDecimal>> allocations,
         Map<String, ParticipantDto> participantById,
         Map<String, SprintDto> sprintById) {
         if (allocations == null || allocations.isEmpty()) {
             return "";
         }
         List<String> parts = new ArrayList<>();
-        for (Map.Entry<String, Map<String, Integer>> entry : allocations.entrySet()) {
+        for (Map.Entry<String, Map<String, java.math.BigDecimal>> entry : allocations.entrySet()) {
             String participantName = renderParticipant(entry.getKey(), participantById);
             if (entry.getValue() == null || entry.getValue().isEmpty()) {
                 continue;
             }
             String perSprint = entry.getValue().entrySet().stream()
-                .filter(e -> Optional.ofNullable(e.getValue()).orElse(0) > 0)
+                .filter(e -> Optional.ofNullable(e.getValue()).orElse(java.math.BigDecimal.ZERO)
+                    .compareTo(java.math.BigDecimal.ZERO) > 0)
                 .sorted(Comparator.comparing(e -> Optional.ofNullable(sprintById.get(e.getKey()))
                     .map(SprintDto::startDate).orElse("")))
                 .map(e -> renderSprint(e.getKey(), sprintById) + ": " + e.getValue() + " дн.")

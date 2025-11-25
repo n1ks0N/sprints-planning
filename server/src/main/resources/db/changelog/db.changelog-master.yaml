@@ -5,3 +5,6 @@ databaseChangeLog:
   - include:
       file: classpath:db/changelog/changes/002-task-leader-order.sql
       relativeToChangelogFile: false
+  - include:
+      file: classpath:db/changelog/changes/003-decimal-loads.sql
+      relativeToChangelogFile: false
