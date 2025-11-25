@@ -22,6 +22,7 @@ import {
   Divider,
   InputBase,
   CircularProgress,
+  ClickAwayListener,
 } from "@mui/material";
 import {
   Add,
@@ -132,7 +133,6 @@ function EditableText({
   const controlledEditing = isEditing ?? internalEditing;
   const ref = React.useRef<HTMLInputElement | null>(null);
   const prevEditing = React.useRef(controlledEditing);
-  const selectionRef = React.useRef<{ start: number; end: number } | null>(null);
 
   const startEditing = React.useCallback(() => {
     setInternalEditing(true);
@@ -156,71 +156,62 @@ function EditableText({
       node.focus();
       const len = node.value?.length ?? 0;
       node.setSelectionRange?.(len, len);
-      selectionRef.current = { start: len, end: len };
     }
     prevEditing.current = controlledEditing;
   }, [controlledEditing]);
 
-  React.useLayoutEffect(() => {
+  const closeEditing = React.useCallback(() => {
     if (!controlledEditing) return;
-    const node = ref.current;
-    const sel = selectionRef.current;
-    if (node && sel) {
-      node.setSelectionRange(sel.start, sel.end);
-    }
-  });
+    stopEditing();
+    onBlur?.();
+  }, [controlledEditing, onBlur, stopEditing]);
 
-  return !controlledEditing ? (
-    <Box
-      component="span"
-      sx={{ cursor: "text", display: "inline-block", minWidth: 8, ...sx }}
-      onClick={startEditing}
-      title="Нажмите, чтобы редактировать"
-    >
-      {value?.trim() ? (
-        value
-      ) : (
-        <Typography
+  return (
+    <ClickAwayListener onClickAway={closeEditing} mouseEvent="onMouseDown">
+      {!controlledEditing ? (
+        <Box
           component="span"
-          color="text.secondary"
-          sx={{ fontStyle: "italic" }}
+          sx={{ cursor: "text", display: "inline-block", minWidth: 8, ...sx }}
+          onClick={startEditing}
+          title="Нажмите, чтобы редактировать"
         >
-          {placeholder || "—"}
-        </Typography>
+          {value?.trim() ? (
+            value
+          ) : (
+            <Typography
+              component="span"
+              color="text.secondary"
+              sx={{ fontStyle: "italic" }}
+            >
+              {placeholder || "—"}
+            </Typography>
+          )}
+        </Box>
+      ) : (
+        <InputBase
+          inputRef={ref}
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={closeEditing}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === "Escape") {
+              e.currentTarget.blur();
+            }
+          }}
+          sx={{
+            px: 0.5,
+            borderRadius: 1,
+            bgcolor: "background.paper",
+            outline: "1px solid",
+            outlineColor: "divider",
+            fontSize: "inherit",
+            lineHeight: "inherit",
+            ...sx,
+          }}
+        />
       )}
-    </Box>
-  ) : (
-    <InputBase
-      inputRef={ref}
-      value={value}
-      onChange={(e) => {
-        const target = e.target;
-        selectionRef.current = {
-          start: target.selectionStart ?? target.value.length,
-          end: target.selectionEnd ?? target.value.length,
-        };
-        onChange(target.value);
-      }}
-      onBlur={() => {
-        stopEditing();
-        onBlur?.();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === "Escape") {
-          e.currentTarget.blur();
-        }
-      }}
-      sx={{
-        px: 0.5,
-        borderRadius: 1,
-        bgcolor: "background.paper",
-        outline: "1px solid",
-        outlineColor: "divider",
-        fontSize: "inherit",
-        lineHeight: "inherit",
-        ...sx,
-      }}
-    />
+    </ClickAwayListener>
   );
 }
 
@@ -246,9 +237,10 @@ function EditableNumberCell({
   const controlledEditing = isEditing ?? internalEditing;
   const ref = React.useRef<HTMLInputElement | null>(null);
   const prevEditing = React.useRef(controlledEditing);
-  const selectionRef = React.useRef<{ start: number; end: number } | null>(null);
+  const didSelectAllRef = React.useRef(false);
 
   const startEditing = React.useCallback(() => {
+    didSelectAllRef.current = false;
     setInternalEditing(true);
     onStartEditing?.();
   }, [onStartEditing]);
@@ -268,68 +260,65 @@ function EditableNumberCell({
     if (controlledEditing && !prevEditing.current && ref.current) {
       ref.current.focus();
       ref.current.select();
-      const val = ref.current.value ?? "";
-      selectionRef.current = { start: 0, end: val.length };
+      didSelectAllRef.current = true;
     }
     prevEditing.current = controlledEditing;
   }, [controlledEditing]);
-
-  React.useLayoutEffect(() => {
+ 
+  const closeEditing = React.useCallback(() => {
     if (!controlledEditing) return;
-    const node = ref.current;
-    const sel = selectionRef.current;
-    if (node && sel) {
-      node.setSelectionRange(sel.start, sel.end);
-    }
-  });
+    stopEditing();
+    onCommit?.();
+  }, [controlledEditing, onCommit, stopEditing]);
 
   return (
-    <Box
-      sx={{
-        minWidth: 48,
-        textAlign: "center",
-        cursor: controlledEditing ? "text" : "pointer",
-      }}
-      title={title || "Клик для редактирования"}
-      onClick={() => !controlledEditing && startEditing()}
-    >
-      {!controlledEditing ? (
-        <Typography component="span">{toInt(value)}</Typography>
-      ) : (
-        <InputBase
-          inputRef={ref}
-          type="number"
-          value={Number.isFinite(value) ? value : 0}
-          onChange={(e) => {
-            const target = e.target as HTMLInputElement;
-            selectionRef.current = {
-              start: target.selectionStart ?? 0,
-              end: target.selectionEnd ?? 0,
-            };
-            const v = Number(target.value);
-            onChange(Number.isFinite(v) ? v : 0);
-          }}
-          onBlur={() => {
-            stopEditing();
-            onCommit?.();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === "Escape") {
-              (e.currentTarget as HTMLInputElement).blur();
-            }
-          }}
-          sx={{
-            textAlign: "center",
-            px: 0.5,
-            borderRadius: 1,
-            bgcolor: "background.paper",
-            outline: "1px solid",
-            outlineColor: "divider",
-            width: "100%",
-          }}
-        />
-      )}
-    </Box>
+    <ClickAwayListener onClickAway={closeEditing} mouseEvent="onMouseDown">
+      <Box
+        sx={{
+          minWidth: 48,
+          textAlign: "center",
+          cursor: controlledEditing ? "text" : "pointer",
+        }}
+        title={title || "Клик для редактирования"}
+        onClick={() => !controlledEditing && startEditing()}
+      >
+        {!controlledEditing ? (
+          <Typography component="span">{toInt(value)}</Typography>
+        ) : (
+          <InputBase
+            inputRef={ref}
+            type="number"
+            autoFocus
+            value={Number.isFinite(value) ? value : 0}
+            onFocus={(e) => {
+              if (!didSelectAllRef.current) {
+                e.target.select();
+                didSelectAllRef.current = true;
+              }
+            }}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              onChange(Number.isFinite(v) ? v : 0);
+            }}
+            onBlur={closeEditing}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === "Escape") {
+                (e.currentTarget as HTMLInputElement).blur();
+              }
+            }}
+            sx={{
+              textAlign: "center",
+              px: 0.5,
+              borderRadius: 1,
+              bgcolor: "background.paper",
+              outline: "1px solid",
+              outlineColor: "divider",
+              width: "100%",
+            }}
+          />
+        )}
+      </Box>
+    </ClickAwayListener>
   );
 }
 
