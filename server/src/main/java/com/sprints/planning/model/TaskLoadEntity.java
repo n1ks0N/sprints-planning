@@ -8,6 +8,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.MapsId;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 
 @Entity
 @Table(name = "task_loads")
@@ -26,8 +27,8 @@ public class TaskLoadEntity {
     @JoinColumn(name = "sprint_id")
     private SprintEntity sprint;
 
-    @Column(nullable = false)
-    private int days;
+    @Column(nullable = false, precision = 10, scale = 2)
+    private BigDecimal days;
 
     public TaskLoadId getId() {
         return id;
@@ -53,11 +54,11 @@ public class TaskLoadEntity {
         this.sprint = sprint;
     }
 
-    public int getDays() {
+    public BigDecimal getDays() {
         return days;
     }
 
-    public void setDays(int days) {
+    public void setDays(BigDecimal days) {
         this.days = days;
     }
 }

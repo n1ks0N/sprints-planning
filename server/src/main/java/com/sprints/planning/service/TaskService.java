@@ -24,12 +24,14 @@ import com.sprints.planning.repository.TaskLoadRepository;
 import com.sprints.planning.repository.TaskRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -176,11 +178,11 @@ public class TaskService {
                 created.setTask(task);
                 created.setParticipant(participant);
                 created.setSprint(sprint);
-                created.setDays(0);
+                created.setDays(BigDecimal.ZERO);
                 task.getAllocations().add(created);
                 return created;
             });
-        allocation.setDays(Math.max(0, request.days() != null ? request.days() : 0));
+        allocation.setDays(maxOrZero(request.days()));
         recalcLoad(task, sprint);
         task.setUpdatedAt(LocalDate.now());
         ensureLoadsForAllSprints(task);
@@ -193,7 +195,7 @@ public class TaskService {
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         ParticipantEntity participant = participantRepository.findById(UUID.fromString(request.participantId()))
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
-        for (Map.Entry<String, Integer> allocationEntry : request.allocations().entrySet()) {
+        for (Map.Entry<String, BigDecimal> allocationEntry : request.allocations().entrySet()) {
             SprintEntity sprint = fetchSprint(allocationEntry.getKey());
             TaskAllocationId id = new TaskAllocationId(task.getId(), participant.getId(), sprint.getId());
             TaskAllocationEntity allocation = taskAllocationRepository.findById(id)
@@ -203,11 +205,11 @@ public class TaskService {
                     created.setTask(task);
                     created.setParticipant(participant);
                     created.setSprint(sprint);
-                    created.setDays(0);
+                    created.setDays(BigDecimal.ZERO);
                     task.getAllocations().add(created);
                     return created;
                 });
-            allocation.setDays(Math.max(0, allocationEntry.getValue() != null ? allocationEntry.getValue() : 0));
+            allocation.setDays(maxOrZero(allocationEntry.getValue()));
             recalcLoad(task, sprint);
         }
         task.setUpdatedAt(LocalDate.now());
@@ -227,11 +229,11 @@ public class TaskService {
                 created.setId(id);
                 created.setTask(task);
                 created.setSprint(sprint);
-                created.setDays(0);
+                created.setDays(BigDecimal.ZERO);
                 task.getLoads().add(created);
                 return created;
             });
-        load.setDays(Math.max(0, request.days() != null ? request.days() : 0));
+        load.setDays(maxOrZero(request.days()));
         task.setUpdatedAt(LocalDate.now());
         ensureLoadsForAllSprints(task);
         return DtoMapper.toTaskDto(task);
@@ -242,6 +244,12 @@ public class TaskService {
             ? participantIds.stream().filter(id -> id != null && !id.isBlank()).map(UUID::fromString).toList()
             : List.of();
         Set<UUID> newIds = new LinkedHashSet<>(orderedIds);
+
+        Set<UUID> existingIds = entity.getParticipants().stream()
+            .map(tp -> tp.getParticipant().getId())
+            .collect(Collectors.toSet());
+        Set<UUID> removedIds = new HashSet<>(existingIds);
+        removedIds.removeAll(newIds);
 
         entity.getParticipants().removeIf(tp -> !newIds.contains(tp.getParticipant().getId()));
 
@@ -261,13 +269,18 @@ public class TaskService {
             }
             link.setDisplayOrder(order++);
         }
+
+        if (!removedIds.isEmpty()) {
+            entity.getAllocations().removeIf(allocation -> removedIds.contains(allocation.getParticipant().getId()));
+            recalcAllLoads(entity);
+        }
     }
 
-    private void applyLoads(TaskEntity entity, Map<String, Integer> loads) {
+    private void applyLoads(TaskEntity entity, Map<String, BigDecimal> loads) {
         if (loads == null) {
             return;
         }
-        for (Map.Entry<String, Integer> entry : loads.entrySet()) {
+        for (Map.Entry<String, BigDecimal> entry : loads.entrySet()) {
             SprintEntity sprint = fetchSprint(entry.getKey());
             TaskLoadId id = new TaskLoadId(entity.getId(), sprint.getId());
             TaskLoadEntity load = taskLoadRepository.findById(id)
@@ -276,25 +289,25 @@ public class TaskService {
                     created.setId(id);
                     created.setTask(entity);
                     created.setSprint(sprint);
-                    created.setDays(0);
+                    created.setDays(BigDecimal.ZERO);
                     entity.getLoads().add(created);
                     return created;
                 });
-            load.setDays(Math.max(0, entry.getValue() != null ? entry.getValue() : 0));
+            load.setDays(maxOrZero(entry.getValue()));
         }
     }
 
-    private void applyAllocations(TaskEntity entity, Map<String, Map<String, Integer>> allocations) {
+    private void applyAllocations(TaskEntity entity, Map<String, Map<String, BigDecimal>> allocations) {
         if (allocations == null) {
             return;
         }
-        for (Map.Entry<String, Map<String, Integer>> participantEntry : allocations.entrySet()) {
+        for (Map.Entry<String, Map<String, BigDecimal>> participantEntry : allocations.entrySet()) {
             if (participantEntry.getValue() == null) {
                 continue;
             }
             ParticipantEntity participant = participantRepository.findById(UUID.fromString(participantEntry.getKey()))
                 .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
-            for (Map.Entry<String, Integer> sprintEntry : participantEntry.getValue().entrySet()) {
+            for (Map.Entry<String, BigDecimal> sprintEntry : participantEntry.getValue().entrySet()) {
                 SprintEntity sprint = fetchSprint(sprintEntry.getKey());
                 TaskAllocationId id = new TaskAllocationId(entity.getId(), participant.getId(), sprint.getId());
                 TaskAllocationEntity allocation = taskAllocationRepository.findById(id)
@@ -304,11 +317,11 @@ public class TaskService {
                         created.setTask(entity);
                         created.setParticipant(participant);
                         created.setSprint(sprint);
-                        created.setDays(0);
+                        created.setDays(BigDecimal.ZERO);
                         entity.getAllocations().add(created);
                         return created;
                     });
-                allocation.setDays(Math.max(0, sprintEntry.getValue() != null ? sprintEntry.getValue() : 0));
+                allocation.setDays(maxOrZero(sprintEntry.getValue()));
                 recalcLoad(entity, sprint);
             }
         }
@@ -328,21 +341,22 @@ public class TaskService {
                         created.setId(id);
                         created.setTask(entity);
                         created.setSprint(sprint);
-                        created.setDays(0);
+                        created.setDays(BigDecimal.ZERO);
                         entity.getLoads().add(created);
                         return created;
                     });
-                load.setDays(Math.max(0, load.getDays()));
+                load.setDays(maxOrZero(load.getDays()));
                 existing.add(sprint.getId());
             }
         }
     }
 
     private void recalcLoad(TaskEntity task, SprintEntity sprint) {
-        int total = task.getAllocations().stream()
+        BigDecimal total = task.getAllocations().stream()
             .filter(a -> a.getSprint().getId().equals(sprint.getId()))
-            .mapToInt(TaskAllocationEntity::getDays)
-            .sum();
+            .map(TaskAllocationEntity::getDays)
+            .filter(Objects::nonNull)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
         TaskLoadId id = new TaskLoadId(task.getId(), sprint.getId());
         TaskLoadEntity load = taskLoadRepository.findById(id)
             .orElseGet(() -> {
@@ -350,11 +364,22 @@ public class TaskService {
                 created.setId(id);
                 created.setTask(task);
                 created.setSprint(sprint);
-                created.setDays(0);
+                created.setDays(BigDecimal.ZERO);
                 task.getLoads().add(created);
                 return created;
             });
         load.setDays(total);
+    }
+
+    private void recalcAllLoads(TaskEntity task) {
+        List<SprintEntity> sprints = sprintRepository.findAll();
+        for (SprintEntity sprint : sprints) {
+            recalcLoad(task, sprint);
+        }
+    }
+
+    private BigDecimal maxOrZero(BigDecimal value) {
+        return value != null ? value.max(BigDecimal.ZERO) : BigDecimal.ZERO;
     }
 
     private SprintEntity fetchSprint(String sprintId) {

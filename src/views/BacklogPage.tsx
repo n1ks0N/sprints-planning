@@ -22,6 +22,8 @@ import {
   Divider,
   InputBase,
   CircularProgress,
+  ClickAwayListener,
+  Popover,
 } from "@mui/material";
 import {
   Add,
@@ -40,6 +42,7 @@ import moment from "moment";
 import "moment/locale/ru";
 
 import {
+  api,
   useGetParticipantsQuery,
   useGetQuartersQuery,
   useGetSprintsQuery,
@@ -114,67 +117,122 @@ function EditableText({
   onBlur,
   placeholder,
   sx,
+  isEditing,
+  onStartEditing,
+  onStopEditing,
+  multiline,
+  minRows,
+  maxRows,
+  displaySx,
+  inputSx,
 }: {
   value: string;
   onChange: (v: string) => void;
   onBlur?: () => void;
   placeholder?: string;
   sx?: any;
+  isEditing?: boolean;
+  onStartEditing?: () => void;
+  onStopEditing?: () => void;
+  multiline?: boolean;
+  minRows?: number;
+  maxRows?: number;
+  displaySx?: any;
+  inputSx?: any;
 }) {
-  const [editing, setEditing] = React.useState(false);
+  const [internalEditing, setInternalEditing] = React.useState(false);
+  const controlledEditing = isEditing ?? internalEditing;
   const ref = React.useRef<HTMLInputElement | null>(null);
+  const prevEditing = React.useRef(controlledEditing);
+
+  const startEditing = React.useCallback(() => {
+    setInternalEditing(true);
+    onStartEditing?.();
+  }, [onStartEditing]);
+
+  const stopEditing = React.useCallback(() => {
+    setInternalEditing(false);
+    onStopEditing?.();
+  }, [onStopEditing]);
 
   React.useEffect(() => {
-    if (editing && ref.current) {
-      ref.current.focus();
-      ref.current.select();
+    if (isEditing !== undefined) {
+      setInternalEditing(isEditing);
     }
-  }, [editing]);
+  }, [isEditing]);
 
-  return !editing ? (
-    <Box
-      component="span"
-      sx={{ cursor: "text", display: "inline-block", minWidth: 8, ...sx }}
-      onClick={() => setEditing(true)}
-      title="Нажмите, чтобы редактировать"
-    >
-      {value?.trim() ? (
-        value
-      ) : (
-        <Typography
+  React.useEffect(() => {
+    const node = ref.current;
+    if (controlledEditing && !prevEditing.current && node) {
+      node.focus();
+      const len = node.value?.length ?? 0;
+      node.setSelectionRange?.(len, len);
+    }
+    prevEditing.current = controlledEditing;
+  }, [controlledEditing]);
+
+  const closeEditing = React.useCallback(() => {
+    if (!controlledEditing) return;
+    stopEditing();
+    onBlur?.();
+  }, [controlledEditing, onBlur, stopEditing]);
+
+  return (
+    <ClickAwayListener onClickAway={closeEditing} mouseEvent="onMouseDown">
+      {!controlledEditing ? (
+        <Box
           component="span"
-          color="text.secondary"
-          sx={{ fontStyle: "italic" }}
+          sx={{
+            cursor: "text",
+            display: "inline-block",
+            minWidth: 8,
+            ...sx,
+            ...displaySx,
+          }}
+          onClick={startEditing}
+          title="Нажмите, чтобы редактировать"
         >
-          {placeholder || "—"}
-        </Typography>
-      )}
-    </Box>
-  ) : (
-    <InputBase
-      inputRef={ref}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      onBlur={() => {
-        setEditing(false);
-        onBlur?.();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === "Escape") {
-          e.currentTarget.blur();
-        }
-      }}
-      sx={{
-        px: 0.5,
-        borderRadius: 1,
-        bgcolor: "background.paper",
-        outline: "1px solid",
-        outlineColor: "divider",
-        fontSize: "inherit",
-        lineHeight: "inherit",
-        ...sx,
-      }}
-    />
+          {value?.trim() ? (
+            value
+          ) : (
+            <Typography
+              component="span"
+              color="text.secondary"
+              sx={{ fontStyle: "italic" }}
+            >
+              {placeholder || "—"}
+            </Typography>
+          )}
+        </Box>
+      ) : (
+          <InputBase
+            inputRef={ref}
+            multiline={multiline}
+            minRows={minRows}
+            maxRows={maxRows}
+            autoFocus
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          onBlur={closeEditing}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === "Escape") {
+              e.currentTarget.blur();
+            }
+          }}
+            sx={{
+              px: 0.5,
+              borderRadius: 1,
+              bgcolor: "background.paper",
+              outline: "1px solid",
+              outlineColor: "divider",
+              fontSize: "inherit",
+              lineHeight: "inherit",
+              ...sx,
+              ...inputSx,
+            }}
+          />
+        )}
+    </ClickAwayListener>
   );
 }
 
@@ -184,64 +242,104 @@ function EditableNumberCell({
   onChange,
   onCommit,
   title,
+  isEditing,
+  onStartEditing,
+  onStopEditing,
 }: {
   value: number;
   onChange: (next: number) => void;
   onCommit?: () => void;
   title?: string;
+  isEditing?: boolean;
+  onStartEditing?: () => void;
+  onStopEditing?: () => void;
 }) {
-  const [editing, setEditing] = React.useState(false);
+  const [internalEditing, setInternalEditing] = React.useState(false);
+  const controlledEditing = isEditing ?? internalEditing;
   const ref = React.useRef<HTMLInputElement | null>(null);
+  const prevEditing = React.useRef(controlledEditing);
+  const didSelectAllRef = React.useRef(false);
+
+  const startEditing = React.useCallback(() => {
+    didSelectAllRef.current = false;
+    setInternalEditing(true);
+    onStartEditing?.();
+  }, [onStartEditing]);
+
+  const stopEditing = React.useCallback(() => {
+    setInternalEditing(false);
+    onStopEditing?.();
+  }, [onStopEditing]);
 
   React.useEffect(() => {
-    if (editing && ref.current) {
+    if (isEditing !== undefined) {
+      setInternalEditing(isEditing);
+    }
+  }, [isEditing]);
+
+  React.useEffect(() => {
+    if (controlledEditing && !prevEditing.current && ref.current) {
       ref.current.focus();
       ref.current.select();
+      didSelectAllRef.current = true;
     }
-  }, [editing]);
+    prevEditing.current = controlledEditing;
+  }, [controlledEditing]);
+ 
+  const closeEditing = React.useCallback(() => {
+    if (!controlledEditing) return;
+    stopEditing();
+    onCommit?.();
+  }, [controlledEditing, onCommit, stopEditing]);
 
   return (
-    <Box
-      sx={{
-        minWidth: 48,
-        textAlign: "center",
-        cursor: editing ? "text" : "pointer",
-      }}
-      title={title || "Клик для редактирования"}
-      onClick={() => !editing && setEditing(true)}
-    >
-      {!editing ? (
-        <Typography component="span">{toInt(value)}</Typography>
-      ) : (
-        <InputBase
-          inputRef={ref}
-          type="number"
-          value={Number.isFinite(value) ? value : 0}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            onChange(Number.isFinite(v) ? v : 0);
-          }}
-          onBlur={() => {
-            setEditing(false);
-            onCommit?.();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === "Escape") {
-              (e.currentTarget as HTMLInputElement).blur();
-            }
-          }}
-          sx={{
-            textAlign: "center",
-            px: 0.5,
-            borderRadius: 1,
-            bgcolor: "background.paper",
-            outline: "1px solid",
-            outlineColor: "divider",
-            width: "100%",
-          }}
-        />
-      )}
-    </Box>
+    <ClickAwayListener onClickAway={closeEditing} mouseEvent="onMouseDown">
+      <Box
+        sx={{
+          minWidth: 48,
+          textAlign: "center",
+          cursor: controlledEditing ? "text" : "pointer",
+        }}
+        title={title || "Клик для редактирования"}
+        onClick={() => !controlledEditing && startEditing()}
+      >
+        {!controlledEditing ? (
+          <Typography component="span">{toInt(value)}</Typography>
+        ) : (
+          <InputBase
+            inputRef={ref}
+            type="number"
+            autoFocus
+            value={Number.isFinite(value) ? value : 0}
+            onFocus={(e) => {
+              if (!didSelectAllRef.current) {
+                e.target.select();
+                didSelectAllRef.current = true;
+              }
+            }}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              onChange(Number.isFinite(v) ? v : 0);
+            }}
+            onBlur={closeEditing}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === "Escape") {
+                (e.currentTarget as HTMLInputElement).blur();
+              }
+            }}
+            sx={{
+              textAlign: "center",
+              px: 0.5,
+              borderRadius: 1,
+              bgcolor: "background.paper",
+              outline: "1px solid",
+              outlineColor: "divider",
+              width: "100%",
+            }}
+          />
+        )}
+      </Box>
+    </ClickAwayListener>
   );
 }
 
@@ -354,6 +452,39 @@ export default function BacklogPage() {
   const dispatch = useAppDispatch();
   const { priorityFilter, streamFilter, statusFilter, releaseSprintFilter } =
     useAppSelector((s) => s.ui.backlog);
+
+  const applyTaskOrderOptimistic = React.useCallback(
+    (orderedIds: string[]) =>
+      dispatch(
+        api.util.updateQueryData("getTasks", undefined, (draft) => {
+          const byId = new Map(draft.map((t) => [t.id, t]));
+          const seen = new Set<string>();
+          const reordered = orderedIds
+            .map((id) => {
+              const item = byId.get(id);
+              if (item) seen.add(id);
+              return item;
+            })
+            .filter(Boolean) as BacklogItem[];
+          const untouched = draft.filter((t) => !seen.has(t.id));
+          draft.splice(0, draft.length, ...reordered, ...untouched);
+        })
+      ),
+    [dispatch]
+  );
+
+  const applyParticipantOrderOptimistic = React.useCallback(
+    (taskId: string, participantIds: string[]) =>
+      dispatch(
+        api.util.updateQueryData("getTasks", undefined, (draft) => {
+          const task = draft.find((t) => t.id === taskId);
+          if (task) {
+            task.participantIds = participantIds.slice();
+          }
+        })
+      ),
+    [dispatch]
+  );
 
   // Источник задач — всегда берём все, фильтруем на клиенте (т.к. мульти-кварталы)
   const { data: allTasks = [], isFetching } = useGetTasksQuery(undefined);
@@ -611,6 +742,28 @@ export default function BacklogPage() {
   // Локальные allocations (для быстрого редактирования)
   const [allocations, setAllocations] = React.useState<Allocations>({});
   const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
+  const [activeEditors, setActiveEditors] = React.useState<Record<string, boolean>>(
+    {}
+  );
+  const [participantPicker, setParticipantPicker] = React.useState<
+    { taskId: string; anchorEl: HTMLElement | null } | null
+  >(null);
+
+  const startEditor = React.useCallback((key: string) => {
+    setActiveEditors((prev) => ({ ...prev, [key]: true }));
+  }, []);
+
+  const stopEditor = React.useCallback((key: string) => {
+    setActiveEditors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }, []);
+
+  const closeParticipantPicker = React.useCallback(() => {
+    setParticipantPicker(null);
+  }, []);
 
   const taskUpdateTimers = React.useRef<
     Map<string, ReturnType<typeof setTimeout>>
@@ -680,11 +833,8 @@ export default function BacklogPage() {
         next[task.id] = { ...(next[task.id] ?? {}), [key]: sanitized };
         return next;
       });
-      if (sanitized !== original) {
-        scheduleTaskUpdate(task.id, key, sanitized);
-      }
     },
-    [cancelTaskUpdate, scheduleTaskUpdate]
+    [cancelTaskUpdate]
   );
 
   const resolveTaskFieldValue = React.useCallback(
@@ -1040,8 +1190,9 @@ export default function BacklogPage() {
         });
         return next;
       });
+      applyTaskOrderOptimistic(reordered);
     },
-    [deferredFilteredTasks]
+    [applyTaskOrderOptimistic, deferredFilteredTasks]
   );
 
   // Визуал заголовка спринта (с подсветкой колонки релиза для конкретной задачи)
@@ -1124,6 +1275,11 @@ export default function BacklogPage() {
     const participantRows: Participant[] = orderedParticipantIds
       .map((id) => participantMap.get(id))
       .filter(Boolean) as Participant[];
+    const pickerOpen = participantPicker?.taskId === task.id;
+    const pickerAnchor = pickerOpen ? participantPicker?.anchorEl : null;
+    const availableParticipants = participants.filter(
+      (p) => !task.participantIds.includes(p.id)
+    );
 
     const sumBySprint: Record<string, number> = {};
     for (const s of visibleSprints) {
@@ -1141,6 +1297,18 @@ export default function BacklogPage() {
     const relISO = task.releaseDate || "";
     const relSprintId = task.releaseSprintId || detectSprintByDate(relISO);
 
+    const textEditorKey = (field: TaskDraftField) => `${task.id}:${field}`;
+    const allocationEditorKey = (pid: string, sid: string) =>
+      `${task.id}:${pid}:${sid}`;
+
+    const clampedTextSx = {
+      display: "-webkit-box",
+      WebkitLineClamp: 2,
+      WebkitBoxOrient: "vertical" as const,
+      overflow: "hidden",
+      wordBreak: "break-word" as const,
+    };
+
     const tooltipContent = (
       <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
         <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
@@ -1155,7 +1323,7 @@ export default function BacklogPage() {
       </Stack>
     );
 
-    const handleParticipantDragEnd = (event: DragEndEvent) => {
+    const handleParticipantDragEnd = async (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
       const ids = orderedParticipantIds || [];
@@ -1163,8 +1331,16 @@ export default function BacklogPage() {
       const newIndex = ids.indexOf(String(over.id));
       if (oldIndex < 0 || newIndex < 0) return;
       const reordered = arrayMove(ids, oldIndex, newIndex);
+      const previous = ids.slice();
+      const patch = applyParticipantOrderOptimistic(task.id, reordered);
       setParticipantOrders((prev) => ({ ...prev, [task.id]: reordered }));
-      updateField(task, { participantIds: reordered });
+      try {
+        await updateField(task, { participantIds: reordered });
+      } catch (error) {
+        console.error("Failed to update participant order", error);
+        patch.undo?.();
+        setParticipantOrders((prev) => ({ ...prev, [task.id]: previous }));
+      }
     };
 
     return (
@@ -1183,8 +1359,19 @@ export default function BacklogPage() {
                 <EditableText
                   value={resolveTaskFieldValue(task, "title")}
                   onChange={(v) => stageTaskField(task, "title", v)}
-                  onBlur={() => commitTaskField(task, "title")}
+                  onBlur={() => {
+                    stopEditor(textEditorKey("title"));
+                    commitTaskField(task, "title");
+                  }}
                   placeholder="Название"
+                  isEditing={activeEditors[textEditorKey("title")]}
+                  onStartEditing={() => startEditor(textEditorKey("title"))}
+                  onStopEditing={() => stopEditor(textEditorKey("title"))}
+                  multiline
+                  minRows={1}
+                  maxRows={4}
+                  displaySx={clampedTextSx}
+                  inputSx={{ width: "100%" }}
                 />
               </Typography>
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
@@ -1192,8 +1379,19 @@ export default function BacklogPage() {
                 <EditableText
                   value={resolveTaskFieldValue(task, "description")}
                   onChange={(v) => stageTaskField(task, "description", v)}
-                  onBlur={() => commitTaskField(task, "description")}
+                  onBlur={() => {
+                    stopEditor(textEditorKey("description"));
+                    commitTaskField(task, "description");
+                  }}
                   placeholder="Описание"
+                  isEditing={activeEditors[textEditorKey("description")]}
+                  onStartEditing={() => startEditor(textEditorKey("description"))}
+                  onStopEditing={() => stopEditor(textEditorKey("description"))}
+                  multiline
+                  minRows={2}
+                  maxRows={6}
+                  displaySx={clampedTextSx}
+                  inputSx={{ width: "100%" }}
                 />
               </Typography>
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
@@ -1201,136 +1399,136 @@ export default function BacklogPage() {
                 <EditableText
                   value={resolveTaskFieldValue(task, "dod")}
                   onChange={(v) => stageTaskField(task, "dod", v)}
-                  onBlur={() => commitTaskField(task, "dod")}
+                  onBlur={() => {
+                    stopEditor(textEditorKey("dod"));
+                    commitTaskField(task, "dod");
+                  }}
                   placeholder="Definition of Done"
+                  isEditing={activeEditors[textEditorKey("dod")]}
+                  onStartEditing={() => startEditor(textEditorKey("dod"))}
+                  onStopEditing={() => stopEditor(textEditorKey("dod"))}
+                  multiline
+                  minRows={2}
+                  maxRows={6}
+                  displaySx={clampedTextSx}
+                  inputSx={{ width: "100%" }}
                 />
               </Typography>
             </Box>
           </Tooltip>
 
           <Stack
-            direction="row"
+            direction={{ xs: "column", md: "row" }}
             spacing={2}
-            alignItems="center"
+            alignItems="flex-start"
             flexWrap="wrap"
           >
-            {/* Статус */}
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Статус
-              </Typography>
-              <Select
-                size="small"
-                value={st}
-                onChange={(e) => {
-                  const value = e.target.value as TaskStatus;
-                  setStatusMap((prev) => ({ ...prev, [task.id]: value }));
-                }}
-                sx={{ ml: 1, minWidth: 160 }}
-              >
-                {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((k) => (
-                  <MenuItem key={k} value={k}>
+            <TextField
+              select
+              size="small"
+              label="Статус"
+              value={st}
+              onChange={(e) => {
+                const value = e.target.value as TaskStatus;
+                setStatusMap((prev) => ({ ...prev, [task.id]: value }));
+              }}
+              sx={{ minWidth: 190 }}
+              SelectProps={{
+                renderValue: (value) => {
+                  const key = value as TaskStatus;
+                  return (
                     <Chip
                       size="small"
-                      color={STATUS_COLOR[k]}
-                      label={STATUS_LABEL[k]}
+                      color={STATUS_COLOR[key]}
+                      label={STATUS_LABEL[key]}
                     />
+                  );
+                },
+              }}
+            >
+              {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((k) => (
+                <MenuItem key={k} value={k}>
+                  <Chip
+                    size="small"
+                    color={STATUS_COLOR[k]}
+                    label={STATUS_LABEL[k]}
+                  />
+                </MenuItem>
+              ))}
+            </TextField>
+
+            <TextField
+              select
+              size="small"
+              label="Приоритет"
+              value={task.priority}
+              onChange={(e) =>
+                updateField(task, {
+                  priority: Number(e.target.value) as TaskPriority,
+                })
+              }
+              sx={{ minWidth: 120 }}
+            >
+              <MenuItem value={1}>1</MenuItem>
+              <MenuItem value={2}>2</MenuItem>
+              <MenuItem value={3}>3</MenuItem>
+            </TextField>
+
+            <Autocomplete
+              size="small"
+              freeSolo
+              options={customerOptions}
+              value={resolveTaskFieldValue(task, "customer")}
+              onInputChange={(_, v) => stageTaskField(task, "customer", v || "")}
+              onBlur={() => commitTaskField(task, "customer")}
+              renderInput={(params) => (
+                <TextField {...params} label="Заказчик" size="small" />
+              )}
+              sx={{ minWidth: 220, flexShrink: 0 }}
+            />
+
+            <Autocomplete
+              size="small"
+              freeSolo
+              options={streamOptions}
+              value={resolveTaskFieldValue(task, "stream")}
+              onInputChange={(_, v) => stageTaskField(task, "stream", v || "")}
+              onBlur={() => commitTaskField(task, "stream")}
+              renderInput={(params) => (
+                <TextField {...params} label="Стрим" size="small" />
+              )}
+              sx={{ minWidth: 200, flexShrink: 0 }}
+            />
+
+            <TextField
+              select
+              size="small"
+              label="Релиз (ПРОМ)"
+              value={task.releaseDate || ""}
+              onChange={(e) => {
+                const iso = String(e.target.value) || "";
+                const sid = detectSprintByDate(iso) || "";
+                updateField(task, {
+                  releaseDate: iso,
+                  releaseSprintId: sid,
+                });
+              }}
+              sx={{ minWidth: 220 }}
+              SelectProps={{ displayEmpty: true }}
+            >
+              <MenuItem value="">
+                <em>—</em>
+              </MenuItem>
+              {promReleases
+                .slice()
+                .sort((a, b) => a.promDate.localeCompare(b.promDate))
+                .map((r) => (
+                  <MenuItem key={r.id} value={r.promDate}>
+                    {moment(r.promDate).format("DD.MM.YYYY")}
                   </MenuItem>
                 ))}
-              </Select>
-            </Box>
+            </TextField>
 
-            {/* Приоритет */}
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Приоритет
-              </Typography>
-              <Select
-                size="small"
-                value={task.priority}
-                onChange={(e) =>
-                  updateField(task, {
-                    priority: Number(e.target.value) as TaskPriority,
-                  })
-                }
-                sx={{ ml: 1, minWidth: 80 }}
-              >
-                <MenuItem value={1}>1</MenuItem>
-                <MenuItem value={2}>2</MenuItem>
-                <MenuItem value={3}>3</MenuItem>
-              </Select>
-            </Box>
-
-            {/* Заказчик */}
-            <Box sx={{ minWidth: 180 }}>
-              <Typography variant="caption" color="text.secondary">
-                Заказчик
-              </Typography>
-              <Autocomplete
-                size="small"
-                freeSolo
-                options={customerOptions}
-                value={resolveTaskFieldValue(task, "customer")}
-                onInputChange={(_, v) => stageTaskField(task, "customer", v || "")}
-                onBlur={() => commitTaskField(task, "customer")}
-                renderInput={(params) => (
-                  <TextField {...params} size="small" sx={{ ml: 1 }} />
-                )}
-              />
-            </Box>
-
-            {/* Стрим */}
-            <Box sx={{ minWidth: 180 }}>
-              <Typography variant="caption" color="text.secondary">
-                Стрим
-              </Typography>
-              <Autocomplete
-                size="small"
-                freeSolo
-                options={streamOptions}
-                value={resolveTaskFieldValue(task, "stream")}
-                onInputChange={(_, v) => stageTaskField(task, "stream", v || "")}
-                onBlur={() => commitTaskField(task, "stream")}
-                renderInput={(params) => (
-                  <TextField {...params} size="small" sx={{ ml: 1 }} />
-                )}
-              />
-            </Box>
-
-            {/* Релиз (ПРОМ) — список с релизами */}
-            <Box sx={{ minWidth: 200 }}>
-              <Typography variant="caption" color="text.secondary">
-                Релиз (ПРОМ)
-              </Typography>
-              <Select
-                size="small"
-                value={task.releaseDate || ""}
-                displayEmpty
-                onChange={(e) => {
-                  const iso = String(e.target.value) || "";
-                  const sid = detectSprintByDate(iso) || "";
-                  updateField(task, {
-                    releaseDate: iso,
-                    releaseSprintId: sid,
-                  });
-                }}
-                sx={{ ml: 1, minWidth: 200 }}
-              >
-                <MenuItem value="">
-                  <em>—</em>
-                </MenuItem>
-                {promReleases
-                  .slice()
-                  .sort((a, b) => a.promDate.localeCompare(b.promDate))
-                  .map((r) => (
-                    <MenuItem key={r.id} value={r.promDate}>
-                      {moment(r.promDate).format("DD.MM.YYYY")}
-                    </MenuItem>
-                  ))}
-              </Select>
-            </Box>
-
-            {/* Дублирование + порядок + удаление */}
             <Stack direction="row" spacing={0.5}>
               {dragHandle && (
                 <Tooltip title="Перетащите, чтобы изменить порядок">
@@ -1473,7 +1671,21 @@ export default function BacklogPage() {
                                       return copy;
                                     });
                                   }}
-                                  onCommit={() => commitCell(task.id, p.id, s.id)}
+                                  onCommit={() => {
+                                    stopEditor(
+                                      allocationEditorKey(p.id, s.id)
+                                    );
+                                    commitCell(task.id, p.id, s.id);
+                                  }}
+                                  isEditing={
+                                    activeEditors[allocationEditorKey(p.id, s.id)]
+                                  }
+                                  onStartEditing={() =>
+                                    startEditor(allocationEditorKey(p.id, s.id))
+                                  }
+                                  onStopEditing={() =>
+                                    stopEditor(allocationEditorKey(p.id, s.id))
+                                  }
                                 />
                               </TableCell>
                             ))}
@@ -1519,31 +1731,58 @@ export default function BacklogPage() {
 
                 {/* Добавление участника */}
                 <TableRow>
-                  <TableCell colSpan={visibleSprints.length + 2}>
-                    <Stack direction="row" spacing={2} alignItems="center">
-                      <Typography
-                        variant="body2"
-                        sx={{ color: "text.secondary" }}
-                      >
-                        Добавить участника:
-                      </Typography>
-                      <Autocomplete
-                        size="small"
-                        sx={{ minWidth: 280 }}
-                        options={participants.filter(
-                          (p) => !task.participantIds.includes(p.id)
-                        )}
-                        getOptionLabel={(p) =>
-                          p ? `${p.fullName} (${p.role})` : ""
-                        }
-                        renderInput={(params) => (
-                          <TextField {...params} label="Выберите участника" />
-                        )}
-                        onChange={(_, value) => {
-                          if (value) addParticipantToTask(task, value.id);
-                        }}
-                      />
-                    </Stack>
+                  <TableCell
+                    colSpan={visibleSprints.length + 3}
+                    align="center"
+                    sx={{ py: 0.5, borderStyle: "dashed", borderColor: "divider" }}
+                  >
+                    <Tooltip title="Добавить участника">
+                      <span>
+                        <IconButton
+                          size="small"
+                          color="primary"
+                          disabled={!availableParticipants.length}
+                          onClick={(e) =>
+                            setParticipantPicker({
+                              taskId: task.id,
+                              anchorEl: e.currentTarget,
+                            })
+                          }
+                        >
+                          <Add />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <Popover
+                      open={pickerOpen}
+                      anchorEl={pickerAnchor}
+                      onClose={closeParticipantPicker}
+                      anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+                      transformOrigin={{ vertical: "top", horizontal: "center" }}
+                    >
+                      <Box sx={{ p: 2, width: 320, maxWidth: "90vw" }}>
+                        <Autocomplete
+                          size="small"
+                          autoHighlight
+                          options={availableParticipants}
+                          getOptionLabel={(p) =>
+                            p ? `${p.fullName} (${p.role})` : ""
+                          }
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              label="Добавить участника"
+                              size="small"
+                            />
+                          )}
+                          onChange={(_, value) => {
+                            if (value) addParticipantToTask(task, value.id);
+                            closeParticipantPicker();
+                          }}
+                          noOptionsText="Свободных участников нет"
+                        />
+                      </Box>
+                    </Popover>
                   </TableCell>
                   <TableCell align="right">
                     <Chip label="Автосумма" size="small" color="default" />
@@ -1576,79 +1815,21 @@ export default function BacklogPage() {
 
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
-      <Typography variant="h6" sx={{ mb: 2 }}>
-        Бэклог
-      </Typography>
-
-      {/* Панель фильтров */}
-      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+      <Stack spacing={2}>
         <Stack
-          direction="row"
-          spacing={2}
-          alignItems="center"
-          sx={{ flexWrap: { xs: "wrap", xl: "nowrap" } }}
+          direction={{ xs: "column", md: "row" }}
+          spacing={1.5}
+          alignItems={{ xs: "flex-start", md: "center" }}
+          justifyContent="space-between"
         >
-          <FilterAutocomplete
-            multiple
-            allowCustom={false}
-            label="Фильтр по кварталам"
-            options={quarterFilterOptions}
-            value={selectedQuarterIds}
-            onChange={handleQuarterFilterChange}
-            sx={{ minWidth: 240, flex: 1 }}
-          />
-
-          <FilterAutocomplete
-            multiple
-            allowCustom={false}
-            label="Приоритет"
-            options={priorityOptions}
-            value={priorityFilter.map(String)}
-            onChange={handlePriorityFilterChange}
-            sx={{ minWidth: 160 }}
-          />
-
-          <FilterAutocomplete
-            multiple
-            allowCustom={false}
-            label="Статусы"
-            options={statusOptions}
-            value={statusFilter}
-            onChange={handleStatusFilterChange}
-            sx={{ minWidth: 220, flex: 1 }}
-          />
-
-          <FilterAutocomplete
-            label="Релиз"
-            allowCustom={false}
-            options={releaseFilterOptions}
-            value={releaseSprintFilter === "all" ? "" : releaseSprintFilter}
-            onChange={handleReleaseFilterChange}
-            sx={{ minWidth: 200, flex: 1 }}
-            placeholder="Все релизы"
-          />
-
-          <FilterAutocomplete
-            label="Стрим"
-            options={streamOptions}
-            value={streamFilter}
-            onChange={(value) => {
-              if (value !== streamFilter) {
-                dispatch(
-                  setBacklogFilters({
-                    streamFilter: value,
-                  })
-                );
-              }
-            }}
-            sx={{ minWidth: 220, flex: 1 }}
-          />
-
-          {isUiPending && (
-            <CircularProgress size={18} sx={{ color: "text.secondary" }} />
-          )}
-
-          <Stack direction="row" spacing={1} sx={{ ml: "auto", flexShrink: 0 }}>
+          <Typography variant="h6">Бэклог</Typography>
+          <Stack
+            direction="row"
+            spacing={1}
+            flexWrap="wrap"
+            justifyContent={{ xs: "flex-start", md: "flex-end" }}
+            rowGap={1}
+          >
             <Button
               variant="outlined"
               startIcon={<Download />}
@@ -1666,59 +1847,137 @@ export default function BacklogPage() {
             </Button>
           </Stack>
         </Stack>
-      </Paper>
 
-      {/* Список задач */}
-      <DndContext
-        sensors={taskSensors}
-        collisionDetection={closestCenter}
-        onDragStart={handleTaskDragStart}
-        onDragEnd={handleTaskDragEnd}
-        onDragCancel={handleTaskDragCancel}
-      >
-        <SortableContext
-          items={deferredFilteredTasks.map((t) => t.id)}
-          strategy={verticalListSortingStrategy}
-        >
-          <Stack spacing={2}>
-            {deferredFilteredTasks.map((t) => (
-              <SortableTask key={t.id} task={t}>
-                {(dragHandleProps) => renderTaskTable(t, dragHandleProps)}
-              </SortableTask>
-            ))}
-            {!deferredFilteredTasks.length && !isFetching && (
-              <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
-                <Typography color="text.secondary">
-                  Нет задач по текущим фильтрам
-                </Typography>
-              </Paper>
+        {/* Панель фильтров */}
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "repeat(auto-fit, minmax(220px, 1fr))",
+                md: "repeat(auto-fit, minmax(200px, 1fr))",
+              },
+              gridAutoFlow: "row dense",
+              gap: 2,
+              alignItems: "center",
+            }}
+          >
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Фильтр по кварталам"
+              options={quarterFilterOptions}
+              value={selectedQuarterIds}
+              onChange={handleQuarterFilterChange}
+              sx={{ minWidth: 200 }}
+            />
+
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Приоритет"
+              options={priorityOptions}
+              value={priorityFilter.map(String)}
+              onChange={handlePriorityFilterChange}
+              sx={{ minWidth: 160 }}
+            />
+
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Статусы"
+              options={statusOptions}
+              value={statusFilter}
+              onChange={handleStatusFilterChange}
+              sx={{ minWidth: 200 }}
+            />
+
+            <FilterAutocomplete
+              label="Релиз"
+              allowCustom={false}
+              options={releaseFilterOptions}
+              value={releaseSprintFilter === "all" ? "" : releaseSprintFilter}
+              onChange={handleReleaseFilterChange}
+              sx={{ minWidth: 200 }}
+              placeholder="Все релизы"
+            />
+
+            <FilterAutocomplete
+              label="Стрим"
+              options={streamOptions}
+              value={streamFilter}
+              onChange={(value) => {
+                if (value !== streamFilter) {
+                  dispatch(
+                    setBacklogFilters({
+                      streamFilter: value,
+                    })
+                  );
+                }
+              }}
+              sx={{ minWidth: 200 }}
+            />
+
+            {isUiPending && (
+              <Box sx={{ display: "flex", justifyContent: "center" }}>
+                <CircularProgress size={18} sx={{ color: "text.secondary" }} />
+              </Box>
             )}
-          </Stack>
-        </SortableContext>
-        <DragOverlay dropAnimation={null}>
-          {activeTask ? (
-            <Paper variant="outlined" sx={{ p: 1.5, maxWidth: 960 }}>
-              <Stack direction="row" spacing={1} alignItems="center">
-                <DragIndicator fontSize="small" color="disabled" />
-                <Stack spacing={0.25}>
-                  <Typography fontWeight={700}>{activeTask.title}</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {activeTask.stream || "Без стрима"}
-                  </Typography>
-                </Stack>
-              </Stack>
-            </Paper>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+          </Box>
+        </Paper>
 
-      <Divider sx={{ my: 2 }} />
-      <Typography variant="caption" color="text.secondary">
-        Все поля редактируются по клику. Нагрузка задаётся в ячейках «участник ×
-        спринт». Статусы/лидер/порядок/копирование — локально на этой странице.
-        Выбор релиза (ПРОМ) автоматически определяет спринт и подсвечивает
-        соответствующую колонку.
-      </Typography>
+        {/* Список задач */}
+        <DndContext
+          sensors={taskSensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleTaskDragStart}
+          onDragEnd={handleTaskDragEnd}
+          onDragCancel={handleTaskDragCancel}
+        >
+          <SortableContext
+            items={deferredFilteredTasks.map((t) => t.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <Stack spacing={2}>
+              {deferredFilteredTasks.map((t) => (
+                <SortableTask key={t.id} task={t}>
+                  {(dragHandleProps) => renderTaskTable(t, dragHandleProps)}
+                </SortableTask>
+              ))}
+              {!deferredFilteredTasks.length && !isFetching && (
+                <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
+                  <Typography color="text.secondary">
+                    Нет задач по текущим фильтрам
+                  </Typography>
+                </Paper>
+              )}
+            </Stack>
+          </SortableContext>
+          <DragOverlay dropAnimation={null}>
+            {activeTask ? (
+              <Paper variant="outlined" sx={{ p: 1.5, maxWidth: 960 }}>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <DragIndicator fontSize="small" color="disabled" />
+                  <Stack spacing={0.25}>
+                    <Typography fontWeight={700}>{activeTask.title}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {activeTask.stream || "Без стрима"}
+                    </Typography>
+                  </Stack>
+                </Stack>
+              </Paper>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+
+        <Divider />
+        <Typography variant="caption" color="text.secondary">
+          Все поля редактируются по клику. Нагрузка задаётся в ячейках «участник ×
+          спринт». Статусы/лидер/порядок/копирование — локально на этой странице.
+          Выбор релиза (ПРОМ) автоматически определяет спринт и подсвечивает
+          соответствующую колонку.
+        </Typography>
+      </Stack>
     </Paper>
   );
 }

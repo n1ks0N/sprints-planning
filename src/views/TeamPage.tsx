@@ -21,6 +21,7 @@ import {
 import { Delete, Edit, Save, Close, DragIndicator } from "@mui/icons-material";
 
 import {
+  api,
   useGetParticipantsQuery,
   useAddParticipantMutation,
   useUpdateParticipantMutation,
@@ -219,10 +220,23 @@ export default function TeamPage() {
     });
 
     const payload = merged.map((id, idx) => ({ id, order: idx }));
+    const patch = dispatch(
+      api.util.updateQueryData("getParticipants", undefined, (draft) => {
+        const byId = new Map(draft.map((p) => [p.id, p]));
+        const reordered = merged
+          .map((id) => byId.get(id))
+          .filter(Boolean) as Participant[];
+        if (reordered.length === draft.length) {
+          draft.splice(0, draft.length, ...reordered);
+        }
+      })
+    );
+
     try {
       await reorderParticipants({ orders: payload }).unwrap();
     } catch (e) {
       console.error("Reorder failed", e);
+      patch.undo?.();
     }
   };
 

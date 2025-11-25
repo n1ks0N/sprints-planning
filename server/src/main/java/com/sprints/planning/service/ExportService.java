@@ -21,6 +21,7 @@ import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.Font;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.util.WorkbookUtil;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
@@ -56,6 +57,8 @@ public class ExportService {
         List<TaskDto> tasks = taskService.findAll(null);
         List<ReleaseDto> releases = releaseService.findAll();
 
+        java.util.Set<String> usedSheetNames = new java.util.HashSet<>();
+
         Map<String, SprintDto> sprintById = sprints.stream()
             .collect(Collectors.toMap(SprintDto::id, s -> s));
         Map<String, ParticipantDto> participantById = participants.stream()
@@ -64,12 +67,12 @@ public class ExportService {
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             CellStyle headerStyle = createHeaderStyle(workbook);
 
-            writeTimeSheet(workbook, headerStyle, quarters, sprints);
-            writeTeamSheet(workbook, headerStyle, participants);
-            writeBacklogSheet(workbook, headerStyle, tasks, sprintById, participantById);
-            writeParticipantWorkloadSheet(workbook, headerStyle, tasks, sprintById, participantById);
-            writeCapacitySheet(workbook, headerStyle, quarters, sprintById);
-            writeReleasesSheet(workbook, headerStyle, releases);
+            writeTimeSheet(workbook, usedSheetNames, headerStyle, quarters, sprints);
+            writeTeamSheet(workbook, usedSheetNames, headerStyle, participants);
+            writeBacklogSheet(workbook, usedSheetNames, headerStyle, tasks, sprintById, participantById);
+            writeParticipantWorkloadSheet(workbook, usedSheetNames, headerStyle, tasks, sprintById, participantById);
+            writeCapacitySheet(workbook, usedSheetNames, headerStyle, quarters, sprintById);
+            writeReleasesSheet(workbook, usedSheetNames, headerStyle, releases);
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             workbook.write(baos);
@@ -79,9 +82,9 @@ public class ExportService {
         }
     }
 
-    private void writeTimeSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<QuarterDto> quarters,
-        List<SprintDto> sprints) {
-        XSSFSheet sheet = workbook.createSheet("Кварталы/Спринты");
+    private void writeTimeSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, CellStyle headerStyle,
+        List<QuarterDto> quarters, List<SprintDto> sprints) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "Кварталы/Спринты");
         int rowIdx = 0;
 
         Row quartersTitle = sheet.createRow(rowIdx++);
@@ -113,8 +116,9 @@ public class ExportService {
         autoSize(sheet, 6);
     }
 
-    private void writeTeamSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<ParticipantDto> participants) {
-        XSSFSheet sheet = workbook.createSheet("Участники");
+    private void writeTeamSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, CellStyle headerStyle,
+        List<ParticipantDto> participants) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "Участники");
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle, "ФИО", "Роль", "Ставка");
         for (ParticipantDto participant : participants) {
             Row row = sheet.createRow(rowIdx++);
@@ -125,9 +129,9 @@ public class ExportService {
         autoSize(sheet, 3);
     }
 
-    private void writeBacklogSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<TaskDto> tasks,
-        Map<String, SprintDto> sprintById, Map<String, ParticipantDto> participantById) {
-        XSSFSheet sheet = workbook.createSheet("Бэклог");
+    private void writeBacklogSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, CellStyle headerStyle,
+        List<TaskDto> tasks, Map<String, SprintDto> sprintById, Map<String, ParticipantDto> participantById) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "Бэклог");
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Название",
             "Приоритет",
@@ -161,9 +165,10 @@ public class ExportService {
         autoSize(sheet, 10);
     }
 
-    private void writeParticipantWorkloadSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<TaskDto> tasks,
-        Map<String, SprintDto> sprintById, Map<String, ParticipantDto> participantById) {
-        XSSFSheet sheet = workbook.createSheet("По сотрудникам");
+    private void writeParticipantWorkloadSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames,
+        CellStyle headerStyle, List<TaskDto> tasks, Map<String, SprintDto> sprintById,
+        Map<String, ParticipantDto> participantById) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "По сотрудникам");
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Участник",
             "Роль",
@@ -179,13 +184,14 @@ public class ExportService {
             if (task.allocations() == null) {
                 continue;
             }
-            for (Map.Entry<String, Map<String, Integer>> participantAlloc : task.allocations().entrySet()) {
+            for (Map.Entry<String, Map<String, java.math.BigDecimal>> participantAlloc : task.allocations().entrySet()) {
                 ParticipantDto participant = participantById.get(participantAlloc.getKey());
                 String participantName = renderParticipant(participantAlloc.getKey(), participantById);
                 String participantRole = participant != null ? nullToEmpty(participant.role()) : "";
-                for (Map.Entry<String, Integer> sprintAlloc : participantAlloc.getValue().entrySet()) {
-                    int days = Optional.ofNullable(sprintAlloc.getValue()).orElse(0);
-                    if (days <= 0) {
+                for (Map.Entry<String, java.math.BigDecimal> sprintAlloc : participantAlloc.getValue().entrySet()) {
+                    java.math.BigDecimal days = Optional.ofNullable(sprintAlloc.getValue())
+                        .orElse(java.math.BigDecimal.ZERO);
+                    if (days.compareTo(java.math.BigDecimal.ZERO) <= 0) {
                         continue;
                     }
                     SprintDto sprint = sprintById.get(sprintAlloc.getKey());
@@ -200,7 +206,7 @@ public class ExportService {
                     row.createCell(5).setCellValue(task.priority());
                     row.createCell(6).setCellValue(nullToEmpty(task.stream()));
                     row.createCell(7).setCellValue(nullToEmpty(task.customer()));
-                    row.createCell(8).setCellValue(days);
+                    row.createCell(8).setCellValue(days.doubleValue());
                 }
             }
         }
@@ -208,9 +214,9 @@ public class ExportService {
         autoSize(sheet, 9);
     }
 
-    private void writeCapacitySheet(XSSFWorkbook workbook, CellStyle headerStyle, List<QuarterDto> quarters,
-        Map<String, SprintDto> sprintById) {
-        XSSFSheet sheet = workbook.createSheet("Нагрузка");
+    private void writeCapacitySheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, CellStyle headerStyle,
+        List<QuarterDto> quarters, Map<String, SprintDto> sprintById) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "Нагрузка");
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Квартал",
             "Участник",
@@ -249,8 +255,9 @@ public class ExportService {
         autoSize(sheet, 12);
     }
 
-    private void writeReleasesSheet(XSSFWorkbook workbook, CellStyle headerStyle, List<ReleaseDto> releases) {
-        XSSFSheet sheet = workbook.createSheet("Релизы");
+    private void writeReleasesSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, CellStyle headerStyle,
+        List<ReleaseDto> releases) {
+        XSSFSheet sheet = createSheet(workbook, usedSheetNames, "Релизы");
         int rowIdx = writeHeaderRow(sheet, 0, headerStyle,
             "Название",
             "ПРОМ",
@@ -308,6 +315,48 @@ public class ExportService {
         }
     }
 
+    private XSSFSheet createSheet(XSSFWorkbook workbook, java.util.Set<String> usedSheetNames, String desiredName) {
+        String safe = safeSheetName(desiredName);
+        safe = uniqueSheetName(safe, usedSheetNames);
+        try {
+            XSSFSheet sheet = workbook.createSheet(safe);
+            usedSheetNames.add(sheet.getSheetName());
+            return sheet;
+        } catch (IllegalArgumentException e) {
+            String fallback = uniqueSheetName("Sheet", usedSheetNames);
+            XSSFSheet sheet = workbook.createSheet(fallback);
+            usedSheetNames.add(sheet.getSheetName());
+            return sheet;
+        }
+    }
+
+    private String safeSheetName(String name) {
+        String original = name == null ? "Sheet" : name;
+        try {
+            return WorkbookUtil.createSafeSheetName(original, ' ');
+        } catch (IllegalArgumentException e) {
+            String sanitized = original.replaceAll("[\\\\/?*\n\r\t\[\]:]", " ").trim();
+            if (sanitized.isBlank()) {
+                sanitized = "Sheet";
+            }
+            return WorkbookUtil.createSafeSheetName(sanitized, ' ');
+        }
+    }
+
+    private String uniqueSheetName(String baseName, java.util.Set<String> usedSheetNames) {
+        String candidate = baseName;
+        int counter = 1;
+        while (usedSheetNames.contains(candidate)) {
+            String suffix = " (" + counter++ + ")";
+            int maxBaseLength = Math.max(1, 31 - suffix.length());
+            String truncatedBase = candidate.length() > maxBaseLength
+                ? candidate.substring(0, maxBaseLength)
+                : candidate;
+            candidate = truncatedBase + suffix;
+        }
+        return candidate;
+    }
+
     private String nullToEmpty(String value) {
         return value == null ? "" : value;
     }
@@ -337,40 +386,42 @@ public class ExportService {
         return sprint != null ? sprint.name() : sprintId;
     }
 
-    private String renderLoads(Map<String, Integer> loads, List<SprintDto> sprints) {
+    private String renderLoads(Map<String, java.math.BigDecimal> loads, List<SprintDto> sprints) {
         if (loads == null || loads.isEmpty()) {
             return "";
         }
         List<String> chunks = new ArrayList<>();
         for (SprintDto sprint : sprints) {
-            Integer days = loads.get(sprint.id());
-            if (days != null && days > 0) {
+            java.math.BigDecimal days = loads.get(sprint.id());
+            if (days != null && days.compareTo(java.math.BigDecimal.ZERO) > 0) {
                 chunks.add(sprint.name() + ": " + days + " дн.");
             }
         }
-        for (Map.Entry<String, Integer> entry : loads.entrySet()) {
+        for (Map.Entry<String, java.math.BigDecimal> entry : loads.entrySet()) {
             boolean knownSprint = sprints.stream().anyMatch(s -> Objects.equals(s.id(), entry.getKey()));
-            if (!knownSprint && entry.getValue() != null && entry.getValue() > 0) {
+            if (!knownSprint && entry.getValue() != null
+                && entry.getValue().compareTo(java.math.BigDecimal.ZERO) > 0) {
                 chunks.add(entry.getKey() + ": " + entry.getValue() + " дн.");
             }
         }
         return String.join("; ", chunks);
     }
 
-    private String renderAllocations(Map<String, Map<String, Integer>> allocations,
+    private String renderAllocations(Map<String, Map<String, java.math.BigDecimal>> allocations,
         Map<String, ParticipantDto> participantById,
         Map<String, SprintDto> sprintById) {
         if (allocations == null || allocations.isEmpty()) {
             return "";
         }
         List<String> parts = new ArrayList<>();
-        for (Map.Entry<String, Map<String, Integer>> entry : allocations.entrySet()) {
+        for (Map.Entry<String, Map<String, java.math.BigDecimal>> entry : allocations.entrySet()) {
             String participantName = renderParticipant(entry.getKey(), participantById);
             if (entry.getValue() == null || entry.getValue().isEmpty()) {
                 continue;
             }
             String perSprint = entry.getValue().entrySet().stream()
-                .filter(e -> Optional.ofNullable(e.getValue()).orElse(0) > 0)
+                .filter(e -> Optional.ofNullable(e.getValue()).orElse(java.math.BigDecimal.ZERO)
+                    .compareTo(java.math.BigDecimal.ZERO) > 0)
                 .sorted(Comparator.comparing(e -> Optional.ofNullable(sprintById.get(e.getKey()))
                     .map(SprintDto::startDate).orElse("")))
                 .map(e -> renderSprint(e.getKey(), sprintById) + ": " + e.getValue() + " дн.")

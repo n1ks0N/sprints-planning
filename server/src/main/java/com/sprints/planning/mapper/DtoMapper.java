@@ -74,11 +74,11 @@ public final class DtoMapper {
         entity.getParticipants().stream()
             .sorted(Comparator.comparingInt(TaskParticipantEntity::getDisplayOrder))
             .forEach(participant -> participantIds.add(participant.getParticipant().getId().toString()));
-        Map<String, Integer> loads = new HashMap<>();
+        Map<String, java.math.BigDecimal> loads = new HashMap<>();
         for (TaskLoadEntity load : entity.getLoads()) {
             loads.put(load.getSprint().getId().toString(), load.getDays());
         }
-        Map<String, Map<String, Integer>> allocations = new HashMap<>();
+        Map<String, Map<String, java.math.BigDecimal>> allocations = new HashMap<>();
         for (TaskAllocationEntity allocation : entity.getAllocations()) {
             String pid = allocation.getParticipant().getId().toString();
             allocations.computeIfAbsent(pid, k -> new HashMap<>())

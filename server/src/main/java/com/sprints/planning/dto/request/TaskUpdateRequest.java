@@ -1,6 +1,7 @@
 package com.sprints.planning.dto.request;
 
 import jakarta.validation.constraints.NotNull;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -14,8 +15,8 @@ public record TaskUpdateRequest(
     String customer,
     String stream,
     List<String> participantIds,
-    Map<String, Integer> loads,
-    Map<String, Map<String, Integer>> allocations,
+    Map<String, BigDecimal> loads,
+    Map<String, Map<String, BigDecimal>> allocations,
     Map<String, String> notes,
     LocalDate releaseDate,
     String releaseSprintId,
