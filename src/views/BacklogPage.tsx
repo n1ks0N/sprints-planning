@@ -132,6 +132,7 @@ function EditableText({
   const controlledEditing = isEditing ?? internalEditing;
   const ref = React.useRef<HTMLInputElement | null>(null);
   const prevEditing = React.useRef(controlledEditing);
+  const selectionRef = React.useRef<{ start: number; end: number } | null>(null);
 
   const startEditing = React.useCallback(() => {
     setInternalEditing(true);
@@ -155,9 +156,19 @@ function EditableText({
       node.focus();
       const len = node.value?.length ?? 0;
       node.setSelectionRange?.(len, len);
+      selectionRef.current = { start: len, end: len };
     }
     prevEditing.current = controlledEditing;
   }, [controlledEditing]);
+
+  React.useLayoutEffect(() => {
+    if (!controlledEditing) return;
+    const node = ref.current;
+    const sel = selectionRef.current;
+    if (node && sel) {
+      node.setSelectionRange(sel.start, sel.end);
+    }
+  });
 
   return !controlledEditing ? (
     <Box
@@ -182,7 +193,14 @@ function EditableText({
     <InputBase
       inputRef={ref}
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => {
+        const target = e.target;
+        selectionRef.current = {
+          start: target.selectionStart ?? target.value.length,
+          end: target.selectionEnd ?? target.value.length,
+        };
+        onChange(target.value);
+      }}
       onBlur={() => {
         stopEditing();
         onBlur?.();
@@ -228,6 +246,7 @@ function EditableNumberCell({
   const controlledEditing = isEditing ?? internalEditing;
   const ref = React.useRef<HTMLInputElement | null>(null);
   const prevEditing = React.useRef(controlledEditing);
+  const selectionRef = React.useRef<{ start: number; end: number } | null>(null);
 
   const startEditing = React.useCallback(() => {
     setInternalEditing(true);
@@ -249,9 +268,20 @@ function EditableNumberCell({
     if (controlledEditing && !prevEditing.current && ref.current) {
       ref.current.focus();
       ref.current.select();
+      const val = ref.current.value ?? "";
+      selectionRef.current = { start: 0, end: val.length };
     }
     prevEditing.current = controlledEditing;
   }, [controlledEditing]);
+
+  React.useLayoutEffect(() => {
+    if (!controlledEditing) return;
+    const node = ref.current;
+    const sel = selectionRef.current;
+    if (node && sel) {
+      node.setSelectionRange(sel.start, sel.end);
+    }
+  });
 
   return (
     <Box
@@ -271,7 +301,12 @@ function EditableNumberCell({
           type="number"
           value={Number.isFinite(value) ? value : 0}
           onChange={(e) => {
-            const v = Number(e.target.value);
+            const target = e.target as HTMLInputElement;
+            selectionRef.current = {
+              start: target.selectionStart ?? 0,
+              end: target.selectionEnd ?? 0,
+            };
+            const v = Number(target.value);
             onChange(Number.isFinite(v) ? v : 0);
           }}
           onBlur={() => {
