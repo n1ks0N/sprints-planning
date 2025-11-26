@@ -53,7 +53,6 @@ import {
   useUpsertTaskAllocationMutation,
   useUpsertTaskAllocationBulkMutation,
   useLazyExportExcelQuery,
-  // для релизов
   useGetReleasesQuery,
 } from "../app/api";
 import type {
@@ -67,6 +66,7 @@ import type {
 import { setBacklogFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+
 import {
   DndContext,
   PointerSensor,
@@ -110,7 +110,7 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   return true;
 }
 
-/** Инлайн-редактор текста (клик по тексту -> InputBase, «невидимый инпут») */
+/** Инлайн-редактор текста */
 function EditableText({
   value,
   onChange,
@@ -205,33 +205,33 @@ function EditableText({
           )}
         </Box>
       ) : (
-          <InputBase
-            inputRef={ref}
-            multiline={multiline}
-            minRows={minRows}
-            maxRows={maxRows}
-            autoFocus
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
+        <InputBase
+          inputRef={ref}
+          multiline={multiline}
+          minRows={minRows}
+          maxRows={maxRows}
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
           onBlur={closeEditing}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === "Escape") {
               e.currentTarget.blur();
             }
           }}
-            sx={{
-              px: 0.5,
-              borderRadius: 1,
-              bgcolor: "background.paper",
-              outline: "1px solid",
-              outlineColor: "divider",
-              fontSize: "inherit",
-              lineHeight: "inherit",
-              ...sx,
-              ...inputSx,
-            }}
-          />
-        )}
+          sx={{
+            px: 0.5,
+            borderRadius: 1,
+            bgcolor: "background.paper",
+            outline: "1px solid",
+            outlineColor: "divider",
+            fontSize: "inherit",
+            lineHeight: "inherit",
+            ...sx,
+            ...inputSx,
+          }}
+        />
+      )}
     </ClickAwayListener>
   );
 }
@@ -258,10 +258,8 @@ function EditableNumberCell({
   const controlledEditing = isEditing ?? internalEditing;
   const ref = React.useRef<HTMLInputElement | null>(null);
   const prevEditing = React.useRef(controlledEditing);
-  const didSelectAllRef = React.useRef(false);
 
   const startEditing = React.useCallback(() => {
-    didSelectAllRef.current = false;
     setInternalEditing(true);
     onStartEditing?.();
   }, [onStartEditing]);
@@ -279,13 +277,12 @@ function EditableNumberCell({
 
   React.useEffect(() => {
     if (controlledEditing && !prevEditing.current && ref.current) {
+      // Только фокус, без принудительного выделения текста на каждый ререндер
       ref.current.focus();
-      ref.current.select();
-      didSelectAllRef.current = true;
     }
     prevEditing.current = controlledEditing;
   }, [controlledEditing]);
- 
+
   const closeEditing = React.useCallback(() => {
     if (!controlledEditing) return;
     stopEditing();
@@ -311,12 +308,6 @@ function EditableNumberCell({
             type="number"
             autoFocus
             value={Number.isFinite(value) ? value : 0}
-            onFocus={(e) => {
-              if (!didSelectAllRef.current) {
-                e.target.select();
-                didSelectAllRef.current = true;
-              }
-            }}
             onChange={(e) => {
               const v = Number(e.target.value);
               onChange(Number.isFinite(v) ? v : 0);
@@ -343,7 +334,6 @@ function EditableNumberCell({
   );
 }
 
-/** локальное хранение статусов/лидеров/порядка */
 const LS_STATUS = "backlog.statusMap";
 const LS_TASK_ORDER = "backlog.orderMap";
 
@@ -354,6 +344,7 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
   canceled: "Отменена",
   partial: "Частично",
 };
+
 const STATUS_COLOR: Record<
   TaskStatus,
   "default" | "success" | "error" | "warning" | "info"
@@ -369,6 +360,7 @@ const PRIORITY_VALUES: readonly number[] = [1, 2, 3];
 
 type StatusMap = Record<string, TaskStatus>;
 type OrderMap = Record<string, number>;
+
 type TaskDraftField = "title" | "description" | "dod" | "customer" | "stream";
 type TaskDraftState = Record<string, Partial<Record<TaskDraftField, string>>>;
 
@@ -400,26 +392,23 @@ export default function BacklogPage() {
   const allSprints = useGetSprintsQuery(undefined).data ?? [];
   const { data: releases = [] } = useGetReleasesQuery?.() || { data: [] };
 
-  // вычислим «текущий квартал»
-  const currentQ = React.useMemo(() => {
+  const currentQ = React.useMemo<Quarter | undefined>(() => {
     const today = todayISO();
     return quarters.find((q) => isISOWithin(today, q.startDate, q.endDate));
   }, [quarters]);
 
-  // Фильтр «кварталы»: мультивыбор; по умолчанию текущий, если есть
   const [selectedQuarterIds, setSelectedQuarterIds] = React.useState<string[]>(
     []
   );
   const [isQuarterPending, startQuarterTransition] = React.useTransition();
+
   React.useEffect(() => {
     if (!quarters.length) return;
-    // если пользователь ещё не выбирал — выберем текущий
     if (selectedQuarterIds.length === 0 && currentQ) {
       setSelectedQuarterIds([currentQ.id]);
     }
   }, [quarters, currentQ, selectedQuarterIds.length]);
 
-  // при пустом выборе показываем все спринты; иначе только выбранных кварталов
   const visibleSprints = React.useMemo(() => {
     const list =
       selectedQuarterIds.length === 0
@@ -428,26 +417,45 @@ export default function BacklogPage() {
     return list.sort(byEnd);
   }, [allSprints, selectedQuarterIds]);
 
-  // Карты быстрого доступа
   const sprintById = React.useMemo(() => {
     const m = new Map<string, Sprint>();
     allSprints.forEach((s) => m.set(s.id, s));
     return m;
   }, [allSprints]);
-  const participantMap = React.useMemo(() => {
-    const m = new Map<string, Participant>();
-    participants.forEach((p) => m.set(p.id, p));
-    return m;
-  }, [participants]);
+
   const sprintsGlobalOrdered = React.useMemo(
     () => allSprints.slice().sort(byEnd),
     [allSprints]
   );
+
   const sprintIndexById = React.useMemo(() => {
     const m = new Map<string, number>();
     sprintsGlobalOrdered.forEach((s, i) => m.set(s.id, i));
     return m;
   }, [sprintsGlobalOrdered]);
+
+  const sprintsByQuarter = React.useMemo(() => {
+    const m = new Map<string, Sprint[]>();
+    for (const s of sprintsGlobalOrdered) {
+      if (!m.has(s.quarterId)) {
+        m.set(s.quarterId, []);
+      }
+      m.get(s.quarterId)!.push(s);
+    }
+    return m;
+  }, [sprintsGlobalOrdered]);
+
+  const quartersSorted = React.useMemo(
+    () =>
+      quarters.slice().sort((a, b) => a.startDate.localeCompare(b.startDate)),
+    [quarters]
+  );
+
+  const participantMap = React.useMemo(() => {
+    const m = new Map<string, Participant>();
+    participants.forEach((p) => m.set(p.id, p));
+    return m;
+  }, [participants]);
 
   const dispatch = useAppDispatch();
   const { priorityFilter, streamFilter, statusFilter, releaseSprintFilter } =
@@ -459,6 +467,7 @@ export default function BacklogPage() {
         api.util.updateQueryData("getTasks", undefined, (draft) => {
           const byId = new Map(draft.map((t) => [t.id, t]));
           const seen = new Set<string>();
+
           const reordered = orderedIds
             .map((id) => {
               const item = byId.get(id);
@@ -466,6 +475,7 @@ export default function BacklogPage() {
               return item;
             })
             .filter(Boolean) as BacklogItem[];
+
           const untouched = draft.filter((t) => !seen.has(t.id));
           draft.splice(0, draft.length, ...reordered, ...untouched);
         })
@@ -486,16 +496,17 @@ export default function BacklogPage() {
     [dispatch]
   );
 
-  // Источник задач — всегда берём все, фильтруем на клиенте (т.к. мульти-кварталы)
   const { data: allTasks = [], isFetching } = useGetTasksQuery(undefined);
 
   React.useEffect(() => {
     if (!allTasks.length) return;
     const taskMap = new Map(allTasks.map((task) => [task.id, task]));
+
     setTaskDrafts((prev) => {
       if (Object.keys(prev).length === 0) return prev;
       let changed = false;
       const next: TaskDraftState = {};
+
       for (const [taskId, draft] of Object.entries(prev)) {
         const task = taskMap.get(taskId);
         if (!task) {
@@ -504,6 +515,7 @@ export default function BacklogPage() {
         }
         const cleaned: Partial<Record<TaskDraftField, string>> = {};
         let hasDifference = false;
+
         for (const key of Object.keys(draft) as TaskDraftField[]) {
           const value = draft[key];
           if (value === undefined) continue;
@@ -516,6 +528,7 @@ export default function BacklogPage() {
             changed = true;
           }
         }
+
         if (hasDifference) {
           next[taskId] = cleaned;
           if (Object.keys(cleaned).length !== Object.keys(draft).length) {
@@ -525,26 +538,27 @@ export default function BacklogPage() {
           changed = true;
         }
       }
+
       return changed ? next : prev;
     });
   }, [allTasks]);
 
-  // Локальные статусы/лидеры/порядок
   const [statusMap, setStatusMap] = React.useState<StatusMap>(() =>
     readLS<StatusMap>(LS_STATUS, {})
   );
   const [orderMap, setOrderMap] = React.useState<OrderMap>(() =>
     readLS<OrderMap>(LS_TASK_ORDER, {})
   );
+
   React.useEffect(() => writeLS(LS_STATUS, statusMap), [statusMap]);
   React.useEffect(() => writeLS(LS_TASK_ORDER, orderMap), [orderMap]);
 
-  // Список всех возможных значений «стрима» и «заказчика» (для автокомплита)
   const streamOptions = React.useMemo(() => {
     const s = new Set<string>();
     for (const t of allTasks) if (t.stream?.trim()) s.add(t.stream.trim());
     return Array.from(s).sort();
   }, [allTasks]);
+
   const customerOptions = React.useMemo(() => {
     const s = new Set<string>();
     for (const t of allTasks) if (t.customer?.trim()) s.add(t.customer.trim());
@@ -561,7 +575,11 @@ export default function BacklogPage() {
   );
 
   const priorityOptions = React.useMemo(
-    () => PRIORITY_VALUES.map((p) => ({ value: String(p), label: String(p) })),
+    () =>
+      PRIORITY_VALUES.map((p) => ({
+        value: String(p),
+        label: String(p),
+      })),
     []
   );
 
@@ -580,6 +598,7 @@ export default function BacklogPage() {
       const filtered = ids.filter((id) => existing.has(id));
       const unique = Array.from(new Set(filtered));
       if (shallowArrayEqual(unique, selectedQuarterIds)) return;
+
       startQuarterTransition(() => {
         setSelectedQuarterIds(unique);
       });
@@ -617,59 +636,70 @@ export default function BacklogPage() {
     [dispatch, releaseSprintFilter]
   );
 
-  // Фильтрация задач
   const filteredTasks = React.useMemo(() => {
-    const selectedSprintIds =
+    // Карта quarterId -> множество спринтов
+    const quarterToSprintIds = new Map<string, Set<string>>();
+    for (const s of allSprints) {
+      if (!quarterToSprintIds.has(s.quarterId)) {
+        quarterToSprintIds.set(s.quarterId, new Set());
+      }
+      quarterToSprintIds.get(s.quarterId)!.add(s.id);
+    }
+
+    // Множества sprintId по каждому выбранному кварталу
+    const selectedSprintSets: Set<string>[] =
       selectedQuarterIds.length === 0
-        ? new Set(allSprints.map((s) => s.id))
-        : new Set(
-            allSprints
-              .filter((s) => selectedQuarterIds.includes(s.quarterId))
-              .map((s) => s.id)
+        ? [new Set(allSprints.map((s) => s.id))]
+        : selectedQuarterIds.map(
+            (qid) => quarterToSprintIds.get(qid) ?? new Set<string>()
           );
 
-    // фильтруем по кварталу: задача показывается, если есть нагрузка/распределение В ЛЮБОМ из выбранных спринтов
-    const byQuarters = allTasks.filter((t) => {
+    const passesQuarterFilter = (task: BacklogItem): boolean => {
       if (selectedQuarterIds.length === 0) return true;
+
+      const taskSprintIds = new Set<string>();
+
       // loads
-      const hasLoad =
-        t.loads &&
-        Object.entries(t.loads).some(
-          ([sid, days]) => selectedSprintIds.has(sid) && (Number(days) || 0) > 0
-        );
-      if (hasLoad) return true;
-      // allocations
-      if (t.allocations) {
-        for (const pid of Object.keys(t.allocations)) {
-          const rows = t.allocations[pid];
-          if (
-            Object.entries(rows).some(
-              ([sid, days]) =>
-                selectedSprintIds.has(sid) && (Number(days) || 0) > 0
-            )
-          ) {
-            return true;
+      if (task.loads) {
+        for (const [sid, days] of Object.entries(task.loads)) {
+          if (Number(days) > 0) taskSprintIds.add(sid);
+        }
+      }
+
+      // allocations (на случай, если loads отстают)
+      if (task.allocations) {
+        for (const rows of Object.values(task.allocations)) {
+          for (const [sid, days] of Object.entries(rows)) {
+            if (Number(days) > 0) taskSprintIds.add(sid);
           }
         }
       }
-      // если нагрузок нет — всё равно показываем задачу (пустая), чтобы её можно было заполнить
-      return false;
-    });
 
-    // приоритет
+      if (taskSprintIds.size === 0) return false;
+
+      // задача видна, если есть пересечение sprintId хотя бы с одним
+      // из выбранных кварталов (то есть она может появиться сразу в нескольких)
+      for (const set of selectedSprintSets) {
+        for (const sid of taskSprintIds) {
+          if (set.has(sid)) return true;
+        }
+      }
+      return false;
+    };
+
+    const byQuarters = allTasks.filter(passesQuarterFilter);
+
     const byPriority =
       priorityFilter.length === 0
         ? byQuarters
         : byQuarters.filter((t) => priorityFilter.includes(Number(t.priority)));
 
-    // стрим
     const byStream = streamFilter.trim()
       ? byPriority.filter((t) =>
           (t.stream || "").toLowerCase().includes(streamFilter.toLowerCase())
         )
       : byPriority;
 
-    // релиз (по дате пром)
     const byRelease =
       releaseSprintFilter === "all" || releaseSprintFilter.trim() === ""
         ? byStream
@@ -678,7 +708,6 @@ export default function BacklogPage() {
             return rel === releaseSprintFilter.trim();
           });
 
-    // статус (по локальной карте)
     const byStatus =
       statusFilter.length === 0
         ? byRelease
@@ -687,12 +716,10 @@ export default function BacklogPage() {
             return statusFilter.includes(st);
           });
 
-    // порядок (локальный)
     const withOrder = byStatus.slice().sort((a, b) => {
       const oa = orderMap[a.id] ?? Number.MAX_SAFE_INTEGER;
       const ob = orderMap[b.id] ?? Number.MAX_SAFE_INTEGER;
       if (oa !== ob) return oa - ob;
-      // fallback: по дате создания
       return (a.createdAt || "").localeCompare(b.createdAt || "");
     });
 
@@ -713,7 +740,6 @@ export default function BacklogPage() {
   const isTasksPending = deferredFilteredTasks !== filteredTasks;
   const isUiPending = isQuarterPending || isTasksPending;
 
-  // Мутации
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
   const [deleteTask] = useDeleteTaskMutation();
@@ -738,16 +764,17 @@ export default function BacklogPage() {
   }, [exportExcel]);
 
   const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
-
-  // Локальные allocations (для быстрого редактирования)
   const [allocations, setAllocations] = React.useState<Allocations>({});
   const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
-  const [activeEditors, setActiveEditors] = React.useState<Record<string, boolean>>(
-    {}
-  );
-  const [participantPicker, setParticipantPicker] = React.useState<
-    { taskId: string; anchorEl: HTMLElement | null } | null
-  >(null);
+  const [activeEditors, setActiveEditors] = React.useState<
+    Record<string, boolean>
+  >({});
+
+  // Глобальный попап добавления участника
+  const [participantPicker, setParticipantPicker] = React.useState<{
+    taskId: string;
+    anchorEl: HTMLElement | null;
+  } | null>(null);
 
   const startEditor = React.useCallback((key: string) => {
     setActiveEditors((prev) => ({ ...prev, [key]: true }));
@@ -764,6 +791,13 @@ export default function BacklogPage() {
   const closeParticipantPicker = React.useCallback(() => {
     setParticipantPicker(null);
   }, []);
+
+  const openParticipantPicker = React.useCallback(
+    (taskId: string, anchorEl: HTMLElement) => {
+      setParticipantPicker({ taskId, anchorEl });
+    },
+    []
+  );
 
   const taskUpdateTimers = React.useRef<
     Map<string, ReturnType<typeof setTimeout>>
@@ -797,9 +831,11 @@ export default function BacklogPage() {
       if (existing) clearTimeout(existing);
 
       const timeout = setTimeout(() => {
-        updateTask({ id: taskId, [field]: value }).unwrap().catch((err) => {
-          console.error("Failed to update task", err);
-        });
+        updateTask({ id: taskId, [field]: value })
+          .unwrap()
+          .catch((err) => {
+            console.error("Failed to update task", err);
+          });
         timers.delete(key);
       }, 400);
 
@@ -813,6 +849,7 @@ export default function BacklogPage() {
       const sanitized = value ?? "";
       const originalRaw = (task as any)[key];
       const original = typeof originalRaw === "string" ? originalRaw : "";
+
       setTaskDrafts((prev) => {
         const next = { ...prev } as TaskDraftState;
         if (sanitized === original) {
@@ -859,15 +896,16 @@ export default function BacklogPage() {
     [resolveTaskFieldValue, scheduleTaskUpdate, taskDrafts]
   );
 
-  // Инициализация локальных allocations из задач
   React.useEffect(() => {
     setAllocations((prev) => {
       const next: Allocations = { ...prev };
+
       for (const t of allTasks) {
-        const taskAllocations: Record<string, Record<string, number>> =
-          next[t.id] ?? (next[t.id] = {});
+        const taskAllocations: Record<string, Record<string, number>> = next[
+          t.id
+        ] ?? (next[t.id] = {});
         const pids = t.participantIds || [];
-        // удаляем удалённых участников
+
         Object.keys(taskAllocations).forEach((pid) => {
           if (!pids.includes(pid)) delete taskAllocations[pid];
         });
@@ -883,6 +921,7 @@ export default function BacklogPage() {
           }
         }
       }
+
       return next;
     });
   }, [allTasks, allSprints]);
@@ -909,7 +948,6 @@ export default function BacklogPage() {
     });
   }, [allTasks]);
 
-  // Релизы: приведём к удобному виду (берём именно даты ПРОМ)
   type ReleaseLike = { id: string; promDate: string };
   const promReleases: ReleaseLike[] = React.useMemo(() => {
     if (!releases || !Array.isArray(releases)) return [];
@@ -937,7 +975,6 @@ export default function BacklogPage() {
       }));
   }, [allTasks, promReleases]);
 
-  // По дате релиза определить спринт
   const detectSprintByDate = (iso?: string): string | undefined => {
     if (!iso) return undefined;
     const found = allSprints.find((s) =>
@@ -946,7 +983,6 @@ export default function BacklogPage() {
     return found?.id;
   };
 
-  // Добавление/копирование задач
   const createTask = async () => {
     const created = await addTask({
       title: "Новая задача",
@@ -965,7 +1001,7 @@ export default function BacklogPage() {
   const duplicateTask = async (task: BacklogItem) => {
     const copy = await addTask({
       title: `${task.title} (копия)`,
-      description: task.description,
+      description: (task as any).description,
       dod: task.dod,
       priority: task.priority,
       customer: task.customer,
@@ -975,9 +1011,9 @@ export default function BacklogPage() {
       releaseSprintId: task.releaseSprintId,
     }).unwrap();
 
-    // скопируем распределение
     const rows = allocations[task.id] || {};
     const ops: Promise<any>[] = [];
+
     for (const pid of Object.keys(rows)) {
       const row = rows[pid] || {};
       for (const sid of Object.keys(row)) {
@@ -994,20 +1030,23 @@ export default function BacklogPage() {
         }
       }
     }
+
     try {
       await Promise.all(ops);
-    } catch {}
-    // подвинем вниз в локальном порядке (следом за исходной)
+    } catch {
+      // ignore
+    }
+
     setOrderMap((prev) => {
       const base = prev[task.id] ?? Date.now();
       return { ...prev, [copy.id]: base + 1 };
     });
   };
 
-  // Удаление
   const removeTask = async (t: BacklogItem) => {
     if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
     await deleteTask({ id: t.id }).unwrap();
+
     setAllocations((prev) => {
       const copy = { ...prev };
       delete copy[t.id];
@@ -1025,12 +1064,10 @@ export default function BacklogPage() {
     });
   };
 
-  // Обновление поля задачи
   const updateField = async (t: BacklogItem, patch: Partial<BacklogItem>) => {
     await updateTask({ id: t.id, ...patch }).unwrap();
   };
 
-  // Коммит ячейки распределения
   const commitCell = async (
     taskId: string,
     participantId: string,
@@ -1049,15 +1086,19 @@ export default function BacklogPage() {
     }
   };
 
-  // Добавить/удалить участника в задаче
   const addParticipantToTask = (task: BacklogItem, pid: string) => {
     if (!pid) return;
     if (task.participantIds?.includes(pid)) return;
-    updateField(task, { participantIds: [...task.participantIds, pid] });
+
+    updateField(task, {
+      participantIds: [...task.participantIds, pid],
+    });
+
     setParticipantOrders((prev) => ({
       ...prev,
       [task.id]: [...(prev[task.id] || task.participantIds), pid],
     }));
+
     setAllocations((prev) => {
       const copy = { ...prev };
       if (!copy[task.id]) copy[task.id] = {};
@@ -1066,6 +1107,7 @@ export default function BacklogPage() {
       return copy;
     });
   };
+
   const removeParticipantFromTask = (task: BacklogItem, pid: string) => {
     setAllocations((prev) => {
       const copy = { ...prev };
@@ -1076,6 +1118,7 @@ export default function BacklogPage() {
       }
       return copy;
     });
+
     setParticipantOrders((prev) => {
       const next = { ...prev };
       if (next[task.id]) {
@@ -1083,16 +1126,16 @@ export default function BacklogPage() {
       }
       return next;
     });
+
     const patch: Partial<BacklogItem> = {
       participantIds: task.participantIds.filter((x) => x !== pid),
     };
-    if (task.leaderId === pid) {
-      patch.leaderId = "";
+    if ((task as any).leaderId === pid) {
+      (patch as any).leaderId = "";
     }
     updateField(task, patch);
   };
 
-  // Сдвиг влево/вправо распределения по спринтам для участника
   const shiftRow = (
     taskId: string,
     participantId: string,
@@ -1103,6 +1146,7 @@ export default function BacklogPage() {
     if (!ids.length) return;
     const n = ids.length;
     const next: Record<string, number> = {};
+
     for (let i = 0; i < n; i++) {
       const fromIdx = i;
       const toIdx = dir === "left" ? (i - 1 + n) % n : (i + 1) % n;
@@ -1111,18 +1155,23 @@ export default function BacklogPage() {
       const val = Number(row[fromSid] || 0);
       next[toSid] = (next[toSid] || 0) + val;
     }
+
     setAllocations((prev) => {
       const cp = { ...prev };
       if (!cp[taskId]) cp[taskId] = {};
       cp[taskId] = { ...cp[taskId], [participantId]: next };
       return cp;
     });
+
     (async () => {
       try {
-        const bulkAllocations = ids.reduce<Record<string, number>>((acc, sid) => {
-          acc[sid] = toInt(Number(next[sid] || 0));
-          return acc;
-        }, {});
+        const bulkAllocations = ids.reduce<Record<string, number>>(
+          (acc, sid) => {
+            acc[sid] = toInt(Number(next[sid] || 0));
+            return acc;
+          },
+          {}
+        );
         await upsertTaskAllocationBulk({
           taskId,
           participantId,
@@ -1134,7 +1183,77 @@ export default function BacklogPage() {
     })();
   };
 
-  // Порядок задач локально
+  // Новый простой способ: копировать нагрузку участника в следующий квартал (по спринтам)
+  const copyRowToNextQuarter = (taskId: string, participantId: string) => {
+    const row = allocations[taskId]?.[participantId] || {};
+    if (!Object.keys(row).length) return;
+
+    // Собираем, в каких кварталах вообще есть нагрузка
+    const quartersWithLoad = new Set<string>();
+    for (const [sid, days] of Object.entries(row)) {
+      if (Number(days) > 0) {
+        const sprint = sprintById.get(sid);
+        if (sprint) quartersWithLoad.add(sprint.quarterId);
+      }
+    }
+    if (!quartersWithLoad.size) return;
+
+    // Берём последний (по времени) квартал с нагрузкой
+    let srcQuarterIndex = -1;
+    for (let i = 0; i < quartersSorted.length; i++) {
+      if (quartersWithLoad.has(quartersSorted[i].id)) {
+        srcQuarterIndex = i;
+      }
+    }
+    if (srcQuarterIndex < 0 || srcQuarterIndex >= quartersSorted.length - 1) {
+      return;
+    }
+
+    const srcQuarter = quartersSorted[srcQuarterIndex];
+    const dstQuarter = quartersSorted[srcQuarterIndex + 1];
+
+    const srcSprints = sprintsByQuarter.get(srcQuarter.id) || [];
+    const dstSprints = sprintsByQuarter.get(dstQuarter.id) || [];
+    if (!srcSprints.length || !dstSprints.length) return;
+
+    const maxLen = Math.min(srcSprints.length, dstSprints.length);
+    const nextRow: Record<string, number> = { ...row };
+
+    for (let i = 0; i < maxLen; i++) {
+      const srcSid = srcSprints[i].id;
+      const dstSid = dstSprints[i].id;
+      const val = Number(row[srcSid] || 0);
+      if (val > 0) {
+        nextRow[dstSid] = (nextRow[dstSid] || 0) + val;
+      }
+    }
+
+    setAllocations((prev) => {
+      const cp = { ...prev };
+      if (!cp[taskId]) cp[taskId] = {};
+      cp[taskId] = { ...cp[taskId], [participantId]: nextRow };
+      return cp;
+    });
+
+    (async () => {
+      try {
+        const bulkAllocations = Object.entries(nextRow).reduce<
+          Record<string, number>
+        >((acc, [sid, days]) => {
+          acc[sid] = toInt(Number(days) || 0);
+          return acc;
+        }, {});
+        await upsertTaskAllocationBulk({
+          taskId,
+          participantId,
+          allocations: bulkAllocations,
+        }).unwrap();
+      } catch (error) {
+        console.error("Failed to copy allocations to next quarter", error);
+      }
+    })();
+  };
+
   const moveTask = (id: string, dir: "up" | "down") => {
     const current = filteredTasks.map((t) => t.id);
     const idx = current.indexOf(id);
@@ -1151,11 +1270,14 @@ export default function BacklogPage() {
   };
 
   const taskSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    })
   );
-
   const participantSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    })
   );
 
   const activeTask = React.useMemo(
@@ -1195,7 +1317,6 @@ export default function BacklogPage() {
     [applyTaskOrderOptimistic, deferredFilteredTasks]
   );
 
-  // Визуал заголовка спринта (с подсветкой колонки релиза для конкретной задачи)
   const HeaderSprint = ({
     s,
     highlight,
@@ -1227,8 +1348,14 @@ export default function BacklogPage() {
     task: BacklogItem;
     children: (props: DragHandleProps) => React.ReactNode;
   }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-      useSortable({ id: task.id });
+    const {
+      attributes,
+      listeners,
+      setNodeRef,
+      transform,
+      transition,
+      isDragging,
+    } = useSortable({ id: task.id });
 
     const style: React.CSSProperties = {
       transform: CSS.Transform.toString(transform),
@@ -1255,8 +1382,14 @@ export default function BacklogPage() {
       setNodeRef: (element: HTMLElement | null) => void
     ) => React.ReactNode;
   }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-      useSortable({ id: participant.id });
+    const {
+      attributes,
+      listeners,
+      setNodeRef,
+      transform,
+      transition,
+      isDragging,
+    } = useSortable({ id: participant.id });
 
     const style: React.CSSProperties = {
       transform: CSS.Transform.toString(transform),
@@ -1267,7 +1400,6 @@ export default function BacklogPage() {
     return children({ attributes, listeners }, style, isDragging, setNodeRef);
   };
 
-  // Рендер одной задачи
   const renderTaskTable = (task: BacklogItem, dragHandle?: DragHandleProps) => {
     const rows = allocations[task.id] || {};
     const orderedParticipantIds =
@@ -1275,11 +1407,6 @@ export default function BacklogPage() {
     const participantRows: Participant[] = orderedParticipantIds
       .map((id) => participantMap.get(id))
       .filter(Boolean) as Participant[];
-    const pickerOpen = participantPicker?.taskId === task.id;
-    const pickerAnchor = pickerOpen ? participantPicker?.anchorEl : null;
-    const availableParticipants = participants.filter(
-      (p) => !task.participantIds.includes(p.id)
-    );
 
     const sumBySprint: Record<string, number> = {};
     for (const s of visibleSprints) {
@@ -1289,11 +1416,9 @@ export default function BacklogPage() {
       }, 0);
     }
 
-    // статус + лидер
     const st: TaskStatus = statusMap[task.id] || "inprogress";
-    const leaderPid = task.leaderId || undefined;
+    const leaderPid = (task as any).leaderId || undefined;
 
-    // релиз: подсветка колонки
     const relISO = task.releaseDate || "";
     const relSprintId = task.releaseSprintId || detectSprintByDate(relISO);
 
@@ -1326,20 +1451,26 @@ export default function BacklogPage() {
     const handleParticipantDragEnd = async (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
+
       const ids = orderedParticipantIds || [];
       const oldIndex = ids.indexOf(String(active.id));
       const newIndex = ids.indexOf(String(over.id));
       if (oldIndex < 0 || newIndex < 0) return;
+
       const reordered = arrayMove(ids, oldIndex, newIndex);
       const previous = ids.slice();
       const patch = applyParticipantOrderOptimistic(task.id, reordered);
       setParticipantOrders((prev) => ({ ...prev, [task.id]: reordered }));
+
       try {
         await updateField(task, { participantIds: reordered });
       } catch (error) {
         console.error("Failed to update participant order", error);
-        patch.undo?.();
-        setParticipantOrders((prev) => ({ ...prev, [task.id]: previous }));
+        (patch as any).undo?.();
+        setParticipantOrders((prev) => ({
+          ...prev,
+          [task.id]: previous,
+        }));
       }
     };
 
@@ -1374,6 +1505,7 @@ export default function BacklogPage() {
                   inputSx={{ width: "100%" }}
                 />
               </Typography>
+
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
                 Описание:{" "}
                 <EditableText
@@ -1385,7 +1517,9 @@ export default function BacklogPage() {
                   }}
                   placeholder="Описание"
                   isEditing={activeEditors[textEditorKey("description")]}
-                  onStartEditing={() => startEditor(textEditorKey("description"))}
+                  onStartEditing={() =>
+                    startEditor(textEditorKey("description"))
+                  }
                   onStopEditing={() => stopEditor(textEditorKey("description"))}
                   multiline
                   minRows={2}
@@ -1394,6 +1528,7 @@ export default function BacklogPage() {
                   inputSx={{ width: "100%" }}
                 />
               </Typography>
+
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
                 DOD:{" "}
                 <EditableText
@@ -1479,7 +1614,9 @@ export default function BacklogPage() {
               freeSolo
               options={customerOptions}
               value={resolveTaskFieldValue(task, "customer")}
-              onInputChange={(_, v) => stageTaskField(task, "customer", v || "")}
+              onInputChange={(_, v) =>
+                stageTaskField(task, "customer", v || "")
+              }
               onBlur={() => commitTaskField(task, "customer")}
               renderInput={(params) => (
                 <TextField {...params} label="Заказчик" size="small" />
@@ -1543,11 +1680,13 @@ export default function BacklogPage() {
                   </span>
                 </Tooltip>
               )}
+
               <Tooltip title="Дублировать">
                 <IconButton size="small" onClick={() => duplicateTask(task)}>
                   <ContentCopy fontSize="small" />
                 </IconButton>
               </Tooltip>
+
               <Tooltip title="Вверх">
                 <IconButton
                   size="small"
@@ -1556,6 +1695,7 @@ export default function BacklogPage() {
                   <ArrowUpward fontSize="small" />
                 </IconButton>
               </Tooltip>
+
               <Tooltip title="Вниз">
                 <IconButton
                   size="small"
@@ -1564,6 +1704,7 @@ export default function BacklogPage() {
                   <ArrowDownward fontSize="small" />
                 </IconButton>
               </Tooltip>
+
               <Tooltip title="Удалить задачу">
                 <IconButton size="small" onClick={() => removeTask(task)}>
                   <Delete />
@@ -1595,11 +1736,12 @@ export default function BacklogPage() {
                   <TableCell align="center" sx={{ minWidth: 100 }}>
                     Итого
                   </TableCell>
-                  <TableCell align="right" sx={{ width: 180 }}>
+                  <TableCell align="right" sx={{ width: 220 }}>
                     Действия
                   </TableCell>
                 </TableRow>
               </TableHead>
+
               <TableBody>
                 <SortableContext
                   items={orderedParticipantIds}
@@ -1612,6 +1754,7 @@ export default function BacklogPage() {
                       0
                     );
                     const isLeader = leaderPid === p.id;
+
                     return (
                       <SortableParticipantRow key={p.id} participant={p}>
                         {(dragHandle, style, isDragging, setNodeRef) => (
@@ -1625,23 +1768,32 @@ export default function BacklogPage() {
                               <span
                                 {...dragHandle.attributes}
                                 {...dragHandle.listeners}
-                                style={{ display: "inline-flex", cursor: "grab" }}
+                                style={{
+                                  display: "inline-flex",
+                                  cursor: "grab",
+                                }}
                               >
                                 <IconButton size="small">
                                   <DragIndicator fontSize="small" />
                                 </IconButton>
                               </span>
                             </TableCell>
+
                             <TableCell
                               sx={{
                                 bgcolor: isLeader ? "warning.light" : undefined,
                               }}
                             >
-                              <Stack direction="row" spacing={1} alignItems="center">
+                              <Stack
+                                direction="row"
+                                spacing={1}
+                                alignItems="center"
+                              >
                                 <IconButton
                                   size="small"
                                   onClick={() =>
                                     updateField(task, {
+                                      ...(task as any),
                                       leaderId: leaderPid === p.id ? "" : p.id,
                                     })
                                   }
@@ -1672,13 +1824,13 @@ export default function BacklogPage() {
                                     });
                                   }}
                                   onCommit={() => {
-                                    stopEditor(
-                                      allocationEditorKey(p.id, s.id)
-                                    );
+                                    stopEditor(allocationEditorKey(p.id, s.id));
                                     commitCell(task.id, p.id, s.id);
                                   }}
                                   isEditing={
-                                    activeEditors[allocationEditorKey(p.id, s.id)]
+                                    activeEditors[
+                                      allocationEditorKey(p.id, s.id)
+                                    ]
                                   }
                                   onStartEditing={() =>
                                     startEditor(allocationEditorKey(p.id, s.id))
@@ -1695,27 +1847,50 @@ export default function BacklogPage() {
                             </TableCell>
 
                             <TableCell align="right">
-                              <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                              <Stack
+                                direction="row"
+                                spacing={0.5}
+                                justifyContent="flex-end"
+                              >
                                 <Tooltip title="Сдвинуть влево (по всем спринтам)">
                                   <IconButton
                                     size="small"
-                                    onClick={() => shiftRow(task.id, p.id, "left")}
+                                    onClick={() =>
+                                      shiftRow(task.id, p.id, "left")
+                                    }
                                   >
                                     <ArrowBack fontSize="small" />
                                   </IconButton>
                                 </Tooltip>
+
                                 <Tooltip title="Сдвинуть вправо (по всем спринтам)">
                                   <IconButton
                                     size="small"
-                                    onClick={() => shiftRow(task.id, p.id, "right")}
+                                    onClick={() =>
+                                      shiftRow(task.id, p.id, "right")
+                                    }
                                   >
                                     <ArrowForward fontSize="small" />
                                   </IconButton>
                                 </Tooltip>
+
+                                <Tooltip title="Скопировать нагрузку в следующий квартал">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() =>
+                                      copyRowToNextQuarter(task.id, p.id)
+                                    }
+                                  >
+                                    <Add fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+
                                 <Tooltip title="Удалить участника из задачи">
                                   <IconButton
                                     size="small"
-                                    onClick={() => removeParticipantFromTask(task, p.id)}
+                                    onClick={() =>
+                                      removeParticipantFromTask(task, p.id)
+                                    }
                                   >
                                     <Delete fontSize="small" />
                                   </IconButton>
@@ -1734,55 +1909,25 @@ export default function BacklogPage() {
                   <TableCell
                     colSpan={visibleSprints.length + 3}
                     align="center"
-                    sx={{ py: 0.5, borderStyle: "dashed", borderColor: "divider" }}
+                    sx={{
+                      py: 0.5,
+                      borderStyle: "dashed",
+                      borderColor: "divider",
+                    }}
                   >
                     <Tooltip title="Добавить участника">
                       <span>
                         <IconButton
                           size="small"
                           color="primary"
-                          disabled={!availableParticipants.length}
                           onClick={(e) =>
-                            setParticipantPicker({
-                              taskId: task.id,
-                              anchorEl: e.currentTarget,
-                            })
+                            openParticipantPicker(task.id, e.currentTarget)
                           }
                         >
                           <Add />
                         </IconButton>
                       </span>
                     </Tooltip>
-                    <Popover
-                      open={pickerOpen}
-                      anchorEl={pickerAnchor}
-                      onClose={closeParticipantPicker}
-                      anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-                      transformOrigin={{ vertical: "top", horizontal: "center" }}
-                    >
-                      <Box sx={{ p: 2, width: 320, maxWidth: "90vw" }}>
-                        <Autocomplete
-                          size="small"
-                          autoHighlight
-                          options={availableParticipants}
-                          getOptionLabel={(p) =>
-                            p ? `${p.fullName} (${p.role})` : ""
-                          }
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Добавить участника"
-                              size="small"
-                            />
-                          )}
-                          onChange={(_, value) => {
-                            if (value) addParticipantToTask(task, value.id);
-                            closeParticipantPicker();
-                          }}
-                          noOptionsText="Свободных участников нет"
-                        />
-                      </Box>
-                    </Popover>
                   </TableCell>
                   <TableCell align="right">
                     <Chip label="Автосумма" size="small" color="default" />
@@ -1796,12 +1941,18 @@ export default function BacklogPage() {
                     Итого по спринтам
                   </TableCell>
                   {visibleSprints.map((s) => (
-                    <TableCell key={s.id} align="center" sx={{ fontWeight: 700 }}>
+                    <TableCell
+                      key={s.id}
+                      align="center"
+                      sx={{ fontWeight: 700 }}
+                    >
                       {toInt(sumBySprint[s.id])}
                     </TableCell>
                   ))}
                   <TableCell align="center" sx={{ fontWeight: 700 }}>
-                    {toInt(Object.values(sumBySprint).reduce((a, b) => a + b, 0))}
+                    {toInt(
+                      Object.values(sumBySprint).reduce((a, b) => a + b, 0)
+                    )}
                   </TableCell>
                   <TableCell />
                 </TableRow>
@@ -1812,6 +1963,23 @@ export default function BacklogPage() {
       </Paper>
     );
   };
+
+  // Текущая задача для глобального попапа добавления участника
+  const pickerOpen = Boolean(participantPicker?.anchorEl);
+  const pickerAnchor = participantPicker?.anchorEl ?? null;
+  const pickerTask = React.useMemo(
+    () =>
+      participantPicker
+        ? allTasks.find((t) => t.id === participantPicker.taskId) || null
+        : null,
+    [participantPicker, allTasks]
+  );
+  const availableParticipantsForPicker: Participant[] = React.useMemo(() => {
+    if (!pickerTask) return [];
+    return participants.filter(
+      (p) => !pickerTask.participantIds.includes(p.id)
+    );
+  }, [pickerTask, participants]);
 
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
@@ -1848,7 +2016,7 @@ export default function BacklogPage() {
           </Stack>
         </Stack>
 
-        {/* Панель фильтров */}
+        {/* Фильтры */}
         <Paper variant="outlined" sx={{ p: 2 }}>
           <Box
             sx={{
@@ -1944,6 +2112,7 @@ export default function BacklogPage() {
                   {(dragHandleProps) => renderTaskTable(t, dragHandleProps)}
                 </SortableTask>
               ))}
+
               {!deferredFilteredTasks.length && !isFetching && (
                 <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
                   <Typography color="text.secondary">
@@ -1953,6 +2122,7 @@ export default function BacklogPage() {
               )}
             </Stack>
           </SortableContext>
+
           <DragOverlay dropAnimation={null}>
             {activeTask ? (
               <Paper variant="outlined" sx={{ p: 1.5, maxWidth: 960 }}>
@@ -1970,12 +2140,48 @@ export default function BacklogPage() {
           </DragOverlay>
         </DndContext>
 
+        {/* Глобальный Popover добавления участника, привязанный к кнопке */}
+        <Popover
+          open={pickerOpen}
+          anchorEl={pickerAnchor}
+          onClose={closeParticipantPicker}
+          anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+          transformOrigin={{ vertical: "top", horizontal: "center" }}
+        >
+          <Box sx={{ p: 2, width: 320, maxWidth: "90vw" }}>
+            {pickerTask ? (
+              <Autocomplete
+                size="small"
+                autoHighlight
+                options={availableParticipantsForPicker}
+                getOptionLabel={(p) => (p ? `${p.fullName} (${p.role})` : "")}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Добавить участника"
+                    size="small"
+                  />
+                )}
+                onChange={(_, value) => {
+                  if (value) addParticipantToTask(pickerTask, value.id);
+                  closeParticipantPicker();
+                }}
+                noOptionsText="Свободных участников нет"
+              />
+            ) : (
+              <Typography variant="body2">Задача не найдена</Typography>
+            )}
+          </Box>
+        </Popover>
+
         <Divider />
         <Typography variant="caption" color="text.secondary">
-          Все поля редактируются по клику. Нагрузка задаётся в ячейках «участник ×
-          спринт». Статусы/лидер/порядок/копирование — локально на этой странице.
-          Выбор релиза (ПРОМ) автоматически определяет спринт и подсвечивает
-          соответствующую колонку.
+          Все поля редактируются по клику. Нагрузка задаётся в ячейках «участник
+          × спринт». Статусы/лидер/порядок/копирование — локально на этой
+          странице. Выбор релиза (ПРОМ) автоматически определяет спринт и
+          подсвечивает соответствующую колонку. Дополнительно можно сдвигать
+          нагрузку по всей сетке или копировать нагрузку участника в следующий
+          квартал одной кнопкой.
         </Typography>
       </Stack>
     </Paper>

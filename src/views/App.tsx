@@ -36,7 +36,7 @@ export default function App() {
       <AppBar position="static" color="default" elevation={0}>
         <Toolbar>
           <Stack direction="row" spacing={1}>
-            <Button component={Link} to="/backlog">
+            <Button component={Link} to="/">
               Бэклог
             </Button>
             <Button component={Link} to="/capacity">
@@ -45,7 +45,7 @@ export default function App() {
             <Button component={Link} to="/participant-work">
               По сотрудникам
             </Button>
-            <Button component={Link} to="/">
+            <Button component={Link} to="/time">
               Кварталы/Спринты
             </Button>
             <Button component={Link} to="/team">
@@ -60,10 +60,10 @@ export default function App() {
 
       <Container maxWidth="xl" sx={{ py: 2 }}>
         <Routes>
-          <Route path="/" element={<TimeSetupPage />} />
+          <Route path="/time" element={<TimeSetupPage />} />
           <Route path="/team" element={<TeamPage />} />
           <Route path="/capacity" element={<CapacityPage />} />
-          <Route path="/backlog" element={<BacklogPage />} />
+          <Route path="/" element={<BacklogPage />} />
           <Route
             path="/participant-work"
             element={<ParticipantWorkloadPage />}
