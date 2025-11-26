@@ -36,20 +36,20 @@ export default function App() {
       <AppBar position="static" color="default" elevation={0}>
         <Toolbar>
           <Stack direction="row" spacing={1}>
+            <Button component={Link} to="/backlog">
+              Бэклог
+            </Button>
+            <Button component={Link} to="/capacity">
+              Нагрузка
+            </Button>
+            <Button component={Link} to="/participant-work">
+              По сотрудникам
+            </Button>
             <Button component={Link} to="/">
               Кварталы/Спринты
             </Button>
             <Button component={Link} to="/team">
               Участники
-            </Button>
-            <Button component={Link} to="/capacity">
-              Нагрузка
-            </Button>
-            <Button component={Link} to="/backlog">
-              Бэклог
-            </Button>
-            <Button component={Link} to="/participant-work">
-              По сотрудникам
             </Button>
             <Button component={Link} to="/releases">
               Релизы
