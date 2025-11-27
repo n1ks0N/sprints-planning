@@ -500,6 +500,33 @@ export default function BacklogPage() {
 
   const { data: allTasks = [], isFetching } = useGetTasksQuery(undefined);
 
+  const tasksSignature = React.useMemo(
+    () =>
+      allTasks
+        .map(
+          (task) =>
+            [
+              task.id,
+              (task as any).updatedAt || task.createdAt || "",
+              task.title || "",
+              (task as any).description || "",
+              (task as any).dod || "",
+              task.stream || "",
+              task.customer || "",
+              task.releaseDate || "",
+              task.releaseSprintId || "",
+            ].join("::")
+        )
+        .join("|"),
+    [allTasks]
+  );
+
+  const stableTasks = React.useMemo(() => allTasks, [tasksSignature]);
+  const stableTaskMap = React.useMemo(
+    () => new Map(stableTasks.map((task) => [task.id, task])),
+    [stableTasks]
+  );
+
   const [statusMap, setStatusMap] = React.useState<StatusMap>(() =>
     readLS<StatusMap>(LS_STATUS, {})
   );
@@ -512,6 +539,12 @@ export default function BacklogPage() {
 
   const [allocations, setAllocations] = React.useState<Allocations>({});
   const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
+
+  const taskDraftsRef = React.useRef(taskDrafts);
+
+  React.useEffect(() => {
+    taskDraftsRef.current = taskDrafts;
+  }, [taskDrafts]);
 
   const [participantOrders, setParticipantOrders] = React.useState<
     Record<string, string[]>
@@ -538,15 +571,14 @@ export default function BacklogPage() {
   }, [selectedQuarterIds]);
 
   React.useEffect(() => {
-    if (!allTasks.length) return;
-    const taskMap = new Map(allTasks.map((task) => [task.id, task]));
+    if (!stableTasks.length) return;
 
     // синхронизация кварталов задач (локальное хранение выбранных кварталов на задачу)
     setTaskQuartersMap((prev) => {
       const next = { ...prev };
       let changed = false;
 
-      for (const t of allTasks) {
+      for (const t of stableTasks) {
         if (!next[t.id] || next[t.id].length === 0) {
           const derived = deriveTaskQuarters(
             t,
@@ -561,7 +593,7 @@ export default function BacklogPage() {
       }
 
       Object.keys(next).forEach((id) => {
-        if (!taskMap.has(id)) {
+        if (!stableTaskMap.has(id)) {
           delete next[id];
           changed = true;
         }
@@ -572,12 +604,12 @@ export default function BacklogPage() {
 
     // зачистка/синхронизация черновиков текстовых полей
     setTaskDrafts((prev) => {
-      if (Object.keys(prev).length === 0) return prev;
+      if (Object.keys(taskDraftsRef.current).length === 0) return prev;
       let changed = false;
       const next: TaskDraftState = {};
 
-      for (const [taskId, draft] of Object.entries(prev)) {
-        const task = taskMap.get(taskId);
+      for (const [taskId, draft] of Object.entries(taskDraftsRef.current)) {
+        const task = stableTaskMap.get(taskId);
         if (!task) {
           changed = true;
           continue;
@@ -610,7 +642,7 @@ export default function BacklogPage() {
 
       return changed ? next : prev;
     });
-  }, [allTasks, allSprints, selectedQuarterIds, currentQ]);
+  }, [stableTasks, stableTaskMap, allSprints, selectedQuarterIds, currentQ]);
 
   React.useEffect(() => {
     setAllocations((prev) => {
