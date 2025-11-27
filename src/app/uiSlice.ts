@@ -4,6 +4,7 @@ import type { TaskStatus } from "../types";
 export type UIState = {
   backlog: {
     quarterId: string; // "all" | qid
+    selectedQuarterIds: string[];
     releaseSprintFilter: string; // "all" | "" | sprintId
     priorityFilter: number[]; // [1,2,3]
     streamFilter: string;
@@ -42,6 +43,7 @@ function defaultState(): UIState {
   return {
     backlog: {
       quarterId: "all",
+      selectedQuarterIds: [],
       releaseSprintFilter: "all",
       priorityFilter: [],
       streamFilter: "",
@@ -90,6 +92,11 @@ function sanitizeBacklog(
         ? input.streamFilter
         : defaults.streamFilter,
     statusFilter,
+    selectedQuarterIds: Array.isArray(input?.selectedQuarterIds)
+      ? input.selectedQuarterIds.filter(
+          (id: any): id is string => typeof id === "string"
+        )
+      : defaults.selectedQuarterIds.slice(),
   };
 }
 

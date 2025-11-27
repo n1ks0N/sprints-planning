@@ -1,4 +1,5 @@
 const path = require('path');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
 const common = require('./webpack.common');
 
 module.exports = {
@@ -9,6 +10,10 @@ module.exports = {
     clean: true,
     publicPath: '/',
   },
+  plugins: [
+    ...(common.plugins || []),
+    new HtmlWebpackPlugin({ template: 'public/index.html' }),
+  ],
   devServer: {
     static: path.join(__dirname, 'public'),
     historyApiFallback: true,

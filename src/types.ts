@@ -70,6 +70,7 @@ export type BacklogItem = {
   loads: Record<string, number>;
   allocations?: Record<string, Record<string, number>>;
   notes?: Record<string, string>;
+  quarterIds?: string[];
   releaseDate?: string;
   releaseSprintId?: string;
   leaderId?: string | null;

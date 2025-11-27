@@ -47,6 +47,21 @@ const addMonths = (d: moment.Moment, n: number) => d.clone().add(n, "month");
 const quarterOfMonth0 = (m0: number) =>
   (Math.floor(m0 / 3) + 1) as 1 | 2 | 3 | 4;
 const fmtRU = (isoDate: string) => moment(isoDate, fmt).format("DD.MM.YYYY");
+const workingDaysInclusive = (startISO: string, endISO: string) => {
+  const start = parseISO(startISO);
+  const end = parseISO(endISO);
+  if (!start.isValid() || !end.isValid() || start.isAfter(end, "day")) return 0;
+  let days = 0;
+  const cur = start.clone();
+  while (!cur.isAfter(end, "day")) {
+    const dow = cur.day();
+    if (dow !== 0 && dow !== 6) {
+      days += 1;
+    }
+    cur.add(1, "day");
+  }
+  return days;
+};
 
 function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
   if (a.length !== b.length) return false;
@@ -172,6 +187,8 @@ export default function TimeSetupPage() {
   const [sName, setSName] = React.useState<string>("");
   const [sStart, setSStart] = React.useState<string>("");
   const [sEnd, setSEnd] = React.useState<string>("");
+  const [sWorkingDays, setSWorkingDays] = React.useState<number>(0);
+  const [sWorkingDaysDirty, setSWorkingDaysDirty] = React.useState<boolean>(false);
   const [sError, setSError] = React.useState<string>("");
 
   const [openQuarterRow, setOpenQuarterRow] = React.useState<boolean>(false);
@@ -193,6 +210,9 @@ export default function TimeSetupPage() {
   const [sEditName, setSEditName] = React.useState<string>("");
   const [sEditStart, setSEditStart] = React.useState<string>("");
   const [sEditEnd, setSEditEnd] = React.useState<string>("");
+  const [sEditWorkingDays, setSEditWorkingDays] = React.useState<number>(0);
+  const [sEditWorkingDaysDirty, setSEditWorkingDaysDirty] =
+    React.useState<boolean>(false);
   const [sEditError, setSEditError] = React.useState<string>("");
 
   const quartersById = React.useMemo(() => {
@@ -248,6 +268,8 @@ export default function TimeSetupPage() {
     setSName(d.name);
     setSStart(d.startISO);
     setSEnd(d.endISO);
+    setSWorkingDays(workingDaysInclusive(d.startISO, d.endISO));
+    setSWorkingDaysDirty(false);
     setSError("");
   };
 
@@ -304,6 +326,12 @@ export default function TimeSetupPage() {
     }
     setSError("");
   }, [openSprintForQuarterId, sStart, sEnd, quartersById, sprintsByQuarter]);
+
+  React.useEffect(() => {
+    if (!sWorkingDaysDirty && sStart && sEnd && !sError) {
+      setSWorkingDays(workingDaysInclusive(sStart, sEnd));
+    }
+  }, [sStart, sEnd, sError, sWorkingDaysDirty]);
 
   React.useEffect(() => {
     if (!openQuarterRow || !qStart || !qEnd) {
@@ -394,6 +422,12 @@ export default function TimeSetupPage() {
   ]);
 
   React.useEffect(() => {
+    if (!sEditWorkingDaysDirty && sEditStart && sEditEnd && !sEditError) {
+      setSEditWorkingDays(workingDaysInclusive(sEditStart, sEditEnd));
+    }
+  }, [sEditStart, sEditEnd, sEditError, sEditWorkingDaysDirty]);
+
+  React.useEffect(() => {
     if (!editingQuarterId || !qEditStart || !qEditEnd) {
       setQEditError("");
       return;
@@ -429,12 +463,14 @@ export default function TimeSetupPage() {
     const qid = openSprintForQuarterId;
     const count = (sprintsByQuarter.get(qid)?.length ?? 0) + 1;
     const name = sName.trim() || `Sprint ${count}`;
+    const workingDays = sWorkingDays || workingDaysInclusive(sStart, sEnd);
 
     await addSprint({
       quarterId: qid,
       name,
       startDate: sStart,
       endDate: sEnd,
+      workingDays,
     }).unwrap();
 
     const q = quartersById.get(qid)!;
@@ -550,6 +586,8 @@ export default function TimeSetupPage() {
     setSEditName(s.name);
     setSEditStart(s.startDate);
     setSEditEnd(s.endDate);
+    setSEditWorkingDays(s.workingDays);
+    setSEditWorkingDaysDirty(false);
     setSEditError("");
   };
   const cancelEditSprint = () => {
@@ -557,16 +595,21 @@ export default function TimeSetupPage() {
     setSEditName("");
     setSEditStart("");
     setSEditEnd("");
+    setSEditWorkingDays(0);
+    setSEditWorkingDaysDirty(false);
     setSEditError("");
   };
   const saveEditSprint = async () => {
     if (!editingSprintId || !sEditStart || !sEditEnd || sEditError) return;
     const name = sEditName?.trim() || undefined;
+    const workingDays =
+      sEditWorkingDays || workingDaysInclusive(sEditStart, sEditEnd);
     await updateSprint({
       id: editingSprintId,
       name,
       startDate: sEditStart,
       endDate: sEditEnd,
+      workingDays,
     }).unwrap();
     cancelEditSprint();
   };
@@ -652,6 +695,21 @@ export default function TimeSetupPage() {
                   InputLabelProps={{ shrink: true }}
                   inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
                   error={!!sEditError}
+                />
+              </Grid>
+              <Grid item xs={6}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="number"
+                  label="Рабочих дней"
+                  value={sEditWorkingDays}
+                  onChange={(e) => {
+                    setSEditWorkingDays(Number(e.target.value) || 0);
+                    setSEditWorkingDaysDirty(true);
+                  }}
+                  InputLabelProps={{ shrink: true }}
+                  inputProps={{ min: 0 }}
                 />
               </Grid>
               <Grid
@@ -754,6 +812,21 @@ export default function TimeSetupPage() {
                   InputLabelProps={{ shrink: true }}
                   inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
                   error={!!sError}
+                />
+              </Grid>
+              <Grid item xs={6}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="number"
+                  label="Рабочих дней"
+                  value={sWorkingDays}
+                  onChange={(e) => {
+                    setSWorkingDays(Number(e.target.value) || 0);
+                    setSWorkingDaysDirty(true);
+                  }}
+                  InputLabelProps={{ shrink: true }}
+                  inputProps={{ min: 0 }}
                 />
               </Grid>
               <Grid
