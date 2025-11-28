@@ -4,7 +4,7 @@ const USE_MOCK = process.env.USE_MOCK === 'true';
 const API_URL = process.env.API_URL || '/api';
 
 module.exports = {
-  entry: './src/main.tsx',
+  entry: './src/index.ts',
   devtool: 'source-map',
   resolve: { extensions: ['.tsx', '.ts', '.js'] },
   module: {
