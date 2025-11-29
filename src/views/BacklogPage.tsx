@@ -889,20 +889,16 @@ export default function BacklogPage() {
   }, [releases]);
 
   const releaseFilterOptions = React.useMemo(() => {
-    const dates = new Set<string>();
-    promReleases.forEach((r) => dates.add(r.promDate));
-    allTasks.forEach((t) => {
-      const d = t.releaseDate?.trim();
-      if (d) dates.add(d);
-    });
-    return Array.from(dates)
-      .filter(Boolean)
+    const dates = Array.from(
+      new Set(promReleases.map((r) => r.promDate).filter(Boolean))
+    );
+    return dates
       .sort((a, b) => a.localeCompare(b))
       .map((iso) => ({
         value: iso,
         label: moment(iso).format("DD.MM.YYYY"),
       }));
-  }, [allTasks, promReleases]);
+  }, [promReleases]);
 
   const handleQuarterFilterChange = React.useCallback(
     (ids: string[]) => {
@@ -1113,13 +1109,6 @@ export default function BacklogPage() {
   };
 
   const createTask = async (quarterId?: string) => {
-    const sprintsOfQuarter = quarterId
-      ? sprintsByQuarter.get(quarterId) || []
-      : [];
-    const releaseSprint = sprintsOfQuarter[sprintsOfQuarter.length - 1];
-    const releaseSprintId = releaseSprint?.id || "";
-    const releaseDate = releaseSprint?.endDate || "";
-
     const created = await addTask({
       title: "Новая задача",
       description: "",
@@ -1128,8 +1117,8 @@ export default function BacklogPage() {
       customer: "",
       stream: "",
       participantIds: [],
-      releaseDate,
-      releaseSprintId,
+      releaseDate: "",
+      releaseSprintId: "",
     }).unwrap();
 
     setAllocations((prev) => ({ ...prev, [created.id]: {} }));
@@ -1652,19 +1641,9 @@ export default function BacklogPage() {
       (p) => !task.participantIds.includes(p.id)
     );
 
-    const releaseOptionsSet = new Set(
-      releaseFilterOptions.map((opt) => opt.value)
-    );
-    const releaseOptions = releaseFilterOptions.slice();
-    if (relISO && !releaseOptionsSet.has(relISO)) {
-      releaseOptions.push({
-        value: relISO,
-        label: moment(relISO).isValid()
-          ? moment(relISO).format("DD.MM.YYYY")
-          : relISO,
-      });
-      releaseOptions.sort((a, b) => a.value.localeCompare(b.value));
-    }
+    const releaseOptions = releaseFilterOptions;
+    const allowedReleaseValues = new Set(releaseOptions.map((opt) => opt.value));
+    const normalizedReleaseValue = allowedReleaseValues.has(relISO) ? relISO : "";
 
     return (
       <Paper key={task.id} variant="outlined" sx={{ p: 2 }}>
@@ -1844,7 +1823,7 @@ export default function BacklogPage() {
               select
               size="small"
               label="Релиз (ПРОМ)"
-              value={task.releaseDate || ""}
+              value={normalizedReleaseValue}
               onChange={(e) => {
                 const iso = String(e.target.value) || "";
                 const sid = detectSprintByDate(iso) || "";
