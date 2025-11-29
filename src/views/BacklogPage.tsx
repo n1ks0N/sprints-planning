@@ -145,6 +145,7 @@ const EditableText = React.memo(function EditableText({
 }: EditableTextProps) {
   const [internalEditing, setInternalEditing] = React.useState(false);
   const editing = isEditing ?? internalEditing;
+  const inputId = React.useId();
 
   const handleStart = React.useCallback(() => {
     if (isEditing === undefined) {
@@ -196,6 +197,7 @@ const EditableText = React.memo(function EditableText({
           minRows={minRows}
           maxRows={maxRows}
           autoFocus
+          placeholder={placeholder}
           value={value ?? ""}
           onChange={(e) => onChange(e.target.value)}
           onBlur={handleClose}
@@ -219,6 +221,10 @@ const EditableText = React.memo(function EditableText({
             ...sx,
             ...inputSx,
           }}
+          inputProps={{
+            id: inputId,
+            "aria-label": placeholder || "Редактируемое поле",
+          }}
         />
       )}
     </>
@@ -232,6 +238,9 @@ type EditableNumberCellProps = {
   onChange: (next: number) => void;
   onCommit?: () => void;
   title?: string;
+  isEditing?: boolean;
+  onStartEditing?: () => void;
+  onStopEditing?: () => void;
 };
 
 function EditableNumberCell({
@@ -239,10 +248,15 @@ function EditableNumberCell({
   onChange,
   onCommit,
   title,
+  isEditing,
+  onStartEditing,
+  onStopEditing,
 }: EditableNumberCellProps) {
-  const [editing, setEditing] = React.useState(false);
+  const [internalEditing, setInternalEditing] = React.useState(false);
+  const editing = isEditing ?? internalEditing;
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const prevEditingRef = React.useRef(editing);
+  const inputId = React.useId();
 
   React.useEffect(() => {
     if (editing && !prevEditingRef.current && inputRef.current) {
@@ -253,14 +267,20 @@ function EditableNumberCell({
   }, [editing]);
 
   const handleStart = React.useCallback(() => {
-    setEditing(true);
-  }, []);
+    if (isEditing === undefined) {
+      setInternalEditing(true);
+    }
+    onStartEditing?.();
+  }, [isEditing, onStartEditing]);
 
   const handleClose = React.useCallback(() => {
     if (!editing) return;
-    setEditing(false);
+    if (isEditing === undefined) {
+      setInternalEditing(false);
+    }
+    onStopEditing?.();
     onCommit?.();
-  }, [editing, onCommit]);
+  }, [editing, isEditing, onCommit, onStopEditing]);
 
   if (!editing) {
     return (
@@ -302,6 +322,11 @@ function EditableNumberCell({
         outline: "1px solid",
         outlineColor: "divider",
         width: "100%",
+      }}
+      inputProps={{
+        id: inputId,
+        name: title || "allocation-value",
+        "aria-label": title || "Значение нагрузки",
       }}
     />
   );
@@ -399,6 +424,10 @@ export default function BacklogPage() {
   const { data: participants = [] } = useGetParticipantsQuery();
   const allSprints = useGetSprintsQuery(undefined).data ?? [];
   const { data: releases = [] } = useGetReleasesQuery?.() || { data: [] };
+  const quarterIdSet = React.useMemo(
+    () => new Set(quarters.map((q) => q.id)),
+    [quarters]
+  );
 
   const currentQ = React.useMemo<Quarter | undefined>(() => {
     const today = todayISO();
@@ -452,10 +481,11 @@ export default function BacklogPage() {
   );
 
   const defaultQuarterId = React.useMemo(() => {
-    if (selectedQuarterIds[0]) return selectedQuarterIds[0];
-    if (currentQ) return currentQ.id;
+    const selectedFirst = selectedQuarterIds.find((id) => quarterIdSet.has(id));
+    if (selectedFirst) return selectedFirst;
+    if (currentQ && quarterIdSet.has(currentQ.id)) return currentQ.id;
     return quartersSorted[0]?.id ?? "";
-  }, [selectedQuarterIds, currentQ, quartersSorted]);
+  }, [selectedQuarterIds, currentQ, quartersSorted, quarterIdSet]);
 
   const participantMap = React.useMemo(() => {
     const m = new Map<string, Participant>();
@@ -539,6 +569,9 @@ export default function BacklogPage() {
 
   const [allocations, setAllocations] = React.useState<Allocations>({});
   const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
+  const [editingFields, setEditingFields] = React.useState<
+    Record<string, boolean>
+  >({});
 
   const taskDraftsRef = React.useRef(taskDrafts);
 
@@ -559,16 +592,48 @@ export default function BacklogPage() {
     Map<string, ReturnType<typeof setTimeout>>
   >(new Map());
 
-  React.useEffect(() => {
-    setNewTaskQuarterId((prev) => (prev ? prev : defaultQuarterId));
-  }, [defaultQuarterId]);
+  const setFieldEditing = React.useCallback((key: string, on: boolean) => {
+    setEditingFields((prev) => {
+      const alreadyOn = !!prev[key];
+      if (alreadyOn === on) return prev;
+      const next = { ...prev };
+      if (on) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+  }, []);
+
+  const isFieldEditing = React.useCallback(
+    (key: string) => !!editingFields[key],
+    [editingFields]
+  );
 
   React.useEffect(() => {
-    if (!selectedQuarterIds.length) return;
-    setNewTaskQuarterId((prev) =>
-      prev && selectedQuarterIds.includes(prev) ? prev : selectedQuarterIds[0]
+    const validSelected = selectedQuarterIds.filter((id) =>
+      quarterIdSet.has(id)
     );
-  }, [selectedQuarterIds]);
+    if (
+      selectedQuarterIds.length > 0 &&
+      validSelected.length !== selectedQuarterIds.length
+    ) {
+      dispatch(setBacklogFilters({ selectedQuarterIds: validSelected }));
+    }
+  }, [selectedQuarterIds, quarterIdSet, dispatch]);
+
+  React.useEffect(() => {
+    setNewTaskQuarterId((prev) => {
+      const prevValid = prev && quarterIdSet.has(prev) ? prev : "";
+      if (prevValid) return prevValid;
+      const fromSelected = selectedQuarterIds.find((id) =>
+        quarterIdSet.has(id)
+      );
+      if (fromSelected) return fromSelected;
+      if (defaultQuarterId && quarterIdSet.has(defaultQuarterId)) {
+        return defaultQuarterId;
+      }
+      return "";
+    });
+  }, [quarterIdSet, selectedQuarterIds, defaultQuarterId]);
 
   React.useEffect(() => {
     if (!stableTasks.length) return;
@@ -689,6 +754,49 @@ export default function BacklogPage() {
       return next;
     });
   }, [allTasks]);
+
+  React.useEffect(() => {
+    const taskIds = new Set(allTasks.map((t) => t.id));
+    const participantIds = new Set(participants.map((p) => p.id));
+    const sprintIds = new Set(allSprints.map((s) => s.id));
+
+    setEditingFields((prev) => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const key of Object.keys(prev)) {
+        if (key.startsWith("alloc:")) {
+          const [, taskId, pid, sid] = key.split(":");
+          if (taskId && pid && sid) {
+            if (
+              taskIds.has(taskId) &&
+              participantIds.has(pid) &&
+              sprintIds.has(sid)
+            ) {
+              next[key] = true;
+            } else {
+              changed = true;
+            }
+          }
+          continue;
+        }
+        if (
+          key.startsWith("title:") ||
+          key.startsWith("desc:") ||
+          key.startsWith("dod:")
+        ) {
+          const [, taskId] = key.split(":");
+          if (taskId && taskIds.has(taskId)) {
+            next[key] = true;
+          } else {
+            changed = true;
+          }
+          continue;
+        }
+        next[key] = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [allTasks, allSprints, participants]);
 
   React.useEffect(() => writeLS(LS_STATUS, statusMap), [statusMap]);
   React.useEffect(() => writeLS(LS_TASK_ORDER, orderMap), [orderMap]);
@@ -1487,6 +1595,9 @@ export default function BacklogPage() {
     const leaderPid = (task as any).leaderId || undefined;
     const relISO = task.releaseDate || "";
     const relSprintId = task.releaseSprintId || detectSprintByDate(relISO);
+    const titleKey = `title:${task.id}`;
+    const descKey = `desc:${task.id}`;
+    const dodKey = `dod:${task.id}`;
 
     const clampedTextSx = {
       display: "-webkit-box",
@@ -1541,6 +1652,20 @@ export default function BacklogPage() {
       (p) => !task.participantIds.includes(p.id)
     );
 
+    const releaseOptionsSet = new Set(
+      releaseFilterOptions.map((opt) => opt.value)
+    );
+    const releaseOptions = releaseFilterOptions.slice();
+    if (relISO && !releaseOptionsSet.has(relISO)) {
+      releaseOptions.push({
+        value: relISO,
+        label: moment(relISO).isValid()
+          ? moment(relISO).format("DD.MM.YYYY")
+          : relISO,
+      });
+      releaseOptions.sort((a, b) => a.value.localeCompare(b.value));
+    }
+
     return (
       <Paper key={task.id} variant="outlined" sx={{ p: 2 }}>
         <Stack
@@ -1563,6 +1688,9 @@ export default function BacklogPage() {
                   maxRows={4}
                   displaySx={clampedTextSx}
                   inputSx={{ width: "100%" }}
+                  isEditing={isFieldEditing(titleKey)}
+                  onStartEditing={() => setFieldEditing(titleKey, true)}
+                  onStopEditing={() => setFieldEditing(titleKey, false)}
                 />
               </Typography>
 
@@ -1581,6 +1709,9 @@ export default function BacklogPage() {
                   maxRows={6}
                   displaySx={clampedTextSx}
                   inputSx={{ width: "100%" }}
+                  isEditing={isFieldEditing(descKey)}
+                  onStartEditing={() => setFieldEditing(descKey, true)}
+                  onStopEditing={() => setFieldEditing(descKey, false)}
                 />
               </Typography>
 
@@ -1599,6 +1730,9 @@ export default function BacklogPage() {
                   maxRows={6}
                   displaySx={clampedTextSx}
                   inputSx={{ width: "100%" }}
+                  isEditing={isFieldEditing(dodKey)}
+                  onStartEditing={() => setFieldEditing(dodKey, true)}
+                  onStopEditing={() => setFieldEditing(dodKey, false)}
                 />
               </Typography>
             </Box>
@@ -1725,14 +1859,11 @@ export default function BacklogPage() {
               <MenuItem value="">
                 <em>—</em>
               </MenuItem>
-              {promReleases
-                .slice()
-                .sort((a, b) => a.promDate.localeCompare(b.promDate))
-                .map((r) => (
-                  <MenuItem key={r.id} value={r.promDate}>
-                    {moment(r.promDate).format("DD.MM.YYYY")}
-                  </MenuItem>
-                ))}
+              {releaseOptions.map((opt) => (
+                <MenuItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </MenuItem>
+              ))}
             </TextField>
 
             <Stack direction="row" spacing={0.5} sx={{ ml: "auto" }}>
@@ -1881,26 +2012,36 @@ export default function BacklogPage() {
                               </Stack>
                             </TableCell>
 
-                            {effectiveSprints.map((s) => (
-                              <TableCell key={s.id} align="center">
-                                <EditableNumberCell
-                                  value={Number(row[s.id] || 0)}
-                                  onChange={(v) => {
-                                    setAllocations((prev) => {
-                                      const copy = { ...prev };
-                                      if (!copy[task.id]) copy[task.id] = {};
-                                      if (!copy[task.id][p.id])
-                                        copy[task.id][p.id] = {};
-                                      copy[task.id][p.id][s.id] = v;
-                                      return copy;
-                                    });
-                                  }}
-                                  onCommit={() =>
-                                    commitCell(task.id, p.id, s.id)
-                                  }
-                                />
-                              </TableCell>
-                            ))}
+                            {effectiveSprints.map((s) => {
+                              const cellKey = `alloc:${task.id}:${p.id}:${s.id}`;
+                              return (
+                                <TableCell key={s.id} align="center">
+                                  <EditableNumberCell
+                                    value={Number(row[s.id] || 0)}
+                                    onChange={(v) => {
+                                      setAllocations((prev) => {
+                                        const copy = { ...prev };
+                                        if (!copy[task.id]) copy[task.id] = {};
+                                        if (!copy[task.id][p.id])
+                                          copy[task.id][p.id] = {};
+                                        copy[task.id][p.id][s.id] = v;
+                                        return copy;
+                                      });
+                                    }}
+                                    onCommit={() =>
+                                      commitCell(task.id, p.id, s.id)
+                                    }
+                                    isEditing={isFieldEditing(cellKey)}
+                                    onStartEditing={() =>
+                                      setFieldEditing(cellKey, true)
+                                    }
+                                    onStopEditing={() =>
+                                      setFieldEditing(cellKey, false)
+                                    }
+                                  />
+                                </TableCell>
+                              );
+                            })}
 
                             <TableCell align="center" sx={{ fontWeight: 700 }}>
                               {toInt(rowSum)}
