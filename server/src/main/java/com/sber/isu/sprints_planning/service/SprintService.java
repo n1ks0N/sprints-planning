@@ -101,8 +101,7 @@ public class SprintService {
     public SprintDto delete(IdRequest request) {
         SprintEntity entity = sprintRepository.findById(UUID.fromString(request.id()))
             .orElseThrow(() -> new EntityNotFoundException("Sprint not found"));
-        taskRepository.findByReleaseSprintId(entity.getId())
-            .forEach(task -> task.setReleaseSprint(null));
+        taskRepository.clearReleaseForSprints(List.of(entity.getId()));
         sprintRepository.delete(entity);
         return DtoMapper.toSprintDto(entity);
     }

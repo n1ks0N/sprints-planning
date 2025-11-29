@@ -1109,13 +1109,6 @@ export default function BacklogPage() {
   };
 
   const createTask = async (quarterId?: string) => {
-    const sprintsOfQuarter = quarterId
-      ? sprintsByQuarter.get(quarterId) || []
-      : [];
-    const releaseSprint = sprintsOfQuarter[sprintsOfQuarter.length - 1];
-    const releaseSprintId = releaseSprint?.id || "";
-    const releaseDate = releaseSprint?.endDate || "";
-
     const created = await addTask({
       title: "Новая задача",
       description: "",
@@ -1124,8 +1117,8 @@ export default function BacklogPage() {
       customer: "",
       stream: "",
       participantIds: [],
-      releaseDate,
-      releaseSprintId,
+      releaseDate: "",
+      releaseSprintId: "",
     }).unwrap();
 
     setAllocations((prev) => ({ ...prev, [created.id]: {} }));
