@@ -348,6 +348,19 @@ export const mockBaseQuery: BaseQueryFn<
       tasks.push(item);
       return { data: clone(item) };
     }
+    if (url === "/tasks/update" && method === "POST") {
+      const { id, ...patch } = body || {};
+      const idx = tasks.findIndex((t) => t.id === id);
+      if (idx < 0)
+        return { error: { status: 404, data: "Task not found" } as any };
+      tasks[idx] = {
+        ...tasks[idx],
+        ...patch,
+        updatedAt: new Date().toISOString().slice(0, 10),
+      };
+      ensureTaskLoadsForAllSprints(tasks[idx]);
+      return { data: clone(tasks[idx]) };
+    }
     if (url?.startsWith("/tasks/") && method === "PATCH") {
       const id = url.split("/")[2];
       const idx = tasks.findIndex((t) => t.id === id);

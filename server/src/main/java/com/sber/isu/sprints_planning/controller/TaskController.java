@@ -9,8 +9,6 @@ import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -35,10 +33,9 @@ public class TaskController {
         return taskService.create(request);
     }
 
-    @PatchMapping("/tasks/{id}")
-    public TaskDto updateTask(
-        @PathVariable("id") String id, @RequestBody @Valid TaskUpdateRequest request) {
-        return taskService.update(UUID.fromString(id), request);
+    @PostMapping("/tasks/update")
+    public TaskDto updateTask(@RequestBody @Valid TaskUpdateRequest request) {
+        return taskService.update(request);
     }
 
     @PostMapping("/tasks/delete")
