@@ -1,6 +1,14 @@
 import * as React from "react";
 import { Routes, Route, Link } from "react-router-dom";
-import { Container, AppBar, Toolbar, Button, Stack } from "@mui/material";
+import {
+  Container,
+  AppBar,
+  Toolbar,
+  Button,
+  Stack,
+  Tooltip,
+  CircularProgress,
+} from "@mui/material";
 
 import TimeSetupPage from "./TimeSetupPage";
 import TeamPage from "./TeamPage";
@@ -10,6 +18,8 @@ import ParticipantWorkloadPage from "./ParticipantWorkloadPage";
 import ReleasesPage from "./ReleasesPage";
 import { useDispatch } from "react-redux";
 import { undoLast } from "../app/undoSlice";
+import { useLazyExportExcelQuery } from "../app/api";
+import moment from "moment";
 
 function Hotkeys() {
   const dispatch = useDispatch();
@@ -30,13 +40,31 @@ function Hotkeys() {
 }
 
 export default function App() {
+  const [exportExcel, { isFetching: isExporting }] = useLazyExportExcelQuery();
+
+  const handleExportExcel = React.useCallback(async () => {
+    try {
+      const blob = await exportExcel().unwrap();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `sprints-planning-${moment().format("YYYY-MM-DD")}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Не удалось экспортировать Excel", error);
+    }
+  }, [exportExcel]);
+
   return (
     <>
       <Hotkeys />
       <AppBar position="static" color="default" elevation={0}>
         <Toolbar>
-          <Stack direction="row" spacing={1}>
-            <Button component={Link} to="/backlog">
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+            <Button component={Link} to="/">
               Бэклог
             </Button>
             <Button component={Link} to="/capacity">
@@ -45,7 +73,7 @@ export default function App() {
             <Button component={Link} to="/participant-work">
               По сотрудникам
             </Button>
-            <Button component={Link} to="/">
+            <Button component={Link} to="/time">
               Кварталы/Спринты
             </Button>
             <Button component={Link} to="/team">
@@ -54,16 +82,31 @@ export default function App() {
             <Button component={Link} to="/releases">
               Релизы
             </Button>
+            <Tooltip title="Экспортировать план в Excel">
+              <span>
+                <Button
+                  variant="outlined"
+                  onClick={handleExportExcel}
+                  disabled={isExporting}
+                >
+                  {isExporting ? (
+                    <CircularProgress size={16} sx={{ color: "inherit" }} />
+                  ) : (
+                    "Экспорт в Excel"
+                  )}
+                </Button>
+              </span>
+            </Tooltip>
           </Stack>
         </Toolbar>
       </AppBar>
 
       <Container maxWidth="xl" sx={{ py: 2 }}>
         <Routes>
-          <Route path="/" element={<TimeSetupPage />} />
+          <Route path="/time" element={<TimeSetupPage />} />
           <Route path="/team" element={<TeamPage />} />
           <Route path="/capacity" element={<CapacityPage />} />
-          <Route path="/backlog" element={<BacklogPage />} />
+          <Route path="/" element={<BacklogPage />} />
           <Route
             path="/participant-work"
             element={<ParticipantWorkloadPage />}

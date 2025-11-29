@@ -1,4 +1,3 @@
-// src/views/BacklogPage.tsx
 import * as React from "react";
 import {
   Paper,
@@ -16,14 +15,15 @@ import {
   Chip,
   Autocomplete,
   Button,
-  Select,
-  MenuItem,
   Tooltip,
   Divider,
   InputBase,
   CircularProgress,
-  ClickAwayListener,
-  Popover,
+  FormControl,
+  InputLabel,
+  FormHelperText,
+  Select,
+  MenuItem,
 } from "@mui/material";
 import {
   Add,
@@ -35,7 +35,6 @@ import {
   StarBorder,
   ArrowUpward,
   ArrowDownward,
-  Download,
   DragIndicator,
 } from "@mui/icons-material";
 import moment from "moment";
@@ -52,8 +51,6 @@ import {
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
   useUpsertTaskAllocationBulkMutation,
-  useLazyExportExcelQuery,
-  // для релизов
   useGetReleasesQuery,
 } from "../app/api";
 import type {
@@ -67,6 +64,7 @@ import type {
 import { setBacklogFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+
 import {
   DndContext,
   PointerSensor,
@@ -87,21 +85,22 @@ import { CSS } from "@dnd-kit/utilities";
 
 moment.locale("ru");
 
-function byStart(a: Sprint, b: Sprint) {
-  return a.startDate.localeCompare(b.startDate);
-}
 function byEnd(a: Sprint, b: Sprint) {
   return a.endDate.localeCompare(b.endDate);
 }
+
 function toInt(n: number) {
   return Number.isFinite(n) ? Math.round(n) : 0;
 }
+
 function isISOWithin(iso: string, startISO: string, endISO: string) {
   return iso >= startISO && iso <= endISO;
 }
+
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
+
 function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
@@ -110,24 +109,11 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   return true;
 }
 
-/** Инлайн-редактор текста (клик по тексту -> InputBase, «невидимый инпут») */
-function EditableText({
-  value,
-  onChange,
-  onBlur,
-  placeholder,
-  sx,
-  isEditing,
-  onStartEditing,
-  onStopEditing,
-  multiline,
-  minRows,
-  maxRows,
-  displaySx,
-  inputSx,
-}: {
+/** Упрощённый редактируемый текст без внешнего состояния фокуса */
+type EditableTextProps = {
   value: string;
   onChange: (v: string) => void;
+  onCommit?: () => void;
   onBlur?: () => void;
   placeholder?: string;
   sx?: any;
@@ -139,47 +125,48 @@ function EditableText({
   maxRows?: number;
   displaySx?: any;
   inputSx?: any;
-}) {
+};
+
+const EditableText = React.memo(function EditableText({
+  value,
+  onChange,
+  onCommit,
+  onBlur,
+  placeholder,
+  sx,
+  isEditing,
+  onStartEditing,
+  onStopEditing,
+  multiline,
+  minRows,
+  maxRows,
+  displaySx,
+  inputSx,
+}: EditableTextProps) {
   const [internalEditing, setInternalEditing] = React.useState(false);
-  const controlledEditing = isEditing ?? internalEditing;
-  const ref = React.useRef<HTMLInputElement | null>(null);
-  const prevEditing = React.useRef(controlledEditing);
+  const editing = isEditing ?? internalEditing;
+  const inputId = React.useId();
 
-  const startEditing = React.useCallback(() => {
-    setInternalEditing(true);
+  const handleStart = React.useCallback(() => {
+    if (isEditing === undefined) {
+      setInternalEditing(true);
+    }
     onStartEditing?.();
-  }, [onStartEditing]);
+  }, [isEditing, onStartEditing]);
 
-  const stopEditing = React.useCallback(() => {
-    setInternalEditing(false);
+  const handleClose = React.useCallback(() => {
+    if (!editing) return;
+    if (isEditing === undefined) {
+      setInternalEditing(false);
+    }
     onStopEditing?.();
-  }, [onStopEditing]);
-
-  React.useEffect(() => {
-    if (isEditing !== undefined) {
-      setInternalEditing(isEditing);
-    }
-  }, [isEditing]);
-
-  React.useEffect(() => {
-    const node = ref.current;
-    if (controlledEditing && !prevEditing.current && node) {
-      node.focus();
-      const len = node.value?.length ?? 0;
-      node.setSelectionRange?.(len, len);
-    }
-    prevEditing.current = controlledEditing;
-  }, [controlledEditing]);
-
-  const closeEditing = React.useCallback(() => {
-    if (!controlledEditing) return;
-    stopEditing();
+    onCommit?.();
     onBlur?.();
-  }, [controlledEditing, onBlur, stopEditing]);
+  }, [editing, onBlur, onCommit, isEditing, onStopEditing]);
 
   return (
-    <ClickAwayListener onClickAway={closeEditing} mouseEvent="onMouseDown">
-      {!controlledEditing ? (
+    <>
+      {!editing ? (
         <Box
           component="span"
           sx={{
@@ -189,7 +176,7 @@ function EditableText({
             ...sx,
             ...displaySx,
           }}
-          onClick={startEditing}
+          onClick={handleStart}
           title="Нажмите, чтобы редактировать"
         >
           {value?.trim() ? (
@@ -205,38 +192,57 @@ function EditableText({
           )}
         </Box>
       ) : (
-          <InputBase
-            inputRef={ref}
-            multiline={multiline}
-            minRows={minRows}
-            maxRows={maxRows}
-            autoFocus
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-          onBlur={closeEditing}
+        <InputBase
+          multiline={multiline}
+          minRows={minRows}
+          maxRows={maxRows}
+          autoFocus
+          placeholder={placeholder}
+          value={value ?? ""}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={handleClose}
           onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === "Escape") {
-              e.currentTarget.blur();
+            if (e.key === "Enter" && !multiline) {
+              handleClose();
+              return;
+            }
+            if (e.key === "Escape") {
+              handleClose();
             }
           }}
-            sx={{
-              px: 0.5,
-              borderRadius: 1,
-              bgcolor: "background.paper",
-              outline: "1px solid",
-              outlineColor: "divider",
-              fontSize: "inherit",
-              lineHeight: "inherit",
-              ...sx,
-              ...inputSx,
-            }}
-          />
-        )}
-    </ClickAwayListener>
+          sx={{
+            px: 0.5,
+            borderRadius: 1,
+            bgcolor: "background.paper",
+            outline: "1px solid",
+            outlineColor: "divider",
+            fontSize: "inherit",
+            lineHeight: "inherit",
+            ...sx,
+            ...inputSx,
+          }}
+          inputProps={{
+            id: inputId,
+            "aria-label": placeholder || "Редактируемое поле",
+          }}
+        />
+      )}
+    </>
   );
-}
+});
+const MemoEditableText = EditableText;
 
-/** Инлайн-редактор числа (ячейка матрицы) */
+/** Упрощённая редактируемая числовая ячейка */
+type EditableNumberCellProps = {
+  value: number;
+  onChange: (next: number) => void;
+  onCommit?: () => void;
+  title?: string;
+  isEditing?: boolean;
+  onStartEditing?: () => void;
+  onStopEditing?: () => void;
+};
+
 function EditableNumberCell({
   value,
   onChange,
@@ -245,107 +251,90 @@ function EditableNumberCell({
   isEditing,
   onStartEditing,
   onStopEditing,
-}: {
-  value: number;
-  onChange: (next: number) => void;
-  onCommit?: () => void;
-  title?: string;
-  isEditing?: boolean;
-  onStartEditing?: () => void;
-  onStopEditing?: () => void;
-}) {
+}: EditableNumberCellProps) {
   const [internalEditing, setInternalEditing] = React.useState(false);
-  const controlledEditing = isEditing ?? internalEditing;
-  const ref = React.useRef<HTMLInputElement | null>(null);
-  const prevEditing = React.useRef(controlledEditing);
-  const didSelectAllRef = React.useRef(false);
+  const editing = isEditing ?? internalEditing;
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const prevEditingRef = React.useRef(editing);
+  const inputId = React.useId();
 
-  const startEditing = React.useCallback(() => {
-    didSelectAllRef.current = false;
-    setInternalEditing(true);
+  React.useEffect(() => {
+    if (editing && !prevEditingRef.current && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+    prevEditingRef.current = editing;
+  }, [editing]);
+
+  const handleStart = React.useCallback(() => {
+    if (isEditing === undefined) {
+      setInternalEditing(true);
+    }
     onStartEditing?.();
-  }, [onStartEditing]);
+  }, [isEditing, onStartEditing]);
 
-  const stopEditing = React.useCallback(() => {
-    setInternalEditing(false);
+  const handleClose = React.useCallback(() => {
+    if (!editing) return;
+    if (isEditing === undefined) {
+      setInternalEditing(false);
+    }
     onStopEditing?.();
-  }, [onStopEditing]);
-
-  React.useEffect(() => {
-    if (isEditing !== undefined) {
-      setInternalEditing(isEditing);
-    }
-  }, [isEditing]);
-
-  React.useEffect(() => {
-    if (controlledEditing && !prevEditing.current && ref.current) {
-      ref.current.focus();
-      ref.current.select();
-      didSelectAllRef.current = true;
-    }
-    prevEditing.current = controlledEditing;
-  }, [controlledEditing]);
- 
-  const closeEditing = React.useCallback(() => {
-    if (!controlledEditing) return;
-    stopEditing();
     onCommit?.();
-  }, [controlledEditing, onCommit, stopEditing]);
+  }, [editing, isEditing, onCommit, onStopEditing]);
 
-  return (
-    <ClickAwayListener onClickAway={closeEditing} mouseEvent="onMouseDown">
+  if (!editing) {
+    return (
       <Box
         sx={{
           minWidth: 48,
           textAlign: "center",
-          cursor: controlledEditing ? "text" : "pointer",
+          cursor: "pointer",
         }}
         title={title || "Клик для редактирования"}
-        onClick={() => !controlledEditing && startEditing()}
+        onClick={handleStart}
       >
-        {!controlledEditing ? (
-          <Typography component="span">{toInt(value)}</Typography>
-        ) : (
-          <InputBase
-            inputRef={ref}
-            type="number"
-            autoFocus
-            value={Number.isFinite(value) ? value : 0}
-            onFocus={(e) => {
-              if (!didSelectAllRef.current) {
-                e.target.select();
-                didSelectAllRef.current = true;
-              }
-            }}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              onChange(Number.isFinite(v) ? v : 0);
-            }}
-            onBlur={closeEditing}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === "Escape") {
-                (e.currentTarget as HTMLInputElement).blur();
-              }
-            }}
-            sx={{
-              textAlign: "center",
-              px: 0.5,
-              borderRadius: 1,
-              bgcolor: "background.paper",
-              outline: "1px solid",
-              outlineColor: "divider",
-              width: "100%",
-            }}
-          />
-        )}
+        <Typography component="span">{toInt(value)}</Typography>
       </Box>
-    </ClickAwayListener>
+    );
+  }
+
+  return (
+    <InputBase
+      inputRef={inputRef}
+      type="number"
+      autoFocus
+      value={Number.isFinite(value) ? value : 0}
+      onChange={(e) => {
+        const v = Number(e.target.value);
+        onChange(Number.isFinite(v) ? v : 0);
+      }}
+      onBlur={handleClose}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === "Escape") {
+          (e.currentTarget as HTMLInputElement).blur();
+        }
+      }}
+      sx={{
+        textAlign: "center",
+        px: 0.5,
+        borderRadius: 1,
+        bgcolor: "background.paper",
+        outline: "1px solid",
+        outlineColor: "divider",
+        width: "100%",
+      }}
+      inputProps={{
+        id: inputId,
+        name: title || "allocation-value",
+        "aria-label": title || "Значение нагрузки",
+      }}
+    />
   );
 }
 
-/** локальное хранение статусов/лидеров/порядка */
 const LS_STATUS = "backlog.statusMap";
 const LS_TASK_ORDER = "backlog.orderMap";
+const LS_TASK_QUARTERS = "backlog.quartersMap";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   inprogress: "В работе",
@@ -354,6 +343,7 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
   canceled: "Отменена",
   partial: "Частично",
 };
+
 const STATUS_COLOR: Record<
   TaskStatus,
   "default" | "success" | "error" | "warning" | "info"
@@ -369,6 +359,7 @@ const PRIORITY_VALUES: readonly number[] = [1, 2, 3];
 
 type StatusMap = Record<string, TaskStatus>;
 type OrderMap = Record<string, number>;
+
 type TaskDraftField = "title" | "description" | "dod" | "customer" | "stream";
 type TaskDraftState = Record<string, Partial<Record<TaskDraftField, string>>>;
 
@@ -385,13 +376,47 @@ function readLS<T>(key: string, def: T): T {
     return def;
   }
 }
+
 function writeLS<T>(key: string, val: T) {
   try {
     localStorage.setItem(key, JSON.stringify(val));
   } catch {}
 }
 
-/** allocations[taskId][participantId][sprintId] = days */
+function deriveTaskQuarters(
+  task: BacklogItem,
+  allSprints: Sprint[],
+  currentQuarterId?: string
+): string[] {
+  const explicit = Array.isArray((task as any).quarterIds)
+    ? ((task as any).quarterIds as string[]).filter(Boolean)
+    : [];
+  if (explicit.length) return Array.from(new Set(explicit));
+
+  const fromAllocations = new Set<string>();
+
+  if (task.allocations) {
+    for (const row of Object.values(task.allocations)) {
+      for (const sid of Object.keys(row)) {
+        const sprint = allSprints.find((s) => s.id === sid);
+        if (sprint) fromAllocations.add(sprint.quarterId);
+      }
+    }
+  }
+
+  if (task.loads) {
+    for (const [sid, days] of Object.entries(task.loads)) {
+      if (Number(days) > 0) {
+        const sprint = allSprints.find((s) => s.id === sid);
+        if (sprint) fromAllocations.add(sprint.quarterId);
+      }
+    }
+  }
+
+  if (fromAllocations.size) return Array.from(fromAllocations);
+  return currentQuarterId ? [currentQuarterId] : [];
+}
+
 type Allocations = Record<string, Record<string, Record<string, number>>>;
 
 export default function BacklogPage() {
@@ -399,59 +424,74 @@ export default function BacklogPage() {
   const { data: participants = [] } = useGetParticipantsQuery();
   const allSprints = useGetSprintsQuery(undefined).data ?? [];
   const { data: releases = [] } = useGetReleasesQuery?.() || { data: [] };
+  const quarterIdSet = React.useMemo(
+    () => new Set(quarters.map((q) => q.id)),
+    [quarters]
+  );
 
-  // вычислим «текущий квартал»
-  const currentQ = React.useMemo(() => {
+  const currentQ = React.useMemo<Quarter | undefined>(() => {
     const today = todayISO();
     return quarters.find((q) => isISOWithin(today, q.startDate, q.endDate));
   }, [quarters]);
 
-  // Фильтр «кварталы»: мультивыбор; по умолчанию текущий, если есть
-  const [selectedQuarterIds, setSelectedQuarterIds] = React.useState<string[]>(
-    []
-  );
+  const dispatch = useAppDispatch();
+  const {
+    priorityFilter,
+    streamFilter,
+    statusFilter,
+    releaseSprintFilter,
+    selectedQuarterIds,
+  } = useAppSelector((s) => s.ui.backlog);
+
   const [isQuarterPending, startQuarterTransition] = React.useTransition();
+
   React.useEffect(() => {
     if (!quarters.length) return;
-    // если пользователь ещё не выбирал — выберем текущий
     if (selectedQuarterIds.length === 0 && currentQ) {
-      setSelectedQuarterIds([currentQ.id]);
+      dispatch(setBacklogFilters({ selectedQuarterIds: [currentQ.id] }));
     }
-  }, [quarters, currentQ, selectedQuarterIds.length]);
+  }, [quarters, currentQ, selectedQuarterIds.length, dispatch]);
 
-  // при пустом выборе показываем все спринты; иначе только выбранных кварталов
-  const visibleSprints = React.useMemo(() => {
-    const list =
-      selectedQuarterIds.length === 0
-        ? allSprints.slice()
-        : allSprints.filter((s) => selectedQuarterIds.includes(s.quarterId));
-    return list.sort(byEnd);
-  }, [allSprints, selectedQuarterIds]);
-
-  // Карты быстрого доступа
   const sprintById = React.useMemo(() => {
     const m = new Map<string, Sprint>();
     allSprints.forEach((s) => m.set(s.id, s));
     return m;
   }, [allSprints]);
+
+  const sprintsGlobalOrdered = React.useMemo(
+    () => allSprints.slice().sort(byEnd),
+    [allSprints]
+  );
+
+  const sprintsByQuarter = React.useMemo(() => {
+    const m = new Map<string, Sprint[]>();
+    for (const s of sprintsGlobalOrdered) {
+      if (!m.has(s.quarterId)) {
+        m.set(s.quarterId, []);
+      }
+      m.get(s.quarterId)!.push(s);
+    }
+    return m;
+  }, [sprintsGlobalOrdered]);
+
+  const quartersSorted = React.useMemo(
+    () =>
+      quarters.slice().sort((a, b) => a.startDate.localeCompare(b.startDate)),
+    [quarters]
+  );
+
+  const defaultQuarterId = React.useMemo(() => {
+    const selectedFirst = selectedQuarterIds.find((id) => quarterIdSet.has(id));
+    if (selectedFirst) return selectedFirst;
+    if (currentQ && quarterIdSet.has(currentQ.id)) return currentQ.id;
+    return quartersSorted[0]?.id ?? "";
+  }, [selectedQuarterIds, currentQ, quartersSorted, quarterIdSet]);
+
   const participantMap = React.useMemo(() => {
     const m = new Map<string, Participant>();
     participants.forEach((p) => m.set(p.id, p));
     return m;
   }, [participants]);
-  const sprintsGlobalOrdered = React.useMemo(
-    () => allSprints.slice().sort(byEnd),
-    [allSprints]
-  );
-  const sprintIndexById = React.useMemo(() => {
-    const m = new Map<string, number>();
-    sprintsGlobalOrdered.forEach((s, i) => m.set(s.id, i));
-    return m;
-  }, [sprintsGlobalOrdered]);
-
-  const dispatch = useAppDispatch();
-  const { priorityFilter, streamFilter, statusFilter, releaseSprintFilter } =
-    useAppSelector((s) => s.ui.backlog);
 
   const applyTaskOrderOptimistic = React.useCallback(
     (orderedIds: string[]) =>
@@ -459,6 +499,7 @@ export default function BacklogPage() {
         api.util.updateQueryData("getTasks", undefined, (draft) => {
           const byId = new Map(draft.map((t) => [t.id, t]));
           const seen = new Set<string>();
+
           const reordered = orderedIds
             .map((id) => {
               const item = byId.get(id);
@@ -466,6 +507,7 @@ export default function BacklogPage() {
               return item;
             })
             .filter(Boolean) as BacklogItem[];
+
           const untouched = draft.filter((t) => !seen.has(t.id));
           draft.splice(0, draft.length, ...reordered, ...untouched);
         })
@@ -486,24 +528,160 @@ export default function BacklogPage() {
     [dispatch]
   );
 
-  // Источник задач — всегда берём все, фильтруем на клиенте (т.к. мульти-кварталы)
   const { data: allTasks = [], isFetching } = useGetTasksQuery(undefined);
 
+  const tasksSignature = React.useMemo(
+    () =>
+      allTasks
+        .map(
+          (task) =>
+            [
+              task.id,
+              (task as any).updatedAt || task.createdAt || "",
+              task.title || "",
+              (task as any).description || "",
+              (task as any).dod || "",
+              task.stream || "",
+              task.customer || "",
+              task.releaseDate || "",
+              task.releaseSprintId || "",
+            ].join("::")
+        )
+        .join("|"),
+    [allTasks]
+  );
+
+  const stableTasks = React.useMemo(() => allTasks, [tasksSignature]);
+  const stableTaskMap = React.useMemo(
+    () => new Map(stableTasks.map((task) => [task.id, task])),
+    [stableTasks]
+  );
+
+  const [statusMap, setStatusMap] = React.useState<StatusMap>(() =>
+    readLS<StatusMap>(LS_STATUS, {})
+  );
+  const [orderMap, setOrderMap] = React.useState<OrderMap>(() =>
+    readLS<OrderMap>(LS_TASK_ORDER, {})
+  );
+  const [taskQuartersMap, setTaskQuartersMap] = React.useState<
+    Record<string, string[]>
+  >(() => readLS<Record<string, string[]>>(LS_TASK_QUARTERS, {}));
+
+  const [allocations, setAllocations] = React.useState<Allocations>({});
+  const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
+  const [editingFields, setEditingFields] = React.useState<
+    Record<string, boolean>
+  >({});
+
+  const taskDraftsRef = React.useRef(taskDrafts);
+
   React.useEffect(() => {
-    if (!allTasks.length) return;
-    const taskMap = new Map(allTasks.map((task) => [task.id, task]));
+    taskDraftsRef.current = taskDrafts;
+  }, [taskDrafts]);
+
+  const [participantOrders, setParticipantOrders] = React.useState<
+    Record<string, string[]>
+  >({});
+
+  const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
+
+  const [newTaskQuarterId, setNewTaskQuarterId] = React.useState<string>("");
+  const [addTaskQuarterError, setAddTaskQuarterError] = React.useState(false);
+
+  const taskUpdateTimers = React.useRef<
+    Map<string, ReturnType<typeof setTimeout>>
+  >(new Map());
+
+  const setFieldEditing = React.useCallback((key: string, on: boolean) => {
+    setEditingFields((prev) => {
+      const alreadyOn = !!prev[key];
+      if (alreadyOn === on) return prev;
+      const next = { ...prev };
+      if (on) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+  }, []);
+
+  const isFieldEditing = React.useCallback(
+    (key: string) => !!editingFields[key],
+    [editingFields]
+  );
+
+  React.useEffect(() => {
+    const validSelected = selectedQuarterIds.filter((id) =>
+      quarterIdSet.has(id)
+    );
+    if (
+      selectedQuarterIds.length > 0 &&
+      validSelected.length !== selectedQuarterIds.length
+    ) {
+      dispatch(setBacklogFilters({ selectedQuarterIds: validSelected }));
+    }
+  }, [selectedQuarterIds, quarterIdSet, dispatch]);
+
+  React.useEffect(() => {
+    setNewTaskQuarterId((prev) => {
+      const prevValid = prev && quarterIdSet.has(prev) ? prev : "";
+      if (prevValid) return prevValid;
+      const fromSelected = selectedQuarterIds.find((id) =>
+        quarterIdSet.has(id)
+      );
+      if (fromSelected) return fromSelected;
+      if (defaultQuarterId && quarterIdSet.has(defaultQuarterId)) {
+        return defaultQuarterId;
+      }
+      return "";
+    });
+  }, [quarterIdSet, selectedQuarterIds, defaultQuarterId]);
+
+  React.useEffect(() => {
+    if (!stableTasks.length) return;
+
+    // синхронизация кварталов задач (локальное хранение выбранных кварталов на задачу)
+    setTaskQuartersMap((prev) => {
+      const next = { ...prev };
+      let changed = false;
+
+      for (const t of stableTasks) {
+        if (!next[t.id] || next[t.id].length === 0) {
+          const derived = deriveTaskQuarters(
+            t,
+            allSprints,
+            selectedQuarterIds[0] || currentQ?.id
+          );
+          if (derived.length) {
+            next[t.id] = derived;
+            changed = true;
+          }
+        }
+      }
+
+      Object.keys(next).forEach((id) => {
+        if (!stableTaskMap.has(id)) {
+          delete next[id];
+          changed = true;
+        }
+      });
+
+      return changed ? next : prev;
+    });
+
+    // зачистка/синхронизация черновиков текстовых полей
     setTaskDrafts((prev) => {
-      if (Object.keys(prev).length === 0) return prev;
+      if (Object.keys(taskDraftsRef.current).length === 0) return prev;
       let changed = false;
       const next: TaskDraftState = {};
-      for (const [taskId, draft] of Object.entries(prev)) {
-        const task = taskMap.get(taskId);
+
+      for (const [taskId, draft] of Object.entries(taskDraftsRef.current)) {
+        const task = stableTaskMap.get(taskId);
         if (!task) {
           changed = true;
           continue;
         }
         const cleaned: Partial<Record<TaskDraftField, string>> = {};
         let hasDifference = false;
+
         for (const key of Object.keys(draft) as TaskDraftField[]) {
           const value = draft[key];
           if (value === undefined) continue;
@@ -516,6 +694,7 @@ export default function BacklogPage() {
             changed = true;
           }
         }
+
         if (hasDifference) {
           next[taskId] = cleaned;
           if (Object.keys(cleaned).length !== Object.keys(draft).length) {
@@ -525,31 +704,152 @@ export default function BacklogPage() {
           changed = true;
         }
       }
+
       return changed ? next : prev;
+    });
+  }, [stableTasks, stableTaskMap, allSprints, selectedQuarterIds, currentQ]);
+
+  React.useEffect(() => {
+    setAllocations((prev) => {
+      const next: Allocations = { ...prev };
+      for (const t of allTasks) {
+        const taskAllocations: Record<string, Record<string, number>> = next[
+          t.id
+        ] ?? (next[t.id] = {});
+        const pids = t.participantIds || [];
+
+        Object.keys(taskAllocations).forEach((pid) => {
+          if (!pids.includes(pid)) delete taskAllocations[pid];
+        });
+
+        for (const pid of pids) {
+          const participantAllocations: Record<string, number> =
+            taskAllocations[pid] ?? (taskAllocations[pid] = {});
+          for (const s of allSprints) {
+            const existing = participantAllocations[s.id];
+            const incoming = t.allocations?.[pid]?.[s.id];
+            const value = Number(incoming ?? existing ?? 0) || 0;
+            participantAllocations[s.id] = value;
+          }
+        }
+      }
+      return next;
+    });
+  }, [allTasks, allSprints]);
+
+  React.useEffect(() => {
+    setParticipantOrders((prev) => {
+      const next = { ...prev } as Record<string, string[]>;
+      for (const task of allTasks) {
+        const ids = task.participantIds || [];
+        const existing = next[task.id];
+        if (!existing) {
+          next[task.id] = ids.slice();
+          continue;
+        }
+        const kept = existing.filter((id) => ids.includes(id));
+        const added = ids.filter((id) => !kept.includes(id));
+        next[task.id] = [...kept, ...added];
+      }
+      return next;
     });
   }, [allTasks]);
 
-  // Локальные статусы/лидеры/порядок
-  const [statusMap, setStatusMap] = React.useState<StatusMap>(() =>
-    readLS<StatusMap>(LS_STATUS, {})
-  );
-  const [orderMap, setOrderMap] = React.useState<OrderMap>(() =>
-    readLS<OrderMap>(LS_TASK_ORDER, {})
-  );
+  React.useEffect(() => {
+    const taskIds = new Set(allTasks.map((t) => t.id));
+    const participantIds = new Set(participants.map((p) => p.id));
+    const sprintIds = new Set(allSprints.map((s) => s.id));
+
+    setEditingFields((prev) => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const key of Object.keys(prev)) {
+        if (key.startsWith("alloc:")) {
+          const [, taskId, pid, sid] = key.split(":");
+          if (taskId && pid && sid) {
+            if (
+              taskIds.has(taskId) &&
+              participantIds.has(pid) &&
+              sprintIds.has(sid)
+            ) {
+              next[key] = true;
+            } else {
+              changed = true;
+            }
+          }
+          continue;
+        }
+        if (
+          key.startsWith("title:") ||
+          key.startsWith("desc:") ||
+          key.startsWith("dod:")
+        ) {
+          const [, taskId] = key.split(":");
+          if (taskId && taskIds.has(taskId)) {
+            next[key] = true;
+          } else {
+            changed = true;
+          }
+          continue;
+        }
+        next[key] = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [allTasks, allSprints, participants]);
+
   React.useEffect(() => writeLS(LS_STATUS, statusMap), [statusMap]);
   React.useEffect(() => writeLS(LS_TASK_ORDER, orderMap), [orderMap]);
+  React.useEffect(
+    () => writeLS(LS_TASK_QUARTERS, taskQuartersMap),
+    [taskQuartersMap]
+  );
 
-  // Список всех возможных значений «стрима» и «заказчика» (для автокомплита)
+  React.useEffect(() => {
+    return () => {
+      taskUpdateTimers.current.forEach((timer) => clearTimeout(timer));
+      taskUpdateTimers.current.clear();
+    };
+  }, []);
+
   const streamOptions = React.useMemo(() => {
     const s = new Set<string>();
     for (const t of allTasks) if (t.stream?.trim()) s.add(t.stream.trim());
     return Array.from(s).sort();
   }, [allTasks]);
+
   const customerOptions = React.useMemo(() => {
     const s = new Set<string>();
     for (const t of allTasks) if (t.customer?.trim()) s.add(t.customer.trim());
     return Array.from(s).sort();
   }, [allTasks]);
+
+  const getTaskQuarters = React.useCallback(
+    (task: BacklogItem): string[] => {
+      const fromMap = taskQuartersMap[task.id];
+      if (fromMap && fromMap.length) return fromMap;
+      const derived = deriveTaskQuarters(
+        task,
+        allSprints,
+        selectedQuarterIds[0] || currentQ?.id
+      );
+      if (derived.length) return derived;
+      return quartersSorted.map((q) => q.id);
+    },
+    [taskQuartersMap, allSprints, selectedQuarterIds, currentQ, quartersSorted]
+  );
+
+  const updateTaskQuarters = React.useCallback(
+    (taskId: string, quartersIds: string[]) => {
+      const unique = Array.from(new Set(quartersIds.filter(Boolean)));
+      if (!unique.length) return;
+      setTaskQuartersMap((prev) => {
+        const next = { ...prev, [taskId]: unique };
+        return next;
+      });
+    },
+    []
+  );
 
   const quarterFilterOptions = React.useMemo(
     () =>
@@ -561,7 +861,11 @@ export default function BacklogPage() {
   );
 
   const priorityOptions = React.useMemo(
-    () => PRIORITY_VALUES.map((p) => ({ value: String(p), label: String(p) })),
+    () =>
+      PRIORITY_VALUES.map((p) => ({
+        value: String(p),
+        label: String(p),
+      })),
     []
   );
 
@@ -574,6 +878,32 @@ export default function BacklogPage() {
     []
   );
 
+  const promReleases: { id: string; promDate: string }[] = React.useMemo(() => {
+    if (!releases || !Array.isArray(releases)) return [];
+    return releases
+      .map((r: any) => ({
+        id: String(r.id ?? r.promId ?? r.promDate),
+        promDate: String(r.promDate || r.prom || r.date || ""),
+      }))
+      .filter((x) => x.promDate);
+  }, [releases]);
+
+  const releaseFilterOptions = React.useMemo(() => {
+    const dates = new Set<string>();
+    promReleases.forEach((r) => dates.add(r.promDate));
+    allTasks.forEach((t) => {
+      const d = t.releaseDate?.trim();
+      if (d) dates.add(d);
+    });
+    return Array.from(dates)
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b))
+      .map((iso) => ({
+        value: iso,
+        label: moment(iso).format("DD.MM.YYYY"),
+      }));
+  }, [allTasks, promReleases]);
+
   const handleQuarterFilterChange = React.useCallback(
     (ids: string[]) => {
       const existing = new Set(quarters.map((q) => q.id));
@@ -581,10 +911,10 @@ export default function BacklogPage() {
       const unique = Array.from(new Set(filtered));
       if (shallowArrayEqual(unique, selectedQuarterIds)) return;
       startQuarterTransition(() => {
-        setSelectedQuarterIds(unique);
+        dispatch(setBacklogFilters({ selectedQuarterIds: unique }));
       });
     },
-    [quarters, selectedQuarterIds, startQuarterTransition]
+    [quarters, selectedQuarterIds, startQuarterTransition, dispatch]
   );
 
   const handlePriorityFilterChange = React.useCallback(
@@ -617,59 +947,30 @@ export default function BacklogPage() {
     [dispatch, releaseSprintFilter]
   );
 
-  // Фильтрация задач
+  const getStatusForTask = (taskId: string): TaskStatus =>
+    statusMap[taskId] || "inprogress";
+
   const filteredTasks = React.useMemo(() => {
-    const selectedSprintIds =
-      selectedQuarterIds.length === 0
-        ? new Set(allSprints.map((s) => s.id))
-        : new Set(
-            allSprints
-              .filter((s) => selectedQuarterIds.includes(s.quarterId))
-              .map((s) => s.id)
-          );
-
-    // фильтруем по кварталу: задача показывается, если есть нагрузка/распределение В ЛЮБОМ из выбранных спринтов
-    const byQuarters = allTasks.filter((t) => {
+    const passesQuarterFilter = (task: BacklogItem): boolean => {
+      const taskQuarterIds = getTaskQuarters(task);
       if (selectedQuarterIds.length === 0) return true;
-      // loads
-      const hasLoad =
-        t.loads &&
-        Object.entries(t.loads).some(
-          ([sid, days]) => selectedSprintIds.has(sid) && (Number(days) || 0) > 0
-        );
-      if (hasLoad) return true;
-      // allocations
-      if (t.allocations) {
-        for (const pid of Object.keys(t.allocations)) {
-          const rows = t.allocations[pid];
-          if (
-            Object.entries(rows).some(
-              ([sid, days]) =>
-                selectedSprintIds.has(sid) && (Number(days) || 0) > 0
-            )
-          ) {
-            return true;
-          }
-        }
-      }
-      // если нагрузок нет — всё равно показываем задачу (пустая), чтобы её можно было заполнить
-      return false;
-    });
+      if (!taskQuarterIds.length) return true;
+      return taskQuarterIds.some((q) => selectedQuarterIds.includes(q));
+    };
 
-    // приоритет
+    const byQuarters = allTasks.filter(passesQuarterFilter);
+
     const byPriority =
       priorityFilter.length === 0
         ? byQuarters
         : byQuarters.filter((t) => priorityFilter.includes(Number(t.priority)));
 
-    // стрим
     const byStream = streamFilter.trim()
       ? byPriority.filter((t) =>
           (t.stream || "").toLowerCase().includes(streamFilter.toLowerCase())
         )
       : byPriority;
 
-    // релиз (по дате пром)
     const byRelease =
       releaseSprintFilter === "all" || releaseSprintFilter.trim() === ""
         ? byStream
@@ -678,96 +979,42 @@ export default function BacklogPage() {
             return rel === releaseSprintFilter.trim();
           });
 
-    // статус (по локальной карте)
     const byStatus =
       statusFilter.length === 0
         ? byRelease
         : byRelease.filter((t) => {
-            const st = statusMap[t.id] || "inprogress";
+            const st = getStatusForTask(t.id);
             return statusFilter.includes(st);
           });
 
-    // порядок (локальный)
     const withOrder = byStatus.slice().sort((a, b) => {
       const oa = orderMap[a.id] ?? Number.MAX_SAFE_INTEGER;
       const ob = orderMap[b.id] ?? Number.MAX_SAFE_INTEGER;
       if (oa !== ob) return oa - ob;
-      // fallback: по дате создания
       return (a.createdAt || "").localeCompare(b.createdAt || "");
     });
 
     return withOrder;
   }, [
     allTasks,
-    allSprints,
     selectedQuarterIds,
     priorityFilter,
     streamFilter,
     releaseSprintFilter,
     statusFilter,
-    statusMap,
     orderMap,
+    getTaskQuarters,
   ]);
 
   const deferredFilteredTasks = React.useDeferredValue(filteredTasks);
   const isTasksPending = deferredFilteredTasks !== filteredTasks;
   const isUiPending = isQuarterPending || isTasksPending;
 
-  // Мутации
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
   const [deleteTask] = useDeleteTaskMutation();
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
-  const [exportExcel, { isFetching: isExporting }] = useLazyExportExcelQuery();
-
-  const handleExportExcel = React.useCallback(async () => {
-    try {
-      const blob = await exportExcel().unwrap();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `sprints-planning-${moment().format("YYYY-MM-DD")}.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error("Не удалось экспортировать Excel", error);
-    }
-  }, [exportExcel]);
-
-  const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
-
-  // Локальные allocations (для быстрого редактирования)
-  const [allocations, setAllocations] = React.useState<Allocations>({});
-  const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
-  const [activeEditors, setActiveEditors] = React.useState<Record<string, boolean>>(
-    {}
-  );
-  const [participantPicker, setParticipantPicker] = React.useState<
-    { taskId: string; anchorEl: HTMLElement | null } | null
-  >(null);
-
-  const startEditor = React.useCallback((key: string) => {
-    setActiveEditors((prev) => ({ ...prev, [key]: true }));
-  }, []);
-
-  const stopEditor = React.useCallback((key: string) => {
-    setActiveEditors((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-  }, []);
-
-  const closeParticipantPicker = React.useCallback(() => {
-    setParticipantPicker(null);
-  }, []);
-
-  const taskUpdateTimers = React.useRef<
-    Map<string, ReturnType<typeof setTimeout>>
-  >(new Map());
 
   const cancelTaskUpdate = React.useCallback(
     (taskId: string, field: TaskDraftField) => {
@@ -782,13 +1029,6 @@ export default function BacklogPage() {
     []
   );
 
-  React.useEffect(() => {
-    return () => {
-      taskUpdateTimers.current.forEach((timer) => clearTimeout(timer));
-      taskUpdateTimers.current.clear();
-    };
-  }, []);
-
   const scheduleTaskUpdate = React.useCallback(
     (taskId: string, field: TaskDraftField, value: string) => {
       const key = `${taskId}:${field}`;
@@ -797,9 +1037,11 @@ export default function BacklogPage() {
       if (existing) clearTimeout(existing);
 
       const timeout = setTimeout(() => {
-        updateTask({ id: taskId, [field]: value }).unwrap().catch((err) => {
-          console.error("Failed to update task", err);
-        });
+        updateTask({ id: taskId, [field]: value })
+          .unwrap()
+          .catch((err) => {
+            console.error("Failed to update task", err);
+          });
         timers.delete(key);
       }, 400);
 
@@ -813,8 +1055,10 @@ export default function BacklogPage() {
       const sanitized = value ?? "";
       const originalRaw = (task as any)[key];
       const original = typeof originalRaw === "string" ? originalRaw : "";
+
       setTaskDrafts((prev) => {
         const next = { ...prev } as TaskDraftState;
+
         if (sanitized === original) {
           cancelTaskUpdate(task.id, key);
           const current = next[task.id];
@@ -830,6 +1074,7 @@ export default function BacklogPage() {
           }
           return next;
         }
+
         next[task.id] = { ...(next[task.id] ?? {}), [key]: sanitized };
         return next;
       });
@@ -859,85 +1104,6 @@ export default function BacklogPage() {
     [resolveTaskFieldValue, scheduleTaskUpdate, taskDrafts]
   );
 
-  // Инициализация локальных allocations из задач
-  React.useEffect(() => {
-    setAllocations((prev) => {
-      const next: Allocations = { ...prev };
-      for (const t of allTasks) {
-        const taskAllocations: Record<string, Record<string, number>> =
-          next[t.id] ?? (next[t.id] = {});
-        const pids = t.participantIds || [];
-        // удаляем удалённых участников
-        Object.keys(taskAllocations).forEach((pid) => {
-          if (!pids.includes(pid)) delete taskAllocations[pid];
-        });
-
-        for (const pid of pids) {
-          const participantAllocations: Record<string, number> =
-            taskAllocations[pid] ?? (taskAllocations[pid] = {});
-          for (const s of allSprints) {
-            const existing = participantAllocations[s.id];
-            const incoming = t.allocations?.[pid]?.[s.id];
-            const value = Number(incoming ?? existing ?? 0) || 0;
-            participantAllocations[s.id] = value;
-          }
-        }
-      }
-      return next;
-    });
-  }, [allTasks, allSprints]);
-
-  const [participantOrders, setParticipantOrders] = React.useState<
-    Record<string, string[]>
-  >({});
-
-  React.useEffect(() => {
-    setParticipantOrders((prev) => {
-      const next = { ...prev } as Record<string, string[]>;
-      for (const task of allTasks) {
-        const ids = task.participantIds || [];
-        const existing = next[task.id];
-        if (!existing) {
-          next[task.id] = ids.slice();
-          continue;
-        }
-        const kept = existing.filter((id) => ids.includes(id));
-        const added = ids.filter((id) => !kept.includes(id));
-        next[task.id] = [...kept, ...added];
-      }
-      return next;
-    });
-  }, [allTasks]);
-
-  // Релизы: приведём к удобному виду (берём именно даты ПРОМ)
-  type ReleaseLike = { id: string; promDate: string };
-  const promReleases: ReleaseLike[] = React.useMemo(() => {
-    if (!releases || !Array.isArray(releases)) return [];
-    return releases
-      .map((r: any) => ({
-        id: String(r.id ?? r.promId ?? r.promDate),
-        promDate: String(r.promDate || r.prom || r.date || ""),
-      }))
-      .filter((x) => x.promDate);
-  }, [releases]);
-
-  const releaseFilterOptions = React.useMemo(() => {
-    const dates = new Set<string>();
-    promReleases.forEach((r) => dates.add(r.promDate));
-    allTasks.forEach((t) => {
-      const d = t.releaseDate?.trim();
-      if (d) dates.add(d);
-    });
-    return Array.from(dates)
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b))
-      .map((iso) => ({
-        value: iso,
-        label: moment(iso).format("DD.MM.YYYY"),
-      }));
-  }, [allTasks, promReleases]);
-
-  // По дате релиза определить спринт
   const detectSprintByDate = (iso?: string): string | undefined => {
     if (!iso) return undefined;
     const found = allSprints.find((s) =>
@@ -946,26 +1112,49 @@ export default function BacklogPage() {
     return found?.id;
   };
 
-  // Добавление/копирование задач
-  const createTask = async () => {
+  const createTask = async (quarterId?: string) => {
+    const sprintsOfQuarter = quarterId
+      ? sprintsByQuarter.get(quarterId) || []
+      : [];
+    const releaseSprint = sprintsOfQuarter[sprintsOfQuarter.length - 1];
+    const releaseSprintId = releaseSprint?.id || "";
+    const releaseDate = releaseSprint?.endDate || "";
+
     const created = await addTask({
       title: "Новая задача",
       description: "",
       dod: "",
-      priority: 2 as TaskPriority,
+      priority: 1 as TaskPriority,
       customer: "",
       stream: "",
       participantIds: [],
-      releaseDate: "",
-      releaseSprintId: "",
+      releaseDate,
+      releaseSprintId,
     }).unwrap();
+
     setAllocations((prev) => ({ ...prev, [created.id]: {} }));
+    if (quarterId) {
+      setTaskQuartersMap((prev) => ({ ...prev, [created.id]: [quarterId] }));
+    }
+  };
+
+  const handleConfirmAddTask = async () => {
+    if (!newTaskQuarterId) {
+      setAddTaskQuarterError(true);
+      return;
+    }
+    setAddTaskQuarterError(false);
+    try {
+      await createTask(newTaskQuarterId);
+    } catch (error) {
+      console.error("Не удалось создать задачу", error);
+    }
   };
 
   const duplicateTask = async (task: BacklogItem) => {
     const copy = await addTask({
       title: `${task.title} (копия)`,
-      description: task.description,
+      description: (task as any).description,
       dod: task.dod,
       priority: task.priority,
       customer: task.customer,
@@ -975,9 +1164,9 @@ export default function BacklogPage() {
       releaseSprintId: task.releaseSprintId,
     }).unwrap();
 
-    // скопируем распределение
     const rows = allocations[task.id] || {};
     const ops: Promise<any>[] = [];
+
     for (const pid of Object.keys(rows)) {
       const row = rows[pid] || {};
       for (const sid of Object.keys(row)) {
@@ -994,20 +1183,23 @@ export default function BacklogPage() {
         }
       }
     }
+
     try {
       await Promise.all(ops);
-    } catch {}
-    // подвинем вниз в локальном порядке (следом за исходной)
+    } catch {
+      // ignore
+    }
+
     setOrderMap((prev) => {
       const base = prev[task.id] ?? Date.now();
       return { ...prev, [copy.id]: base + 1 };
     });
   };
 
-  // Удаление
   const removeTask = async (t: BacklogItem) => {
     if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
     await deleteTask({ id: t.id }).unwrap();
+
     setAllocations((prev) => {
       const copy = { ...prev };
       delete copy[t.id];
@@ -1025,12 +1217,10 @@ export default function BacklogPage() {
     });
   };
 
-  // Обновление поля задачи
   const updateField = async (t: BacklogItem, patch: Partial<BacklogItem>) => {
     await updateTask({ id: t.id, ...patch }).unwrap();
   };
 
-  // Коммит ячейки распределения
   const commitCell = async (
     taskId: string,
     participantId: string,
@@ -1049,15 +1239,17 @@ export default function BacklogPage() {
     }
   };
 
-  // Добавить/удалить участника в задаче
   const addParticipantToTask = (task: BacklogItem, pid: string) => {
     if (!pid) return;
     if (task.participantIds?.includes(pid)) return;
+
     updateField(task, { participantIds: [...task.participantIds, pid] });
+
     setParticipantOrders((prev) => ({
       ...prev,
       [task.id]: [...(prev[task.id] || task.participantIds), pid],
     }));
+
     setAllocations((prev) => {
       const copy = { ...prev };
       if (!copy[task.id]) copy[task.id] = {};
@@ -1066,7 +1258,8 @@ export default function BacklogPage() {
       return copy;
     });
   };
-  const removeParticipantFromTask = (task: BacklogItem, pid: string) => {
+
+  const removeParticipantFromTask = async (task: BacklogItem, pid: string) => {
     setAllocations((prev) => {
       const copy = { ...prev };
       if (copy[task.id]) {
@@ -1076,6 +1269,7 @@ export default function BacklogPage() {
       }
       return copy;
     });
+
     setParticipantOrders((prev) => {
       const next = { ...prev };
       if (next[task.id]) {
@@ -1083,16 +1277,21 @@ export default function BacklogPage() {
       }
       return next;
     });
+
     const patch: Partial<BacklogItem> = {
       participantIds: task.participantIds.filter((x) => x !== pid),
     };
-    if (task.leaderId === pid) {
-      patch.leaderId = "";
+    if ((task as any).leaderId === pid) {
+      (patch as any).leaderId = "";
     }
-    updateField(task, patch);
+
+    try {
+      await updateField(task, patch);
+    } catch (error) {
+      console.error("Failed to remove participant from task", error);
+    }
   };
 
-  // Сдвиг влево/вправо распределения по спринтам для участника
   const shiftRow = (
     taskId: string,
     participantId: string,
@@ -1101,28 +1300,34 @@ export default function BacklogPage() {
     const row = allocations[taskId]?.[participantId] || {};
     const ids = sprintsGlobalOrdered.map((s) => s.id);
     if (!ids.length) return;
-    const n = ids.length;
+
     const next: Record<string, number> = {};
-    for (let i = 0; i < n; i++) {
-      const fromIdx = i;
-      const toIdx = dir === "left" ? (i - 1 + n) % n : (i + 1) % n;
-      const fromSid = ids[fromIdx];
-      const toSid = ids[toIdx];
+
+    for (let i = 0; i < ids.length; i++) {
+      const fromSid = ids[i];
+      const targetIdx = dir === "left" ? i - 1 : i + 1;
+      const targetSid =
+        targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
       const val = Number(row[fromSid] || 0);
-      next[toSid] = (next[toSid] || 0) + val;
+      next[targetSid] = (next[targetSid] || 0) + val;
     }
+
     setAllocations((prev) => {
       const cp = { ...prev };
       if (!cp[taskId]) cp[taskId] = {};
       cp[taskId] = { ...cp[taskId], [participantId]: next };
       return cp;
     });
+
     (async () => {
       try {
-        const bulkAllocations = ids.reduce<Record<string, number>>((acc, sid) => {
-          acc[sid] = toInt(Number(next[sid] || 0));
-          return acc;
-        }, {});
+        const bulkAllocations = ids.reduce<Record<string, number>>(
+          (acc, sid) => {
+            acc[sid] = toInt(Number(next[sid] || 0));
+            return acc;
+          },
+          {}
+        );
         await upsertTaskAllocationBulk({
           taskId,
           participantId,
@@ -1134,7 +1339,74 @@ export default function BacklogPage() {
     })();
   };
 
-  // Порядок задач локально
+  const copyRowToNextQuarter = (taskId: string, participantId: string) => {
+    const row = allocations[taskId]?.[participantId] || {};
+    if (!Object.keys(row).length) return;
+
+    const quartersWithLoad = new Set<string>();
+    for (const [sid, days] of Object.entries(row)) {
+      if (Number(days) > 0) {
+        const sprint = sprintById.get(sid);
+        if (sprint) quartersWithLoad.add(sprint.quarterId);
+      }
+    }
+    if (!quartersWithLoad.size) return;
+
+    let srcQuarterIndex = -1;
+    for (let i = 0; i < quartersSorted.length; i++) {
+      if (quartersWithLoad.has(quartersSorted[i].id)) {
+        srcQuarterIndex = i;
+      }
+    }
+    if (srcQuarterIndex < 0 || srcQuarterIndex >= quartersSorted.length - 1) {
+      return;
+    }
+
+    const srcQuarter = quartersSorted[srcQuarterIndex];
+    const dstQuarter = quartersSorted[srcQuarterIndex + 1];
+
+    const srcSprints = sprintsByQuarter.get(srcQuarter.id) || [];
+    const dstSprints = sprintsByQuarter.get(dstQuarter.id) || [];
+    if (!srcSprints.length || !dstSprints.length) return;
+
+    const maxLen = Math.min(srcSprints.length, dstSprints.length);
+    const nextRow: Record<string, number> = { ...row };
+
+    for (let i = 0; i < maxLen; i++) {
+      const srcSid = srcSprints[i].id;
+      const dstSid = dstSprints[i].id;
+      const val = Number(row[srcSid] || 0);
+      if (val > 0) {
+        nextRow[dstSid] = (nextRow[dstSid] || 0) + val;
+      }
+    }
+
+    setAllocations((prev) => {
+      const cp = { ...prev };
+      if (!cp[taskId]) cp[taskId] = {};
+      cp[taskId] = { ...cp[taskId], [participantId]: nextRow };
+      return cp;
+    });
+
+    (async () => {
+      try {
+        const bulkAllocations = Object.entries(nextRow).reduce<
+          Record<string, number>
+        >((acc, [sid, days]) => {
+          acc[sid] = toInt(Number(days) || 0);
+          return acc;
+        }, {});
+        await upsertTaskAllocationBulk({
+          taskId,
+          participantId,
+          allocations: bulkAllocations,
+        }).unwrap();
+      } catch (error) {
+        console.error("Failed to copy allocations to next quarter", error);
+      }
+    })();
+  };
+
   const moveTask = (id: string, dir: "up" | "down") => {
     const current = filteredTasks.map((t) => t.id);
     const idx = current.indexOf(id);
@@ -1143,19 +1415,26 @@ export default function BacklogPage() {
     if (swapIdx < 0 || swapIdx >= current.length) return;
     const A = current[idx];
     const B = current[swapIdx];
+
     setOrderMap((prev) => {
       const pa = prev[A] ?? idx;
       const pb = prev[B] ?? swapIdx;
       return { ...prev, [A]: pb, [B]: pa };
     });
+
+    const reordered = arrayMove(current, idx, swapIdx);
+    applyTaskOrderOptimistic(reordered);
   };
 
   const taskSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    })
   );
-
   const participantSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    })
   );
 
   const activeTask = React.useMemo(
@@ -1195,7 +1474,6 @@ export default function BacklogPage() {
     [applyTaskOrderOptimistic, deferredFilteredTasks]
   );
 
-  // Визуал заголовка спринта (с подсветкой колонки релиза для конкретной задачи)
   const HeaderSprint = ({
     s,
     highlight,
@@ -1227,8 +1505,14 @@ export default function BacklogPage() {
     task: BacklogItem;
     children: (props: DragHandleProps) => React.ReactNode;
   }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-      useSortable({ id: task.id });
+    const {
+      attributes,
+      listeners,
+      setNodeRef,
+      transform,
+      transition,
+      isDragging,
+    } = useSortable({ id: task.id });
 
     const style: React.CSSProperties = {
       transform: CSS.Transform.toString(transform),
@@ -1255,8 +1539,14 @@ export default function BacklogPage() {
       setNodeRef: (element: HTMLElement | null) => void
     ) => React.ReactNode;
   }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-      useSortable({ id: participant.id });
+    const {
+      attributes,
+      listeners,
+      setNodeRef,
+      transform,
+      transition,
+      isDragging,
+    } = useSortable({ id: participant.id });
 
     const style: React.CSSProperties = {
       transform: CSS.Transform.toString(transform),
@@ -1267,39 +1557,47 @@ export default function BacklogPage() {
     return children({ attributes, listeners }, style, isDragging, setNodeRef);
   };
 
-  // Рендер одной задачи
   const renderTaskTable = (task: BacklogItem, dragHandle?: DragHandleProps) => {
     const rows = allocations[task.id] || {};
+    const taskQuarterIds = getTaskQuarters(task);
+
+    const allowedSprints = (
+      taskQuarterIds.length
+        ? sprintsGlobalOrdered.filter((s) =>
+            taskQuarterIds.includes(s.quarterId)
+          )
+        : sprintsGlobalOrdered
+    ).slice();
+
+    const taskVisibleSprints =
+      selectedQuarterIds.length > 0
+        ? allowedSprints.filter((s) => selectedQuarterIds.includes(s.quarterId))
+        : allowedSprints;
+
+    const effectiveSprints =
+      taskVisibleSprints.length > 0 ? taskVisibleSprints : allowedSprints;
+
     const orderedParticipantIds =
       participantOrders[task.id] || task.participantIds || [];
     const participantRows: Participant[] = orderedParticipantIds
       .map((id) => participantMap.get(id))
       .filter(Boolean) as Participant[];
-    const pickerOpen = participantPicker?.taskId === task.id;
-    const pickerAnchor = pickerOpen ? participantPicker?.anchorEl : null;
-    const availableParticipants = participants.filter(
-      (p) => !task.participantIds.includes(p.id)
-    );
 
     const sumBySprint: Record<string, number> = {};
-    for (const s of visibleSprints) {
+    for (const s of effectiveSprints) {
       sumBySprint[s.id] = participantRows.reduce((a, p) => {
         const v = Number(rows[p.id]?.[s.id] || 0);
         return a + toInt(v);
       }, 0);
     }
 
-    // статус + лидер
-    const st: TaskStatus = statusMap[task.id] || "inprogress";
-    const leaderPid = task.leaderId || undefined;
-
-    // релиз: подсветка колонки
+    const st: TaskStatus = getStatusForTask(task.id);
+    const leaderPid = (task as any).leaderId || undefined;
     const relISO = task.releaseDate || "";
     const relSprintId = task.releaseSprintId || detectSprintByDate(relISO);
-
-    const textEditorKey = (field: TaskDraftField) => `${task.id}:${field}`;
-    const allocationEditorKey = (pid: string, sid: string) =>
-      `${task.id}:${pid}:${sid}`;
+    const titleKey = `title:${task.id}`;
+    const descKey = `desc:${task.id}`;
+    const dodKey = `dod:${task.id}`;
 
     const clampedTextSx = {
       display: "-webkit-box",
@@ -1326,26 +1624,50 @@ export default function BacklogPage() {
     const handleParticipantDragEnd = async (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
+
       const ids = orderedParticipantIds || [];
       const oldIndex = ids.indexOf(String(active.id));
       const newIndex = ids.indexOf(String(over.id));
       if (oldIndex < 0 || newIndex < 0) return;
+
       const reordered = arrayMove(ids, oldIndex, newIndex);
       const previous = ids.slice();
+
       const patch = applyParticipantOrderOptimistic(task.id, reordered);
       setParticipantOrders((prev) => ({ ...prev, [task.id]: reordered }));
+
       try {
         await updateField(task, { participantIds: reordered });
       } catch (error) {
         console.error("Failed to update participant order", error);
-        patch.undo?.();
-        setParticipantOrders((prev) => ({ ...prev, [task.id]: previous }));
+        (patch as any).undo?.();
+        setParticipantOrders((prev) => ({
+          ...prev,
+          [task.id]: previous,
+        }));
       }
     };
 
+    const availableParticipants = participants.filter(
+      (p) => !task.participantIds.includes(p.id)
+    );
+
+    const releaseOptionsSet = new Set(
+      releaseFilterOptions.map((opt) => opt.value)
+    );
+    const releaseOptions = releaseFilterOptions.slice();
+    if (relISO && !releaseOptionsSet.has(relISO)) {
+      releaseOptions.push({
+        value: relISO,
+        label: moment(relISO).isValid()
+          ? moment(relISO).format("DD.MM.YYYY")
+          : relISO,
+      });
+      releaseOptions.sort((a, b) => a.value.localeCompare(b.value));
+    }
+
     return (
       <Paper key={task.id} variant="outlined" sx={{ p: 2 }}>
-        {/* Шапка задачи */}
         <Stack
           direction={{ xs: "column", md: "row" }}
           spacing={2}
@@ -1356,72 +1678,75 @@ export default function BacklogPage() {
           <Tooltip title={tooltipContent} arrow placement="top-start">
             <Box sx={{ flex: 1, minWidth: 260, cursor: "help" }}>
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                <EditableText
+                <MemoEditableText
                   value={resolveTaskFieldValue(task, "title")}
                   onChange={(v) => stageTaskField(task, "title", v)}
-                  onBlur={() => {
-                    stopEditor(textEditorKey("title"));
-                    commitTaskField(task, "title");
-                  }}
+                  onCommit={() => commitTaskField(task, "title")}
                   placeholder="Название"
-                  isEditing={activeEditors[textEditorKey("title")]}
-                  onStartEditing={() => startEditor(textEditorKey("title"))}
-                  onStopEditing={() => stopEditor(textEditorKey("title"))}
                   multiline
                   minRows={1}
                   maxRows={4}
                   displaySx={clampedTextSx}
                   inputSx={{ width: "100%" }}
+                  isEditing={isFieldEditing(titleKey)}
+                  onStartEditing={() => setFieldEditing(titleKey, true)}
+                  onStopEditing={() => setFieldEditing(titleKey, false)}
                 />
               </Typography>
-              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+
+              <Typography
+                variant="body2"
+                sx={{ color: "text.secondary", mt: 0.5 }}
+              >
                 Описание:{" "}
-                <EditableText
+                <MemoEditableText
                   value={resolveTaskFieldValue(task, "description")}
                   onChange={(v) => stageTaskField(task, "description", v)}
-                  onBlur={() => {
-                    stopEditor(textEditorKey("description"));
-                    commitTaskField(task, "description");
-                  }}
+                  onCommit={() => commitTaskField(task, "description")}
                   placeholder="Описание"
-                  isEditing={activeEditors[textEditorKey("description")]}
-                  onStartEditing={() => startEditor(textEditorKey("description"))}
-                  onStopEditing={() => stopEditor(textEditorKey("description"))}
                   multiline
                   minRows={2}
                   maxRows={6}
                   displaySx={clampedTextSx}
                   inputSx={{ width: "100%" }}
+                  isEditing={isFieldEditing(descKey)}
+                  onStartEditing={() => setFieldEditing(descKey, true)}
+                  onStopEditing={() => setFieldEditing(descKey, false)}
                 />
               </Typography>
-              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+
+              <Typography
+                variant="body2"
+                sx={{ color: "text.secondary", mt: 0.5 }}
+              >
                 DOD:{" "}
-                <EditableText
+                <MemoEditableText
                   value={resolveTaskFieldValue(task, "dod")}
                   onChange={(v) => stageTaskField(task, "dod", v)}
-                  onBlur={() => {
-                    stopEditor(textEditorKey("dod"));
-                    commitTaskField(task, "dod");
-                  }}
+                  onCommit={() => commitTaskField(task, "dod")}
                   placeholder="Definition of Done"
-                  isEditing={activeEditors[textEditorKey("dod")]}
-                  onStartEditing={() => startEditor(textEditorKey("dod"))}
-                  onStopEditing={() => stopEditor(textEditorKey("dod"))}
                   multiline
                   minRows={2}
                   maxRows={6}
                   displaySx={clampedTextSx}
                   inputSx={{ width: "100%" }}
+                  isEditing={isFieldEditing(dodKey)}
+                  onStartEditing={() => setFieldEditing(dodKey, true)}
+                  onStopEditing={() => setFieldEditing(dodKey, false)}
                 />
               </Typography>
             </Box>
           </Tooltip>
 
-          <Stack
-            direction={{ xs: "column", md: "row" }}
-            spacing={2}
-            alignItems="flex-start"
-            flexWrap="wrap"
+          <Box
+            sx={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 1,
+              alignItems: "center",
+              justifyContent: "flex-end",
+              minWidth: 320,
+            }}
           >
             <TextField
               select
@@ -1432,7 +1757,7 @@ export default function BacklogPage() {
                 const value = e.target.value as TaskStatus;
                 setStatusMap((prev) => ({ ...prev, [task.id]: value }));
               }}
-              sx={{ minWidth: 190 }}
+              sx={{ minWidth: 180 }}
               SelectProps={{
                 renderValue: (value) => {
                   const key = value as TaskStatus;
@@ -1474,17 +1799,32 @@ export default function BacklogPage() {
               <MenuItem value={3}>3</MenuItem>
             </TextField>
 
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Кварталы"
+              options={quarterFilterOptions}
+              value={taskQuarterIds}
+              onChange={(values) => {
+                if (!values.length) return;
+                updateTaskQuarters(task.id, values);
+              }}
+              sx={{ minWidth: 200, maxWidth: 240, flexShrink: 0 }}
+            />
+
             <Autocomplete
               size="small"
               freeSolo
               options={customerOptions}
               value={resolveTaskFieldValue(task, "customer")}
-              onInputChange={(_, v) => stageTaskField(task, "customer", v || "")}
+              onInputChange={(_, v) =>
+                stageTaskField(task, "customer", v || "")
+              }
               onBlur={() => commitTaskField(task, "customer")}
               renderInput={(params) => (
                 <TextField {...params} label="Заказчик" size="small" />
               )}
-              sx={{ minWidth: 220, flexShrink: 0 }}
+              sx={{ minWidth: 180, maxWidth: 240, flexShrink: 0 }}
             />
 
             <Autocomplete
@@ -1497,7 +1837,7 @@ export default function BacklogPage() {
               renderInput={(params) => (
                 <TextField {...params} label="Стрим" size="small" />
               )}
-              sx={{ minWidth: 200, flexShrink: 0 }}
+              sx={{ minWidth: 180, maxWidth: 220, flexShrink: 0 }}
             />
 
             <TextField
@@ -1513,23 +1853,20 @@ export default function BacklogPage() {
                   releaseSprintId: sid,
                 });
               }}
-              sx={{ minWidth: 220 }}
+              sx={{ minWidth: 180, maxWidth: 220, flexShrink: 0 }}
               SelectProps={{ displayEmpty: true }}
             >
               <MenuItem value="">
                 <em>—</em>
               </MenuItem>
-              {promReleases
-                .slice()
-                .sort((a, b) => a.promDate.localeCompare(b.promDate))
-                .map((r) => (
-                  <MenuItem key={r.id} value={r.promDate}>
-                    {moment(r.promDate).format("DD.MM.YYYY")}
-                  </MenuItem>
-                ))}
+              {releaseOptions.map((opt) => (
+                <MenuItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </MenuItem>
+              ))}
             </TextField>
 
-            <Stack direction="row" spacing={0.5}>
+            <Stack direction="row" spacing={0.5} sx={{ ml: "auto" }}>
               {dragHandle && (
                 <Tooltip title="Перетащите, чтобы изменить порядок">
                   <span
@@ -1543,11 +1880,13 @@ export default function BacklogPage() {
                   </span>
                 </Tooltip>
               )}
+
               <Tooltip title="Дублировать">
                 <IconButton size="small" onClick={() => duplicateTask(task)}>
                   <ContentCopy fontSize="small" />
                 </IconButton>
               </Tooltip>
+
               <Tooltip title="Вверх">
                 <IconButton
                   size="small"
@@ -1556,6 +1895,7 @@ export default function BacklogPage() {
                   <ArrowUpward fontSize="small" />
                 </IconButton>
               </Tooltip>
+
               <Tooltip title="Вниз">
                 <IconButton
                   size="small"
@@ -1564,28 +1904,32 @@ export default function BacklogPage() {
                   <ArrowDownward fontSize="small" />
                 </IconButton>
               </Tooltip>
+
               <Tooltip title="Удалить задачу">
                 <IconButton size="small" onClick={() => removeTask(task)}>
                   <Delete />
                 </IconButton>
               </Tooltip>
             </Stack>
-          </Stack>
+          </Box>
         </Stack>
 
-        {/* Таблица участники × спринты */}
         <DndContext
           sensors={participantSensors}
           collisionDetection={closestCenter}
           onDragEnd={handleParticipantDragEnd}
         >
-          <TableContainer component={Paper} variant="outlined" sx={{ mt: 1 }}>
+          <TableContainer
+            component={Paper}
+            variant="outlined"
+            sx={{ mt: 1, position: "relative" }}
+          >
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
                   <TableCell sx={{ width: 52 }} />
                   <TableCell sx={{ minWidth: 260 }}>Участник</TableCell>
-                  {visibleSprints.map((s) => (
+                  {effectiveSprints.map((s) => (
                     <HeaderSprint
                       key={s.id}
                       s={s}
@@ -1595,11 +1939,12 @@ export default function BacklogPage() {
                   <TableCell align="center" sx={{ minWidth: 100 }}>
                     Итого
                   </TableCell>
-                  <TableCell align="right" sx={{ width: 180 }}>
+                  <TableCell align="right" sx={{ width: 220 }}>
                     Действия
                   </TableCell>
                 </TableRow>
               </TableHead>
+
               <TableBody>
                 <SortableContext
                   items={orderedParticipantIds}
@@ -1607,14 +1952,15 @@ export default function BacklogPage() {
                 >
                   {participantRows.map((p) => {
                     const row = rows[p.id] || {};
-                    const rowSum = visibleSprints.reduce(
+                    const rowSum = effectiveSprints.reduce(
                       (acc, s) => acc + toInt(Number(row[s.id] || 0)),
                       0
                     );
                     const isLeader = leaderPid === p.id;
+
                     return (
                       <SortableParticipantRow key={p.id} participant={p}>
-                        {(dragHandle, style, isDragging, setNodeRef) => (
+                        {(dragProps, style, isDragging, setNodeRef) => (
                           <TableRow
                             ref={setNodeRef}
                             hover
@@ -1623,25 +1969,34 @@ export default function BacklogPage() {
                           >
                             <TableCell width={52} align="center">
                               <span
-                                {...dragHandle.attributes}
-                                {...dragHandle.listeners}
-                                style={{ display: "inline-flex", cursor: "grab" }}
+                                {...dragProps.attributes}
+                                {...dragProps.listeners}
+                                style={{
+                                  display: "inline-flex",
+                                  cursor: "grab",
+                                }}
                               >
                                 <IconButton size="small">
                                   <DragIndicator fontSize="small" />
                                 </IconButton>
                               </span>
                             </TableCell>
+
                             <TableCell
                               sx={{
                                 bgcolor: isLeader ? "warning.light" : undefined,
                               }}
                             >
-                              <Stack direction="row" spacing={1} alignItems="center">
+                              <Stack
+                                direction="row"
+                                spacing={1}
+                                alignItems="center"
+                              >
                                 <IconButton
                                   size="small"
                                   onClick={() =>
                                     updateField(task, {
+                                      ...(task as any),
                                       leaderId: leaderPid === p.id ? "" : p.id,
                                     })
                                   }
@@ -1657,65 +2012,86 @@ export default function BacklogPage() {
                               </Stack>
                             </TableCell>
 
-                            {visibleSprints.map((s) => (
-                              <TableCell key={s.id} align="center">
-                                <EditableNumberCell
-                                  value={Number(row[s.id] || 0)}
-                                  onChange={(v) => {
-                                    setAllocations((prev) => {
-                                      const copy = { ...prev };
-                                      if (!copy[task.id]) copy[task.id] = {};
-                                      if (!copy[task.id][p.id])
-                                        copy[task.id][p.id] = {};
-                                      copy[task.id][p.id][s.id] = v;
-                                      return copy;
-                                    });
-                                  }}
-                                  onCommit={() => {
-                                    stopEditor(
-                                      allocationEditorKey(p.id, s.id)
-                                    );
-                                    commitCell(task.id, p.id, s.id);
-                                  }}
-                                  isEditing={
-                                    activeEditors[allocationEditorKey(p.id, s.id)]
-                                  }
-                                  onStartEditing={() =>
-                                    startEditor(allocationEditorKey(p.id, s.id))
-                                  }
-                                  onStopEditing={() =>
-                                    stopEditor(allocationEditorKey(p.id, s.id))
-                                  }
-                                />
-                              </TableCell>
-                            ))}
+                            {effectiveSprints.map((s) => {
+                              const cellKey = `alloc:${task.id}:${p.id}:${s.id}`;
+                              return (
+                                <TableCell key={s.id} align="center">
+                                  <EditableNumberCell
+                                    value={Number(row[s.id] || 0)}
+                                    onChange={(v) => {
+                                      setAllocations((prev) => {
+                                        const copy = { ...prev };
+                                        if (!copy[task.id]) copy[task.id] = {};
+                                        if (!copy[task.id][p.id])
+                                          copy[task.id][p.id] = {};
+                                        copy[task.id][p.id][s.id] = v;
+                                        return copy;
+                                      });
+                                    }}
+                                    onCommit={() =>
+                                      commitCell(task.id, p.id, s.id)
+                                    }
+                                    isEditing={isFieldEditing(cellKey)}
+                                    onStartEditing={() =>
+                                      setFieldEditing(cellKey, true)
+                                    }
+                                    onStopEditing={() =>
+                                      setFieldEditing(cellKey, false)
+                                    }
+                                  />
+                                </TableCell>
+                              );
+                            })}
 
                             <TableCell align="center" sx={{ fontWeight: 700 }}>
                               {toInt(rowSum)}
                             </TableCell>
 
                             <TableCell align="right">
-                              <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                              <Stack
+                                direction="row"
+                                spacing={0.5}
+                                justifyContent="flex-end"
+                              >
                                 <Tooltip title="Сдвинуть влево (по всем спринтам)">
                                   <IconButton
                                     size="small"
-                                    onClick={() => shiftRow(task.id, p.id, "left")}
+                                    onClick={() =>
+                                      shiftRow(task.id, p.id, "left")
+                                    }
                                   >
                                     <ArrowBack fontSize="small" />
                                   </IconButton>
                                 </Tooltip>
+
                                 <Tooltip title="Сдвинуть вправо (по всем спринтам)">
                                   <IconButton
                                     size="small"
-                                    onClick={() => shiftRow(task.id, p.id, "right")}
+                                    onClick={() =>
+                                      shiftRow(task.id, p.id, "right")
+                                    }
                                   >
                                     <ArrowForward fontSize="small" />
                                   </IconButton>
                                 </Tooltip>
+
+                                <Tooltip title="Скопировать нагрузку в следующий квартал">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() =>
+                                      copyRowToNextQuarter(task.id, p.id)
+                                    }
+                                  >
+                                    <Add fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+
                                 <Tooltip title="Удалить участника из задачи">
                                   <IconButton
                                     size="small"
-                                    onClick={() => removeParticipantFromTask(task, p.id)}
+                                    onClick={() =>
+                                      removeParticipantFromTask(task, p.id)
+                                    }
                                   >
                                     <Delete fontSize="small" />
                                   </IconButton>
@@ -1729,79 +2105,55 @@ export default function BacklogPage() {
                   })}
                 </SortableContext>
 
-                {/* Добавление участника */}
                 <TableRow>
-                  <TableCell
-                    colSpan={visibleSprints.length + 3}
-                    align="center"
-                    sx={{ py: 0.5, borderStyle: "dashed", borderColor: "divider" }}
-                  >
-                    <Tooltip title="Добавить участника">
-                      <span>
-                        <IconButton
+                  <TableCell />
+                  <TableCell sx={{ py: 1 }}>
+                    <Autocomplete
+                      size="small"
+                      options={availableParticipants}
+                      getOptionLabel={(p) =>
+                        p ? `${p.fullName} (${p.role})` : ""
+                      }
+                      onChange={(_, value) => {
+                        if (value) addParticipantToTask(task, value.id);
+                      }}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
                           size="small"
-                          color="primary"
-                          disabled={!availableParticipants.length}
-                          onClick={(e) =>
-                            setParticipantPicker({
-                              taskId: task.id,
-                              anchorEl: e.currentTarget,
-                            })
-                          }
-                        >
-                          <Add />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                    <Popover
-                      open={pickerOpen}
-                      anchorEl={pickerAnchor}
-                      onClose={closeParticipantPicker}
-                      anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-                      transformOrigin={{ vertical: "top", horizontal: "center" }}
-                    >
-                      <Box sx={{ p: 2, width: 320, maxWidth: "90vw" }}>
-                        <Autocomplete
-                          size="small"
-                          autoHighlight
-                          options={availableParticipants}
-                          getOptionLabel={(p) =>
-                            p ? `${p.fullName} (${p.role})` : ""
-                          }
-                          renderInput={(params) => (
-                            <TextField
-                              {...params}
-                              label="Добавить участника"
-                              size="small"
-                            />
-                          )}
-                          onChange={(_, value) => {
-                            if (value) addParticipantToTask(task, value.id);
-                            closeParticipantPicker();
-                          }}
-                          noOptionsText="Свободных участников нет"
+                          label="Добавить участника"
+                          placeholder="Выберите участника"
                         />
-                      </Box>
-                    </Popover>
+                      )}
+                      noOptionsText="Свободных участников нет"
+                      disabled={availableParticipants.length === 0}
+                    />
                   </TableCell>
-                  <TableCell align="right">
-                    <Chip label="Автосумма" size="small" color="default" />
-                  </TableCell>
+                  {effectiveSprints.map((s) => (
+                    <TableCell key={s.id} />
+                  ))}
+                  <TableCell />
+                  <TableCell />
                 </TableRow>
 
-                {/* Итоги по спринтам */}
                 <TableRow>
                   <TableCell />
                   <TableCell sx={{ fontWeight: 700 }}>
                     Итого по спринтам
                   </TableCell>
-                  {visibleSprints.map((s) => (
-                    <TableCell key={s.id} align="center" sx={{ fontWeight: 700 }}>
+                  {effectiveSprints.map((s) => (
+                    <TableCell
+                      key={s.id}
+                      align="center"
+                      sx={{ fontWeight: 700 }}
+                    >
                       {toInt(sumBySprint[s.id])}
                     </TableCell>
                   ))}
                   <TableCell align="center" sx={{ fontWeight: 700 }}>
-                    {toInt(Object.values(sumBySprint).reduce((a, b) => a + b, 0))}
+                    {toInt(
+                      Object.values(sumBySprint).reduce((a, b) => a + b, 0)
+                    )}
                   </TableCell>
                   <TableCell />
                 </TableRow>
@@ -1821,34 +2173,62 @@ export default function BacklogPage() {
           spacing={1.5}
           alignItems={{ xs: "flex-start", md: "center" }}
           justifyContent="space-between"
+          flexWrap="wrap"
         >
-          <Typography variant="h6">Бэклог</Typography>
+          <Typography variant="h6" sx={{ flexShrink: 0 }}>
+            Бэклог
+          </Typography>
+
           <Stack
             direction="row"
             spacing={1}
+            alignItems="center"
             flexWrap="wrap"
-            justifyContent={{ xs: "flex-start", md: "flex-end" }}
-            rowGap={1}
           >
-            <Button
-              variant="outlined"
-              startIcon={<Download />}
-              onClick={handleExportExcel}
-              disabled={isExporting}
+            <FormControl
+              size="small"
+              sx={{ minWidth: 220 }}
+              error={addTaskQuarterError}
+              disabled={!quartersSorted.length}
             >
-              {isExporting ? "Экспорт..." : "Экспорт в Excel"}
-            </Button>
+              <InputLabel id="new-task-quarter-label">
+                Квартал задачи
+              </InputLabel>
+              <Select
+                labelId="new-task-quarter-label"
+                label="Квартал задачи"
+                value={newTaskQuarterId}
+                onChange={(e) => {
+                  setNewTaskQuarterId(String(e.target.value));
+                  setAddTaskQuarterError(false);
+                }}
+              >
+                {quartersSorted.map((q) => (
+                  <MenuItem key={q.id} value={q.id}>
+                    {q.name}
+                  </MenuItem>
+                ))}
+              </Select>
+              <FormHelperText>
+                {!quartersSorted.length
+                  ? "Сначала добавьте кварталы"
+                  : addTaskQuarterError
+                  ? "Выберите квартал"
+                  : ""}
+              </FormHelperText>
+            </FormControl>
+
             <Button
               variant="contained"
               startIcon={<Add />}
-              onClick={createTask}
+              onClick={handleConfirmAddTask}
+              disabled={!newTaskQuarterId}
             >
               Добавить задачу
             </Button>
           </Stack>
         </Stack>
 
-        {/* Панель фильтров */}
         <Paper variant="outlined" sx={{ p: 2 }}>
           <Box
             sx={{
@@ -1926,7 +2306,6 @@ export default function BacklogPage() {
           </Box>
         </Paper>
 
-        {/* Список задач */}
         <DndContext
           sensors={taskSensors}
           collisionDetection={closestCenter}
@@ -1944,6 +2323,7 @@ export default function BacklogPage() {
                   {(dragHandleProps) => renderTaskTable(t, dragHandleProps)}
                 </SortableTask>
               ))}
+
               {!deferredFilteredTasks.length && !isFetching && (
                 <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
                   <Typography color="text.secondary">
@@ -1953,6 +2333,7 @@ export default function BacklogPage() {
               )}
             </Stack>
           </SortableContext>
+
           <DragOverlay dropAnimation={null}>
             {activeTask ? (
               <Paper variant="outlined" sx={{ p: 1.5, maxWidth: 960 }}>
@@ -1971,11 +2352,14 @@ export default function BacklogPage() {
         </DndContext>
 
         <Divider />
+
         <Typography variant="caption" color="text.secondary">
-          Все поля редактируются по клику. Нагрузка задаётся в ячейках «участник ×
-          спринт». Статусы/лидер/порядок/копирование — локально на этой странице.
-          Выбор релиза (ПРОМ) автоматически определяет спринт и подсвечивает
-          соответствующую колонку.
+          Все поля редактируются по клику. Нагрузка задаётся в ячейках «участник
+          × спринт». Статусы/лидер/порядок/копирование — локально на этой
+          странице. Выбор релиза (ПРОМ) автоматически определяет спринт и
+          подсвечивает соответствующую колонку. Дополнительно можно сдвигать
+          нагрузку по всей сетке или копировать нагрузку участника в следующий
+          квартал одной кнопкой.
         </Typography>
       </Stack>
     </Paper>
