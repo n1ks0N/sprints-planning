@@ -260,7 +260,11 @@ export const api = createApi({
     }),
     updateTask: b.mutation<BacklogItem, Partial<BacklogItem> & { id: string }>(
       {
-        query: (body) => ({ url: "/tasks/update", method: "POST", body }),
+        query: ({ id, ...body }) => ({
+          url: `/tasks/${id}`,
+          method: "PATCH",
+          body,
+        }),
         invalidatesTags: (result, error, arg) => [
           { type: "Task" as const, id: arg.id },
           { type: "Task" as const, id: "LIST" as const },

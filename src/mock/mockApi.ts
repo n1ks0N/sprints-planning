@@ -348,11 +348,12 @@ export const mockBaseQuery: BaseQueryFn<
       tasks.push(item);
       return { data: clone(item) };
     }
-    if (url === "/tasks/update" && method === "POST") {
-      const { id, ...patch } = body || {};
+    if (url?.startsWith("/tasks/") && method === "PATCH") {
+      const id = url.split("/")[2];
       const idx = tasks.findIndex((t) => t.id === id);
       if (idx < 0)
         return { error: { status: 404, data: "Task not found" } as any };
+      const patch = body || {};
       tasks[idx] = {
         ...tasks[idx],
         ...patch,
