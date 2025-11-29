@@ -6,7 +6,10 @@ import com.sber.isu.sprints_planning.dto.request.QuarterCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.QuarterUpdateRequest;
 import com.sber.isu.sprints_planning.mapper.DtoMapper;
 import com.sber.isu.sprints_planning.model.QuarterEntity;
+import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.repository.QuarterRepository;
+import com.sber.isu.sprints_planning.repository.SprintRepository;
+import com.sber.isu.sprints_planning.repository.TaskRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import java.time.LocalDate;
@@ -19,9 +22,14 @@ import org.springframework.stereotype.Service;
 public class QuarterService {
 
     private final QuarterRepository quarterRepository;
+    private final SprintRepository sprintRepository;
+    private final TaskRepository taskRepository;
 
-    public QuarterService(QuarterRepository quarterRepository) {
+    public QuarterService(QuarterRepository quarterRepository, SprintRepository sprintRepository,
+        TaskRepository taskRepository) {
         this.quarterRepository = quarterRepository;
+        this.sprintRepository = sprintRepository;
+        this.taskRepository = taskRepository;
     }
 
     public List<QuarterDto> findAll() {
@@ -79,6 +87,13 @@ public class QuarterService {
     public QuarterDto delete(IdRequest request) {
         QuarterEntity entity = quarterRepository.findById(UUID.fromString(request.id()))
             .orElseThrow(() -> new EntityNotFoundException("Quarter not found"));
+        List<UUID> sprintIds = sprintRepository.findByQuarterIdOrderByOrderAsc(entity.getId())
+            .stream()
+            .map(SprintEntity::getId)
+            .toList();
+        if (!sprintIds.isEmpty()) {
+            taskRepository.clearReleaseForSprints(sprintIds);
+        }
         quarterRepository.delete(entity);
         return DtoMapper.toQuarterDto(entity);
     }

@@ -9,6 +9,7 @@ import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
+import com.sber.isu.sprints_planning.repository.TaskRepository;
 import com.sber.isu.sprints_planning.util.DateUtils;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,10 +24,13 @@ public class SprintService {
 
     private final SprintRepository sprintRepository;
     private final QuarterRepository quarterRepository;
+    private final TaskRepository taskRepository;
 
-    public SprintService(SprintRepository sprintRepository, QuarterRepository quarterRepository) {
+    public SprintService(
+        SprintRepository sprintRepository, QuarterRepository quarterRepository, TaskRepository taskRepository) {
         this.sprintRepository = sprintRepository;
         this.quarterRepository = quarterRepository;
+        this.taskRepository = taskRepository;
     }
 
     @Transactional(readOnly = true)
@@ -97,6 +101,7 @@ public class SprintService {
     public SprintDto delete(IdRequest request) {
         SprintEntity entity = sprintRepository.findById(UUID.fromString(request.id()))
             .orElseThrow(() -> new EntityNotFoundException("Sprint not found"));
+        taskRepository.clearReleaseForSprints(List.of(entity.getId()));
         sprintRepository.delete(entity);
         return DtoMapper.toSprintDto(entity);
     }
