@@ -109,11 +109,10 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   return true;
 }
 
-/** Упрощённый редактируемый текст без внешнего состояния фокуса */
+/** Упрощённый редактируемый текст: внешнее состояние обновляется только при завершении редактирования (blur) */
 type EditableTextProps = {
   value: string;
-  onChange: (v: string) => void;
-  onCommit?: () => void;
+  onCommit?: (v: string) => void;
   onBlur?: () => void;
   placeholder?: string;
   sx?: any;
@@ -129,7 +128,6 @@ type EditableTextProps = {
 
 const EditableText = React.memo(function EditableText({
   value,
-  onChange,
   onCommit,
   onBlur,
   placeholder,
@@ -147,22 +145,34 @@ const EditableText = React.memo(function EditableText({
   const editing = isEditing ?? internalEditing;
   const inputId = React.useId();
 
+  // Локальное состояние ввода, не дергающее родителя
+  const [inputValue, setInputValue] = React.useState<string>(value ?? "");
+
+  // Когда не редактируем — синхронизируемся с внешним value
+  React.useEffect(() => {
+    if (!editing) {
+      setInputValue(value ?? "");
+    }
+  }, [value, editing]);
+
   const handleStart = React.useCallback(() => {
     if (isEditing === undefined) {
       setInternalEditing(true);
     }
+    setInputValue(value ?? "");
     onStartEditing?.();
-  }, [isEditing, onStartEditing]);
+  }, [isEditing, onStartEditing, value]);
 
   const handleClose = React.useCallback(() => {
     if (!editing) return;
+    const finalValue = inputValue ?? "";
     if (isEditing === undefined) {
       setInternalEditing(false);
     }
     onStopEditing?.();
-    onCommit?.();
+    onCommit?.(finalValue);
     onBlur?.();
-  }, [editing, onBlur, onCommit, isEditing, onStopEditing]);
+  }, [editing, inputValue, isEditing, onCommit, onBlur, onStopEditing]);
 
   return (
     <>
@@ -198,16 +208,18 @@ const EditableText = React.memo(function EditableText({
           maxRows={maxRows}
           autoFocus
           placeholder={placeholder}
-          value={value ?? ""}
-          onChange={(e) => onChange(e.target.value)}
+          value={inputValue}
+          onChange={(e) => {
+            setInputValue(e.target.value);
+          }}
           onBlur={handleClose}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !multiline) {
-              handleClose();
+              (e.currentTarget as HTMLInputElement).blur();
               return;
             }
             if (e.key === "Escape") {
-              handleClose();
+              (e.currentTarget as HTMLInputElement).blur();
             }
           }}
           sx={{
@@ -423,7 +435,7 @@ export default function BacklogPage() {
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: participants = [] } = useGetParticipantsQuery();
   const allSprints = useGetSprintsQuery(undefined).data ?? [];
-  const { data: releases = [] } = useGetReleasesQuery?.() || { data: [] };
+  const { data: releases = [] } = useGetReleasesQuery();
   const quarterIdSet = React.useMemo(
     () => new Set(quarters.map((q) => q.id)),
     [quarters]
@@ -530,33 +542,6 @@ export default function BacklogPage() {
 
   const { data: allTasks = [], isFetching } = useGetTasksQuery(undefined);
 
-  const tasksSignature = React.useMemo(
-    () =>
-      allTasks
-        .map(
-          (task) =>
-            [
-              task.id,
-              (task as any).updatedAt || task.createdAt || "",
-              task.title || "",
-              (task as any).description || "",
-              (task as any).dod || "",
-              task.stream || "",
-              task.customer || "",
-              task.releaseDate || "",
-              task.releaseSprintId || "",
-            ].join("::")
-        )
-        .join("|"),
-    [allTasks]
-  );
-
-  const stableTasks = React.useMemo(() => allTasks, [tasksSignature]);
-  const stableTaskMap = React.useMemo(
-    () => new Map(stableTasks.map((task) => [task.id, task])),
-    [stableTasks]
-  );
-
   const [statusMap, setStatusMap] = React.useState<StatusMap>(() =>
     readLS<StatusMap>(LS_STATUS, {})
   );
@@ -572,12 +557,6 @@ export default function BacklogPage() {
   const [editingFields, setEditingFields] = React.useState<
     Record<string, boolean>
   >({});
-
-  const taskDraftsRef = React.useRef(taskDrafts);
-
-  React.useEffect(() => {
-    taskDraftsRef.current = taskDrafts;
-  }, [taskDrafts]);
 
   const [participantOrders, setParticipantOrders] = React.useState<
     Record<string, string[]>
@@ -636,14 +615,16 @@ export default function BacklogPage() {
   }, [quarterIdSet, selectedQuarterIds, defaultQuarterId]);
 
   React.useEffect(() => {
-    if (!stableTasks.length) return;
+    if (!allTasks.length) return;
 
-    // синхронизация кварталов задач (локальное хранение выбранных кварталов на задачу)
+    const taskMap = new Map(allTasks.map((t) => [t.id, t]));
+
+    // синхронизация кварталов задач
     setTaskQuartersMap((prev) => {
       const next = { ...prev };
       let changed = false;
 
-      for (const t of stableTasks) {
+      for (const t of allTasks) {
         if (!next[t.id] || next[t.id].length === 0) {
           const derived = deriveTaskQuarters(
             t,
@@ -658,7 +639,7 @@ export default function BacklogPage() {
       }
 
       Object.keys(next).forEach((id) => {
-        if (!stableTaskMap.has(id)) {
+        if (!taskMap.has(id)) {
           delete next[id];
           changed = true;
         }
@@ -669,24 +650,29 @@ export default function BacklogPage() {
 
     // зачистка/синхронизация черновиков текстовых полей
     setTaskDrafts((prev) => {
-      if (Object.keys(taskDraftsRef.current).length === 0) return prev;
+      const entries = Object.entries(prev);
+      if (!entries.length) return prev;
+
       let changed = false;
       const next: TaskDraftState = {};
 
-      for (const [taskId, draft] of Object.entries(taskDraftsRef.current)) {
-        const task = stableTaskMap.get(taskId);
+      for (const [taskId, draft] of entries) {
+        const task = taskMap.get(taskId);
         if (!task) {
           changed = true;
           continue;
         }
+
         const cleaned: Partial<Record<TaskDraftField, string>> = {};
         let hasDifference = false;
 
         for (const key of Object.keys(draft) as TaskDraftField[]) {
           const value = draft[key];
           if (value === undefined) continue;
+
           const originalRaw = (task as any)[key];
           const original = typeof originalRaw === "string" ? originalRaw : "";
+
           if (value !== original) {
             cleaned[key] = value;
             hasDifference = true;
@@ -707,7 +693,7 @@ export default function BacklogPage() {
 
       return changed ? next : prev;
     });
-  }, [stableTasks, stableTaskMap, allSprints, selectedQuarterIds, currentQ]);
+  }, [allTasks, allSprints, selectedQuarterIds, currentQ]);
 
   React.useEffect(() => {
     setAllocations((prev) => {
@@ -843,10 +829,7 @@ export default function BacklogPage() {
     (taskId: string, quartersIds: string[]) => {
       const unique = Array.from(new Set(quartersIds.filter(Boolean)));
       if (!unique.length) return;
-      setTaskQuartersMap((prev) => {
-        const next = { ...prev, [taskId]: unique };
-        return next;
-      });
+      setTaskQuartersMap((prev) => ({ ...prev, [taskId]: unique }));
     },
     []
   );
@@ -878,15 +861,16 @@ export default function BacklogPage() {
     []
   );
 
-  const promReleases: { id: string; promDate: string }[] = React.useMemo(() => {
-    if (!releases || !Array.isArray(releases)) return [];
-    return releases
-      .map((r: any) => ({
-        id: String(r.id ?? r.promId ?? r.promDate),
-        promDate: String(r.promDate || r.prom || r.date || ""),
-      }))
-      .filter((x) => x.promDate);
-  }, [releases]);
+  const promReleases: { id: string; promDate: string }[] = React.useMemo(
+    () =>
+      releases
+        .map((r: any) => ({
+          id: String(r.id ?? r.promId ?? r.promDate),
+          promDate: String(r.promDate || r.prom || r.date || ""),
+        }))
+        .filter((x) => x.promDate),
+    [releases]
+  );
 
   const releaseFilterOptions = React.useMemo(() => {
     const dates = Array.from(
@@ -936,9 +920,10 @@ export default function BacklogPage() {
 
   const handleReleaseFilterChange = React.useCallback(
     (value: string) => {
-      const normalized = value?.trim() || "all";
-      if (normalized === releaseSprintFilter) return;
-      dispatch(setBacklogFilters({ releaseSprintFilter: normalized }));
+      const normalized = (value || "").trim() || "all";
+      if (normalized !== releaseSprintFilter) {
+        dispatch(setBacklogFilters({ releaseSprintFilter: normalized }));
+      }
     },
     [dispatch, releaseSprintFilter]
   );
@@ -1089,15 +1074,23 @@ export default function BacklogPage() {
   );
 
   const commitTaskField = React.useCallback(
-    (task: BacklogItem, key: TaskDraftField) => {
-      const draftValue = taskDrafts[task.id]?.[key];
-      const value = draftValue ?? resolveTaskFieldValue(task, key);
+    (task: BacklogItem, key: TaskDraftField, directValue?: string) => {
+      const value =
+        directValue !== undefined
+          ? directValue
+          : (() => {
+              const draftValue = taskDrafts[task.id]?.[key];
+              if (draftValue !== undefined) return draftValue;
+              const originalRaw = (task as any)[key];
+              return typeof originalRaw === "string" ? originalRaw : "";
+            })();
+
       const originalRaw = (task as any)[key];
       const original = typeof originalRaw === "string" ? originalRaw : "";
       if (value === original) return;
       scheduleTaskUpdate(task.id, key, value);
     },
-    [resolveTaskFieldValue, scheduleTaskUpdate, taskDrafts]
+    [scheduleTaskUpdate, taskDrafts]
   );
 
   const detectSprintByDate = (iso?: string): string | undefined => {
@@ -1642,8 +1635,12 @@ export default function BacklogPage() {
     );
 
     const releaseOptions = releaseFilterOptions;
-    const allowedReleaseValues = new Set(releaseOptions.map((opt) => opt.value));
-    const normalizedReleaseValue = allowedReleaseValues.has(relISO) ? relISO : "";
+    const allowedReleaseValues = new Set(
+      releaseOptions.map((opt) => opt.value)
+    );
+    const normalizedReleaseValue = allowedReleaseValues.has(relISO)
+      ? relISO
+      : "";
 
     return (
       <Paper key={task.id} variant="outlined" sx={{ p: 2 }}>
@@ -1659,8 +1656,10 @@ export default function BacklogPage() {
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                 <MemoEditableText
                   value={resolveTaskFieldValue(task, "title")}
-                  onChange={(v) => stageTaskField(task, "title", v)}
-                  onCommit={() => commitTaskField(task, "title")}
+                  onCommit={(v) => {
+                    stageTaskField(task, "title", v);
+                    commitTaskField(task, "title", v);
+                  }}
                   placeholder="Название"
                   multiline
                   minRows={1}
@@ -1680,8 +1679,10 @@ export default function BacklogPage() {
                 Описание:{" "}
                 <MemoEditableText
                   value={resolveTaskFieldValue(task, "description")}
-                  onChange={(v) => stageTaskField(task, "description", v)}
-                  onCommit={() => commitTaskField(task, "description")}
+                  onCommit={(v) => {
+                    stageTaskField(task, "description", v);
+                    commitTaskField(task, "description", v);
+                  }}
                   placeholder="Описание"
                   multiline
                   minRows={2}
@@ -1701,8 +1702,10 @@ export default function BacklogPage() {
                 DOD:{" "}
                 <MemoEditableText
                   value={resolveTaskFieldValue(task, "dod")}
-                  onChange={(v) => stageTaskField(task, "dod", v)}
-                  onCommit={() => commitTaskField(task, "dod")}
+                  onCommit={(v) => {
+                    stageTaskField(task, "dod", v);
+                    commitTaskField(task, "dod", v);
+                  }}
                   placeholder="Definition of Done"
                   multiline
                   minRows={2}
