@@ -35,6 +35,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.function.Function;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -65,7 +66,8 @@ public class TaskService {
         } else {
             tasks = taskRepository.findAll();
         }
-        tasks.forEach(this::ensureLoadsForAllSprints);
+        List<SprintEntity> sprints = fetchAllSprints();
+        tasks.forEach(task -> ensureLoadsForSprints(task, sprints));
         return tasks.stream().map(DtoMapper::toTaskDto).toList();
     }
 
@@ -92,10 +94,12 @@ public class TaskService {
             entity.setLeaderParticipant(fetchParticipant(request.leaderId()));
         }
         TaskEntity saved = taskRepository.save(entity);
-        updateParticipants(saved, request.participantIds());
-        applyLoads(saved, request.loads());
-        applyAllocations(saved, request.allocations());
-        ensureLoadsForAllSprints(saved);
+        List<SprintEntity> sprints = fetchAllSprints();
+        Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
+        updateParticipants(saved, request.participantIds(), sprints);
+        applyLoads(saved, request.loads(), sprintIndex);
+        applyAllocations(saved, request.allocations(), sprintIndex);
+        ensureLoadsForSprints(saved, sprints);
         return DtoMapper.toTaskDto(saved);
     }
 
@@ -141,17 +145,19 @@ public class TaskService {
                 entity.setLeaderParticipant(fetchParticipant(request.leaderId()));
             }
         }
+        List<SprintEntity> sprints = fetchAllSprints();
+        Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
         if (request.participantIds() != null) {
-            updateParticipants(entity, request.participantIds());
+            updateParticipants(entity, request.participantIds(), sprints);
         }
         if (request.loads() != null) {
-            applyLoads(entity, request.loads());
+            applyLoads(entity, request.loads(), sprintIndex);
         }
         if (request.allocations() != null) {
-            applyAllocations(entity, request.allocations());
+            applyAllocations(entity, request.allocations(), sprintIndex);
         }
         entity.setUpdatedAt(LocalDate.now());
-        ensureLoadsForAllSprints(entity);
+        ensureLoadsForSprints(entity, sprints);
         return DtoMapper.toTaskDto(entity);
     }
 
@@ -185,7 +191,7 @@ public class TaskService {
         allocation.setDays(maxOrZero(request.days()));
         recalcLoad(task, sprint);
         task.setUpdatedAt(LocalDate.now());
-        ensureLoadsForAllSprints(task);
+        ensureLoadsForSprints(task, fetchAllSprints());
         return DtoMapper.toTaskDto(task);
     }
 
@@ -195,8 +201,9 @@ public class TaskService {
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         ParticipantEntity participant = participantRepository.findById(UUID.fromString(request.participantId()))
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
+        Map<UUID, SprintEntity> sprints = fetchSprintsForBulk(request.allocations());
         for (Map.Entry<String, BigDecimal> allocationEntry : request.allocations().entrySet()) {
-            SprintEntity sprint = fetchSprint(allocationEntry.getKey());
+            SprintEntity sprint = resolveSprint(sprints, allocationEntry.getKey());
             TaskAllocationId id = new TaskAllocationId(task.getId(), participant.getId(), sprint.getId());
             TaskAllocationEntity allocation = taskAllocationRepository.findById(id)
                 .orElseGet(() -> {
@@ -213,7 +220,7 @@ public class TaskService {
             recalcLoad(task, sprint);
         }
         task.setUpdatedAt(LocalDate.now());
-        ensureLoadsForAllSprints(task);
+        ensureLoadsForSprints(task, fetchAllSprints());
         return DtoMapper.toTaskDto(task);
     }
 
@@ -235,11 +242,11 @@ public class TaskService {
             });
         load.setDays(maxOrZero(request.days()));
         task.setUpdatedAt(LocalDate.now());
-        ensureLoadsForAllSprints(task);
+        ensureLoadsForSprints(task, fetchAllSprints());
         return DtoMapper.toTaskDto(task);
     }
 
-    private void updateParticipants(TaskEntity entity, List<String> participantIds) {
+    private void updateParticipants(TaskEntity entity, List<String> participantIds, List<SprintEntity> sprints) {
         List<UUID> orderedIds = participantIds != null
             ? participantIds.stream().filter(id -> id != null && !id.isBlank()).map(UUID::fromString).toList()
             : List.of();
@@ -272,16 +279,16 @@ public class TaskService {
 
         if (!removedIds.isEmpty()) {
             entity.getAllocations().removeIf(allocation -> removedIds.contains(allocation.getParticipant().getId()));
-            recalcAllLoads(entity);
+            recalcAllLoads(entity, sprints);
         }
     }
 
-    private void applyLoads(TaskEntity entity, Map<String, BigDecimal> loads) {
+    private void applyLoads(TaskEntity entity, Map<String, BigDecimal> loads, Map<UUID, SprintEntity> sprints) {
         if (loads == null) {
             return;
         }
         for (Map.Entry<String, BigDecimal> entry : loads.entrySet()) {
-            SprintEntity sprint = fetchSprint(entry.getKey());
+            SprintEntity sprint = resolveSprint(sprints, entry.getKey());
             TaskLoadId id = new TaskLoadId(entity.getId(), sprint.getId());
             TaskLoadEntity load = taskLoadRepository.findById(id)
                 .orElseGet(() -> {
@@ -297,7 +304,8 @@ public class TaskService {
         }
     }
 
-    private void applyAllocations(TaskEntity entity, Map<String, Map<String, BigDecimal>> allocations) {
+    private void applyAllocations(TaskEntity entity, Map<String, Map<String, BigDecimal>> allocations,
+        Map<UUID, SprintEntity> sprints) {
         if (allocations == null) {
             return;
         }
@@ -308,7 +316,7 @@ public class TaskService {
             ParticipantEntity participant = participantRepository.findById(UUID.fromString(participantEntry.getKey()))
                 .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
             for (Map.Entry<String, BigDecimal> sprintEntry : participantEntry.getValue().entrySet()) {
-                SprintEntity sprint = fetchSprint(sprintEntry.getKey());
+                SprintEntity sprint = resolveSprint(sprints, sprintEntry.getKey());
                 TaskAllocationId id = new TaskAllocationId(entity.getId(), participant.getId(), sprint.getId());
                 TaskAllocationEntity allocation = taskAllocationRepository.findById(id)
                     .orElseGet(() -> {
@@ -327,8 +335,7 @@ public class TaskService {
         }
     }
 
-    private void ensureLoadsForAllSprints(TaskEntity entity) {
-        List<SprintEntity> sprints = sprintRepository.findAll();
+    private void ensureLoadsForSprints(TaskEntity entity, List<SprintEntity> sprints) {
         Set<UUID> existing = entity.getLoads().stream()
             .map(load -> load.getSprint().getId())
             .collect(Collectors.toSet());
@@ -371,8 +378,7 @@ public class TaskService {
         load.setDays(total);
     }
 
-    private void recalcAllLoads(TaskEntity task) {
-        List<SprintEntity> sprints = sprintRepository.findAll();
+    private void recalcAllLoads(TaskEntity task, List<SprintEntity> sprints) {
         for (SprintEntity sprint : sprints) {
             recalcLoad(task, sprint);
         }
@@ -387,9 +393,55 @@ public class TaskService {
             .orElseThrow(() -> new EntityNotFoundException("Sprint not found"));
     }
 
+    private Map<UUID, SprintEntity> fetchSprintsForBulk(Map<String, BigDecimal> loads) {
+        if (loads == null || loads.isEmpty()) {
+            return Map.of();
+        }
+        Set<UUID> sprintIds = loads.keySet().stream()
+            .filter(Objects::nonNull)
+            .filter(id -> !id.isBlank())
+            .map(UUID::fromString)
+            .collect(Collectors.toSet());
+        return fetchSprintsByIds(sprintIds);
+    }
+
+    private Map<UUID, SprintEntity> fetchSprintsByIds(Set<UUID> sprintIds) {
+        if (sprintIds.isEmpty()) {
+            return Map.of();
+        }
+        List<SprintEntity> sprints = sprintRepository.findAllById(sprintIds);
+        if (sprints.size() != sprintIds.size()) {
+            throw new EntityNotFoundException("Sprint not found");
+        }
+        return indexSprints(sprints);
+    }
+
     private ParticipantEntity fetchParticipant(String participantId) {
         return participantRepository.findById(UUID.fromString(participantId))
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
+    }
+
+    private List<SprintEntity> fetchAllSprints() {
+        return sprintRepository.findAll();
+    }
+
+    private Map<UUID, SprintEntity> indexSprints(List<SprintEntity> sprints) {
+        return sprints.stream().collect(Collectors.toMap(SprintEntity::getId, Function.identity()));
+    }
+
+    private SprintEntity resolveSprint(Map<UUID, SprintEntity> sprintIndex, String sprintId) {
+        if (sprintIndex.isEmpty()) {
+            return fetchSprint(sprintId);
+        }
+        return resolveSprint(sprintIndex, UUID.fromString(sprintId));
+    }
+
+    private SprintEntity resolveSprint(Map<UUID, SprintEntity> sprintIndex, UUID sprintId) {
+        SprintEntity sprint = sprintIndex.get(sprintId);
+        if (sprint == null) {
+            throw new EntityNotFoundException("Sprint not found");
+        }
+        return sprint;
     }
 
     private Map<UUID, String> convertNotes(Map<String, String> notes) {
