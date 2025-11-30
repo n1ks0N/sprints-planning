@@ -1438,8 +1438,8 @@ export default function BacklogPage() {
   );
 
   const activeTask = React.useMemo(
-    () => deferredFilteredTasks.find((t) => t.id === activeTaskId) || null,
-    [activeTaskId, deferredFilteredTasks]
+    () => filteredTasks.find((t) => t.id === activeTaskId) || null,
+    [activeTaskId, filteredTasks]
   );
 
   const handleTaskDragStart = React.useCallback((event: DragStartEvent) => {
@@ -1456,7 +1456,7 @@ export default function BacklogPage() {
       setActiveTaskId(null);
       if (!over || active.id === over.id) return;
 
-      const currentIds = deferredFilteredTasks.map((t) => t.id);
+      const currentIds = filteredTasks.map((t) => t.id);
       const oldIndex = currentIds.indexOf(String(active.id));
       const newIndex = currentIds.indexOf(String(over.id));
       if (oldIndex < 0 || newIndex < 0) return;
@@ -1471,7 +1471,7 @@ export default function BacklogPage() {
       });
       applyTaskOrderOptimistic(reordered);
     },
-    [applyTaskOrderOptimistic, deferredFilteredTasks]
+    [applyTaskOrderOptimistic, filteredTasks]
   );
 
   const HeaderSprint = ({
