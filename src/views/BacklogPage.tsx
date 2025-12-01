@@ -109,7 +109,9 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   return true;
 }
 
-/** Упрощённый редактируемый текст: внешнее состояние обновляется только при завершении редактирования (blur) */
+/** Упрощённый редактируемый текст: внешнее состояние обновляется только при завершении редактирования (blur),
+ *  ввод хранится локально, чтобы не дергать родителя и не сбивать курсор.
+ */
 type EditableTextProps = {
   value: string;
   onCommit?: (v: string) => void;
@@ -145,34 +147,56 @@ const EditableText = React.memo(function EditableText({
   const editing = isEditing ?? internalEditing;
   const inputId = React.useId();
 
-  // Локальное состояние ввода, не дергающее родителя
+  // То, что реально показываем снаружи
+  const [displayValue, setDisplayValue] = React.useState<string>(value ?? "");
+  // То, что печатает пользователь в режиме редактирования
   const [inputValue, setInputValue] = React.useState<string>(value ?? "");
 
-  // Когда не редактируем — синхронизируемся с внешним value
+  // Подтягиваем внешнее value, когда оно изменилось (например, после ответа сервера),
+  // но только если сейчас не редактируем.
   React.useEffect(() => {
     if (!editing) {
-      setInputValue(value ?? "");
+      const next = value ?? "";
+      setDisplayValue(next);
+      setInputValue(next);
     }
-  }, [value, editing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
 
   const handleStart = React.useCallback(() => {
     if (isEditing === undefined) {
       setInternalEditing(true);
     }
-    setInputValue(value ?? "");
+    setInputValue(displayValue ?? "");
     onStartEditing?.();
-  }, [isEditing, onStartEditing, value]);
+  }, [isEditing, onStartEditing, displayValue]);
 
   const handleClose = React.useCallback(() => {
     if (!editing) return;
     const finalValue = inputValue ?? "";
+
     if (isEditing === undefined) {
       setInternalEditing(false);
     }
+
     onStopEditing?.();
+
+    // Обновляем локально отображаемое значение сразу, чтобы не ждать ответа сервера
+    if (finalValue !== displayValue) {
+      setDisplayValue(finalValue);
+    }
+
     onCommit?.(finalValue);
     onBlur?.();
-  }, [editing, inputValue, isEditing, onCommit, onBlur, onStopEditing]);
+  }, [
+    editing,
+    inputValue,
+    isEditing,
+    onCommit,
+    onBlur,
+    onStopEditing,
+    displayValue,
+  ]);
 
   return (
     <>
@@ -189,8 +213,8 @@ const EditableText = React.memo(function EditableText({
           onClick={handleStart}
           title="Нажмите, чтобы редактировать"
         >
-          {value?.trim() ? (
-            value
+          {displayValue?.trim() ? (
+            displayValue
           ) : (
             <Typography
               component="span"
@@ -244,55 +268,49 @@ const EditableText = React.memo(function EditableText({
 });
 const MemoEditableText = EditableText;
 
-/** Упрощённая редактируемая числовая ячейка */
+/** Редактируемая числовая ячейка: изменяется только локально, коммит в родителя и на сервер — по blur */
 type EditableNumberCellProps = {
   value: number;
-  onChange: (next: number) => void;
-  onCommit?: () => void;
+  onCommit: (next: number) => void;
   title?: string;
-  isEditing?: boolean;
-  onStartEditing?: () => void;
-  onStopEditing?: () => void;
 };
 
 function EditableNumberCell({
   value,
-  onChange,
   onCommit,
   title,
-  isEditing,
-  onStartEditing,
-  onStopEditing,
 }: EditableNumberCellProps) {
-  const [internalEditing, setInternalEditing] = React.useState(false);
-  const editing = isEditing ?? internalEditing;
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState<number>(
+    Number.isFinite(value) ? value : 0
+  );
   const inputRef = React.useRef<HTMLInputElement | null>(null);
-  const prevEditingRef = React.useRef(editing);
   const inputId = React.useId();
 
+  // Подтягиваем внешнее значение, когда не редактируем
   React.useEffect(() => {
-    if (editing && !prevEditingRef.current && inputRef.current) {
+    if (!editing) {
+      setDraft(Number.isFinite(value) ? value : 0);
+    }
+  }, [value, editing]);
+
+  // Фокус при входе в режим редактирования
+  React.useEffect(() => {
+    if (editing && inputRef.current) {
       inputRef.current.focus();
       inputRef.current.select();
     }
-    prevEditingRef.current = editing;
   }, [editing]);
 
-  const handleStart = React.useCallback(() => {
-    if (isEditing === undefined) {
-      setInternalEditing(true);
-    }
-    onStartEditing?.();
-  }, [isEditing, onStartEditing]);
-
-  const handleClose = React.useCallback(() => {
+  const finish = React.useCallback(() => {
     if (!editing) return;
-    if (isEditing === undefined) {
-      setInternalEditing(false);
+    setEditing(false);
+    const normalized = Number.isFinite(draft) ? draft : 0;
+    const current = Number.isFinite(value) ? value : 0;
+    if (normalized !== current) {
+      onCommit(normalized);
     }
-    onStopEditing?.();
-    onCommit?.();
-  }, [editing, isEditing, onCommit, onStopEditing]);
+  }, [editing, draft, value, onCommit]);
 
   if (!editing) {
     return (
@@ -303,7 +321,7 @@ function EditableNumberCell({
           cursor: "pointer",
         }}
         title={title || "Клик для редактирования"}
-        onClick={handleStart}
+        onClick={() => setEditing(true)}
       >
         <Typography component="span">{toInt(value)}</Typography>
       </Box>
@@ -315,12 +333,12 @@ function EditableNumberCell({
       inputRef={inputRef}
       type="number"
       autoFocus
-      value={Number.isFinite(value) ? value : 0}
+      value={draft}
       onChange={(e) => {
         const v = Number(e.target.value);
-        onChange(Number.isFinite(v) ? v : 0);
+        setDraft(Number.isFinite(v) ? v : 0);
       }}
-      onBlur={handleClose}
+      onBlur={finish}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === "Escape") {
           (e.currentTarget as HTMLInputElement).blur();
@@ -343,6 +361,75 @@ function EditableNumberCell({
     />
   );
 }
+
+/** Поле для "Стрим" / "Заказчик" поверх MUI Autocomplete:
+ *  ввод локальный, обновление родителя и сервера — только по blur.
+ */
+type EditableSelectTextProps = {
+  label: string;
+  value: string;
+  options: string[];
+  onCommit?: (v: string) => void;
+  sx?: any;
+};
+
+const EditableSelectText = React.memo(function EditableSelectText({
+  label,
+  value,
+  options,
+  onCommit,
+  sx,
+}: EditableSelectTextProps) {
+  const [innerValue, setInnerValue] = React.useState<string>(value ?? "");
+  const [isDirty, setIsDirty] = React.useState(false);
+
+  // Синхронизируемся с внешним значением, но не трогаем, пока пользователь редактирует
+  React.useEffect(() => {
+    if (!isDirty) {
+      setInnerValue(value ?? "");
+    }
+  }, [value, isDirty]);
+
+  const handleOptionChange = React.useCallback(
+    (_: any, newValue: string | null) => {
+      setIsDirty(true);
+      setInnerValue(newValue ?? "");
+    },
+    []
+  );
+
+  const handleInputChange = React.useCallback(
+    (_: any, newInputValue: string) => {
+      setIsDirty(true);
+      setInnerValue(newInputValue ?? "");
+    },
+    []
+  );
+
+  const handleBlur = React.useCallback(() => {
+    setIsDirty(false);
+    const finalValue = innerValue ?? "";
+    if (finalValue !== (value ?? "")) {
+      onCommit?.(finalValue);
+    }
+  }, [innerValue, value, onCommit]);
+
+  return (
+    <Autocomplete
+      size="small"
+      freeSolo
+      options={options}
+      value={innerValue}
+      onChange={handleOptionChange}
+      onInputChange={handleInputChange}
+      onBlur={handleBlur}
+      renderInput={(params) => (
+        <TextField {...params} label={label} size="small" />
+      )}
+      sx={sx}
+    />
+  );
+});
 
 const LS_STATUS = "backlog.statusMap";
 const LS_TASK_ORDER = "backlog.orderMap";
@@ -372,8 +459,8 @@ const PRIORITY_VALUES: readonly number[] = [1, 2, 3];
 type StatusMap = Record<string, TaskStatus>;
 type OrderMap = Record<string, number>;
 
+// Поля, которые мы можем обновлять пачкой в задаче
 type TaskDraftField = "title" | "description" | "dod" | "customer" | "stream";
-type TaskDraftState = Record<string, Partial<Record<TaskDraftField, string>>>;
 
 type DragHandleProps = {
   listeners: any;
@@ -553,10 +640,6 @@ export default function BacklogPage() {
   >(() => readLS<Record<string, string[]>>(LS_TASK_QUARTERS, {}));
 
   const [allocations, setAllocations] = React.useState<Allocations>({});
-  const [taskDrafts, setTaskDrafts] = React.useState<TaskDraftState>({});
-  const [editingFields, setEditingFields] = React.useState<
-    Record<string, boolean>
-  >({});
 
   const [participantOrders, setParticipantOrders] = React.useState<
     Record<string, string[]>
@@ -570,22 +653,6 @@ export default function BacklogPage() {
   const taskUpdateTimers = React.useRef<
     Map<string, ReturnType<typeof setTimeout>>
   >(new Map());
-
-  const setFieldEditing = React.useCallback((key: string, on: boolean) => {
-    setEditingFields((prev) => {
-      const alreadyOn = !!prev[key];
-      if (alreadyOn === on) return prev;
-      const next = { ...prev };
-      if (on) next[key] = true;
-      else delete next[key];
-      return next;
-    });
-  }, []);
-
-  const isFieldEditing = React.useCallback(
-    (key: string) => !!editingFields[key],
-    [editingFields]
-  );
 
   React.useEffect(() => {
     const validSelected = selectedQuarterIds.filter((id) =>
@@ -617,8 +684,6 @@ export default function BacklogPage() {
   React.useEffect(() => {
     if (!allTasks.length) return;
 
-    const taskMap = new Map(allTasks.map((t) => [t.id, t]));
-
     // синхронизация кварталов задач
     setTaskQuartersMap((prev) => {
       const next = { ...prev };
@@ -639,57 +704,11 @@ export default function BacklogPage() {
       }
 
       Object.keys(next).forEach((id) => {
-        if (!taskMap.has(id)) {
+        if (!allTasks.find((t) => t.id === id)) {
           delete next[id];
           changed = true;
         }
       });
-
-      return changed ? next : prev;
-    });
-
-    // зачистка/синхронизация черновиков текстовых полей
-    setTaskDrafts((prev) => {
-      const entries = Object.entries(prev);
-      if (!entries.length) return prev;
-
-      let changed = false;
-      const next: TaskDraftState = {};
-
-      for (const [taskId, draft] of entries) {
-        const task = taskMap.get(taskId);
-        if (!task) {
-          changed = true;
-          continue;
-        }
-
-        const cleaned: Partial<Record<TaskDraftField, string>> = {};
-        let hasDifference = false;
-
-        for (const key of Object.keys(draft) as TaskDraftField[]) {
-          const value = draft[key];
-          if (value === undefined) continue;
-
-          const originalRaw = (task as any)[key];
-          const original = typeof originalRaw === "string" ? originalRaw : "";
-
-          if (value !== original) {
-            cleaned[key] = value;
-            hasDifference = true;
-          } else {
-            changed = true;
-          }
-        }
-
-        if (hasDifference) {
-          next[taskId] = cleaned;
-          if (Object.keys(cleaned).length !== Object.keys(draft).length) {
-            changed = true;
-          }
-        } else if (draft && Object.keys(draft).length) {
-          changed = true;
-        }
-      }
 
       return changed ? next : prev;
     });
@@ -740,49 +759,6 @@ export default function BacklogPage() {
       return next;
     });
   }, [allTasks]);
-
-  React.useEffect(() => {
-    const taskIds = new Set(allTasks.map((t) => t.id));
-    const participantIds = new Set(participants.map((p) => p.id));
-    const sprintIds = new Set(allSprints.map((s) => s.id));
-
-    setEditingFields((prev) => {
-      let changed = false;
-      const next: Record<string, boolean> = {};
-      for (const key of Object.keys(prev)) {
-        if (key.startsWith("alloc:")) {
-          const [, taskId, pid, sid] = key.split(":");
-          if (taskId && pid && sid) {
-            if (
-              taskIds.has(taskId) &&
-              participantIds.has(pid) &&
-              sprintIds.has(sid)
-            ) {
-              next[key] = true;
-            } else {
-              changed = true;
-            }
-          }
-          continue;
-        }
-        if (
-          key.startsWith("title:") ||
-          key.startsWith("desc:") ||
-          key.startsWith("dod:")
-        ) {
-          const [, taskId] = key.split(":");
-          if (taskId && taskIds.has(taskId)) {
-            next[key] = true;
-          } else {
-            changed = true;
-          }
-          continue;
-        }
-        next[key] = true;
-      }
-      return changed ? next : prev;
-    });
-  }, [allTasks, allSprints, participants]);
 
   React.useEffect(() => writeLS(LS_STATUS, statusMap), [statusMap]);
   React.useEffect(() => writeLS(LS_TASK_ORDER, orderMap), [orderMap]);
@@ -987,28 +963,13 @@ export default function BacklogPage() {
     getTaskQuarters,
   ]);
 
-  const deferredFilteredTasks = React.useDeferredValue(filteredTasks);
-  const isTasksPending = deferredFilteredTasks !== filteredTasks;
-  const isUiPending = isQuarterPending || isTasksPending;
+  const isUiPending = isQuarterPending;
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
   const [deleteTask] = useDeleteTaskMutation();
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
-
-  const cancelTaskUpdate = React.useCallback(
-    (taskId: string, field: TaskDraftField) => {
-      const key = `${taskId}:${field}`;
-      const timers = taskUpdateTimers.current;
-      const existing = timers.get(key);
-      if (existing) {
-        clearTimeout(existing);
-        timers.delete(key);
-      }
-    },
-    []
-  );
 
   const scheduleTaskUpdate = React.useCallback(
     (taskId: string, field: TaskDraftField, value: string) => {
@@ -1029,68 +990,6 @@ export default function BacklogPage() {
       timers.set(key, timeout);
     },
     [updateTask]
-  );
-
-  const stageTaskField = React.useCallback(
-    (task: BacklogItem, key: TaskDraftField, value: string) => {
-      const sanitized = value ?? "";
-      const originalRaw = (task as any)[key];
-      const original = typeof originalRaw === "string" ? originalRaw : "";
-
-      setTaskDrafts((prev) => {
-        const next = { ...prev } as TaskDraftState;
-
-        if (sanitized === original) {
-          cancelTaskUpdate(task.id, key);
-          const current = next[task.id];
-          if (!current || current[key] === undefined) {
-            return prev;
-          }
-          const rest = { ...current };
-          delete rest[key];
-          if (Object.keys(rest).length === 0) {
-            delete next[task.id];
-          } else {
-            next[task.id] = rest;
-          }
-          return next;
-        }
-
-        next[task.id] = { ...(next[task.id] ?? {}), [key]: sanitized };
-        return next;
-      });
-    },
-    [cancelTaskUpdate]
-  );
-
-  const resolveTaskFieldValue = React.useCallback(
-    (task: BacklogItem, key: TaskDraftField) => {
-      const draftValue = taskDrafts[task.id]?.[key];
-      if (draftValue !== undefined) return draftValue;
-      const originalRaw = (task as any)[key];
-      return typeof originalRaw === "string" ? originalRaw : "";
-    },
-    [taskDrafts]
-  );
-
-  const commitTaskField = React.useCallback(
-    (task: BacklogItem, key: TaskDraftField, directValue?: string) => {
-      const value =
-        directValue !== undefined
-          ? directValue
-          : (() => {
-              const draftValue = taskDrafts[task.id]?.[key];
-              if (draftValue !== undefined) return draftValue;
-              const originalRaw = (task as any)[key];
-              return typeof originalRaw === "string" ? originalRaw : "";
-            })();
-
-      const originalRaw = (task as any)[key];
-      const original = typeof originalRaw === "string" ? originalRaw : "";
-      if (value === original) return;
-      scheduleTaskUpdate(task.id, key, value);
-    },
-    [scheduleTaskUpdate, taskDrafts]
   );
 
   const detectSprintByDate = (iso?: string): string | undefined => {
@@ -1135,12 +1034,12 @@ export default function BacklogPage() {
 
   const duplicateTask = async (task: BacklogItem) => {
     const copy = await addTask({
-      title: `${task.title} (копия)`,
+      title: `${(task as any).title || ""} (копия)`,
       description: (task as any).description,
-      dod: task.dod,
+      dod: (task as any).dod,
       priority: task.priority,
-      customer: task.customer,
-      stream: task.stream,
+      customer: (task as any).customer,
+      stream: (task as any).stream,
       participantIds: task.participantIds.slice(),
       releaseDate: task.releaseDate,
       releaseSprintId: task.releaseSprintId,
@@ -1179,7 +1078,7 @@ export default function BacklogPage() {
   };
 
   const removeTask = async (t: BacklogItem) => {
-    if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
+    if (!window.confirm(`Удалить задачу «${(t as any).title || ""}»?`)) return;
     await deleteTask({ id: t.id }).unwrap();
 
     setAllocations((prev) => {
@@ -1206,15 +1105,15 @@ export default function BacklogPage() {
   const commitCell = async (
     taskId: string,
     participantId: string,
-    sprintId: string
+    sprintId: string,
+    value: number
   ) => {
-    const v = allocations[taskId]?.[participantId]?.[sprintId] ?? 0;
     try {
       await upsertTaskAllocation({
         taskId,
         participantId,
         sprintId,
-        days: toInt(Number(v) || 0),
+        days: toInt(Number(value) || 0),
       }).unwrap();
     } catch (e) {
       console.error("Failed to save allocation", e);
@@ -1420,8 +1319,8 @@ export default function BacklogPage() {
   );
 
   const activeTask = React.useMemo(
-    () => deferredFilteredTasks.find((t) => t.id === activeTaskId) || null,
-    [activeTaskId, deferredFilteredTasks]
+    () => filteredTasks.find((t) => t.id === activeTaskId) || null,
+    [activeTaskId, filteredTasks]
   );
 
   const handleTaskDragStart = React.useCallback((event: DragStartEvent) => {
@@ -1438,7 +1337,7 @@ export default function BacklogPage() {
       setActiveTaskId(null);
       if (!over || active.id === over.id) return;
 
-      const currentIds = deferredFilteredTasks.map((t) => t.id);
+      const currentIds = filteredTasks.map((t) => t.id);
       const oldIndex = currentIds.indexOf(String(active.id));
       const newIndex = currentIds.indexOf(String(over.id));
       if (oldIndex < 0 || newIndex < 0) return;
@@ -1453,7 +1352,7 @@ export default function BacklogPage() {
       });
       applyTaskOrderOptimistic(reordered);
     },
-    [applyTaskOrderOptimistic, deferredFilteredTasks]
+    [applyTaskOrderOptimistic, filteredTasks]
   );
 
   const HeaderSprint = ({
@@ -1577,9 +1476,11 @@ export default function BacklogPage() {
     const leaderPid = (task as any).leaderId || undefined;
     const relISO = task.releaseDate || "";
     const relSprintId = task.releaseSprintId || detectSprintByDate(relISO);
-    const titleKey = `title:${task.id}`;
-    const descKey = `desc:${task.id}`;
-    const dodKey = `dod:${task.id}`;
+
+    const getFieldValue = (field: TaskDraftField): string => {
+      const raw = (task as any)[field];
+      return typeof raw === "string" ? raw : "";
+    };
 
     const clampedTextSx = {
       display: "-webkit-box",
@@ -1592,13 +1493,13 @@ export default function BacklogPage() {
     const tooltipContent = (
       <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
         <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-          Заголовок: {resolveTaskFieldValue(task, "title") || "—"}
+          Заголовок: {getFieldValue("title") || "—"}
         </Typography>
         <Typography variant="body2">
-          Описание: {resolveTaskFieldValue(task, "description") || "—"}
+          Описание: {getFieldValue("description") || "—"}
         </Typography>
         <Typography variant="body2">
-          DOD: {resolveTaskFieldValue(task, "dod") || "—"}
+          DOD: {getFieldValue("dod") || "—"}
         </Typography>
       </Stack>
     );
@@ -1655,10 +1556,12 @@ export default function BacklogPage() {
             <Box sx={{ flex: 1, minWidth: 260, cursor: "help" }}>
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                 <MemoEditableText
-                  value={resolveTaskFieldValue(task, "title")}
+                  value={getFieldValue("title")}
                   onCommit={(v) => {
-                    stageTaskField(task, "title", v);
-                    commitTaskField(task, "title", v);
+                    const next = v ?? "";
+                    if (next !== getFieldValue("title")) {
+                      scheduleTaskUpdate(task.id, "title", next);
+                    }
                   }}
                   placeholder="Название"
                   multiline
@@ -1666,9 +1569,6 @@ export default function BacklogPage() {
                   maxRows={4}
                   displaySx={clampedTextSx}
                   inputSx={{ width: "100%" }}
-                  isEditing={isFieldEditing(titleKey)}
-                  onStartEditing={() => setFieldEditing(titleKey, true)}
-                  onStopEditing={() => setFieldEditing(titleKey, false)}
                 />
               </Typography>
 
@@ -1678,10 +1578,12 @@ export default function BacklogPage() {
               >
                 Описание:{" "}
                 <MemoEditableText
-                  value={resolveTaskFieldValue(task, "description")}
+                  value={getFieldValue("description")}
                   onCommit={(v) => {
-                    stageTaskField(task, "description", v);
-                    commitTaskField(task, "description", v);
+                    const next = v ?? "";
+                    if (next !== getFieldValue("description")) {
+                      scheduleTaskUpdate(task.id, "description", next);
+                    }
                   }}
                   placeholder="Описание"
                   multiline
@@ -1689,9 +1591,6 @@ export default function BacklogPage() {
                   maxRows={6}
                   displaySx={clampedTextSx}
                   inputSx={{ width: "100%" }}
-                  isEditing={isFieldEditing(descKey)}
-                  onStartEditing={() => setFieldEditing(descKey, true)}
-                  onStopEditing={() => setFieldEditing(descKey, false)}
                 />
               </Typography>
 
@@ -1701,10 +1600,12 @@ export default function BacklogPage() {
               >
                 DOD:{" "}
                 <MemoEditableText
-                  value={resolveTaskFieldValue(task, "dod")}
+                  value={getFieldValue("dod")}
                   onCommit={(v) => {
-                    stageTaskField(task, "dod", v);
-                    commitTaskField(task, "dod", v);
+                    const next = v ?? "";
+                    if (next !== getFieldValue("dod")) {
+                      scheduleTaskUpdate(task.id, "dod", next);
+                    }
                   }}
                   placeholder="Definition of Done"
                   multiline
@@ -1712,9 +1613,6 @@ export default function BacklogPage() {
                   maxRows={6}
                   displaySx={clampedTextSx}
                   inputSx={{ width: "100%" }}
-                  isEditing={isFieldEditing(dodKey)}
-                  onStartEditing={() => setFieldEditing(dodKey, true)}
-                  onStopEditing={() => setFieldEditing(dodKey, false)}
                 />
               </Typography>
             </Box>
@@ -1794,31 +1692,29 @@ export default function BacklogPage() {
               sx={{ minWidth: 200, maxWidth: 240, flexShrink: 0 }}
             />
 
-            <Autocomplete
-              size="small"
-              freeSolo
+            <EditableSelectText
+              label="Заказчик"
+              value={getFieldValue("customer")}
               options={customerOptions}
-              value={resolveTaskFieldValue(task, "customer")}
-              onInputChange={(_, v) =>
-                stageTaskField(task, "customer", v || "")
-              }
-              onBlur={() => commitTaskField(task, "customer")}
-              renderInput={(params) => (
-                <TextField {...params} label="Заказчик" size="small" />
-              )}
+              onCommit={(next) => {
+                const normalized = (next ?? "").trim();
+                if (normalized !== getFieldValue("customer")) {
+                  scheduleTaskUpdate(task.id, "customer", normalized);
+                }
+              }}
               sx={{ minWidth: 180, maxWidth: 240, flexShrink: 0 }}
             />
 
-            <Autocomplete
-              size="small"
-              freeSolo
+            <EditableSelectText
+              label="Стрим"
+              value={getFieldValue("stream")}
               options={streamOptions}
-              value={resolveTaskFieldValue(task, "stream")}
-              onInputChange={(_, v) => stageTaskField(task, "stream", v || "")}
-              onBlur={() => commitTaskField(task, "stream")}
-              renderInput={(params) => (
-                <TextField {...params} label="Стрим" size="small" />
-              )}
+              onCommit={(next) => {
+                const normalized = (next ?? "").trim();
+                if (normalized !== getFieldValue("stream")) {
+                  scheduleTaskUpdate(task.id, "stream", normalized);
+                }
+              }}
               sx={{ minWidth: 180, maxWidth: 220, flexShrink: 0 }}
             />
 
@@ -1994,36 +1890,26 @@ export default function BacklogPage() {
                               </Stack>
                             </TableCell>
 
-                            {effectiveSprints.map((s) => {
-                              const cellKey = `alloc:${task.id}:${p.id}:${s.id}`;
-                              return (
-                                <TableCell key={s.id} align="center">
-                                  <EditableNumberCell
-                                    value={Number(row[s.id] || 0)}
-                                    onChange={(v) => {
-                                      setAllocations((prev) => {
-                                        const copy = { ...prev };
-                                        if (!copy[task.id]) copy[task.id] = {};
-                                        if (!copy[task.id][p.id])
-                                          copy[task.id][p.id] = {};
-                                        copy[task.id][p.id][s.id] = v;
-                                        return copy;
-                                      });
-                                    }}
-                                    onCommit={() =>
-                                      commitCell(task.id, p.id, s.id)
-                                    }
-                                    isEditing={isFieldEditing(cellKey)}
-                                    onStartEditing={() =>
-                                      setFieldEditing(cellKey, true)
-                                    }
-                                    onStopEditing={() =>
-                                      setFieldEditing(cellKey, false)
-                                    }
-                                  />
-                                </TableCell>
-                              );
-                            })}
+                            {effectiveSprints.map((s) => (
+                              <TableCell key={s.id} align="center">
+                                <EditableNumberCell
+                                  value={Number(row[s.id] || 0)}
+                                  onCommit={(v) => {
+                                    setAllocations((prev) => {
+                                      const copy = { ...prev };
+                                      if (!copy[task.id]) copy[task.id] = {};
+                                      if (!copy[task.id][p.id]) {
+                                        copy[task.id][p.id] = {};
+                                      }
+                                      copy[task.id][p.id][s.id] = v;
+                                      return copy;
+                                    });
+                                    commitCell(task.id, p.id, s.id, v);
+                                  }}
+                                  title="Нагрузка по спринту"
+                                />
+                              </TableCell>
+                            ))}
 
                             <TableCell align="center" sx={{ fontWeight: 700 }}>
                               {toInt(rowSum)}
@@ -2296,17 +2182,17 @@ export default function BacklogPage() {
           onDragCancel={handleTaskDragCancel}
         >
           <SortableContext
-            items={deferredFilteredTasks.map((t) => t.id)}
+            items={filteredTasks.map((t) => t.id)}
             strategy={verticalListSortingStrategy}
           >
             <Stack spacing={2}>
-              {deferredFilteredTasks.map((t) => (
+              {filteredTasks.map((t) => (
                 <SortableTask key={t.id} task={t}>
                   {(dragHandleProps) => renderTaskTable(t, dragHandleProps)}
                 </SortableTask>
               ))}
 
-              {!deferredFilteredTasks.length && !isFetching && (
+              {!filteredTasks.length && !isFetching && (
                 <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
                   <Typography color="text.secondary">
                     Нет задач по текущим фильтрам
@@ -2322,9 +2208,11 @@ export default function BacklogPage() {
                 <Stack direction="row" spacing={1} alignItems="center">
                   <DragIndicator fontSize="small" color="disabled" />
                   <Stack spacing={0.25}>
-                    <Typography fontWeight={700}>{activeTask.title}</Typography>
+                    <Typography fontWeight={700}>
+                      {(activeTask as any).title || ""}
+                    </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      {activeTask.stream || "Без стрима"}
+                      {(activeTask as any).stream || "Без стрима"}
                     </Typography>
                   </Stack>
                 </Stack>
