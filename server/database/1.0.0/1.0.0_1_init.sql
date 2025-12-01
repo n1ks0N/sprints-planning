@@ -71,7 +71,7 @@ CREATE TABLE task_participants (
 CREATE TABLE task_loads (
     task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
-    days NUMERIC(10, 2) NOT NULL DEFAULT 0,
+    days NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
     PRIMARY KEY (task_id, sprint_id)
 );
 CREATE INDEX task_loads_sprint_idx ON task_loads(sprint_id);
@@ -80,7 +80,7 @@ CREATE TABLE task_allocations (
     task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
     sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
-    days NUMERIC(10, 2) NOT NULL DEFAULT 0,
+    days NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
     PRIMARY KEY (task_id, participant_id, sprint_id)
 );
 CREATE INDEX task_alloc_sprint_idx ON task_allocations(sprint_id);
