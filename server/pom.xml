@@ -67,7 +67,7 @@ xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/x
                 <directory>src/main/resources</directory>
             </resource>
             <resource>
-                <directory>src/database</directory>
+                <directory>database</directory>
                 <targetPath>database</targetPath>
             </resource>
         </resources>
