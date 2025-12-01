@@ -15,6 +15,23 @@ import type {
 } from "../types";
 import { mockBaseQuery } from "../mock/mockApi";
 
+type AnyState = unknown;
+
+const errorMessage = (error: any, fallback: string) => {
+  const data = error?.error?.data ?? error?.data ?? error;
+  if (typeof data === "string") return data;
+  if (typeof data?.message === "string") return data.message;
+  return fallback;
+};
+
+const notifyError = (message: string, error: any) => {
+  const text = `${message}: ${errorMessage(error, "Попробуйте еще раз")}`;
+  console.error(text, error);
+  if (typeof window !== "undefined") alert(text);
+};
+
+const tempId = () => `temp-${Math.random().toString(36).slice(2)}`;
+
 const USE_MOCK = process.env.USE_MOCK === "true";
 
 const baseQuery = USE_MOCK
@@ -38,6 +55,92 @@ const entityTag = <T extends string>(
   type,
   id,
 });
+
+const collectCachedArgs = <Args>(
+  getState: () => AnyState,
+  endpointName: string,
+  tags: TagDescriptor<string>[]
+): Args[] =>
+  api.util
+    .selectInvalidatedBy(getState() as any, tags as any)
+    .filter((q) => q.endpointName === endpointName)
+    .map((q) => q.originalArgs as Args);
+
+const applyPatches = <Args>(
+  dispatch: any,
+  endpointName: string,
+  argsList: Args[],
+  updater: (draft: any) => void
+) =>
+  argsList.map((args) =>
+    dispatch(
+      api.util.updateQueryData(endpointName as any, args as any, updater)
+    )
+  );
+
+const collectSprintsFromCache = (state: AnyState): Sprint[] => {
+  const queries = api.util
+    .selectInvalidatedBy(state as any, [listTag("Sprint")])
+    .filter((q) => q.endpointName === "getSprints");
+  const list: Sprint[] = [];
+
+  for (const q of queries) {
+    const data =
+      api.endpoints.getSprints.select(q.originalArgs as any)(state as any)
+        ?.data || [];
+    list.push(...data);
+  }
+
+  return list;
+};
+
+const findQuarterBySprint = (sprintId: string | undefined, getState: () => AnyState) => {
+  if (!sprintId) return undefined;
+  const sprints = collectSprintsFromCache(getState());
+  return sprints.find((s) => s.id === sprintId)?.quarterId;
+};
+
+const getParticipantsFromCache = (state: AnyState): Participant[] =>
+  api.endpoints.getParticipants.select()(state as any)?.data || [];
+
+const recomputeSprintLoad = (task: BacklogItem, sprintId: string) => {
+  const allocations = task.allocations || {};
+  task.loads[sprintId] = Object.values(allocations).reduce(
+    (acc, alloc) => acc + (alloc[sprintId] || 0),
+    0
+  );
+};
+
+const applyAllocation = (
+  task: BacklogItem,
+  participantId: string,
+  sprintId: string,
+  days: number
+) => {
+  if (!task.allocations) task.allocations = {};
+  if (!task.allocations[participantId]) task.allocations[participantId] = {};
+  task.allocations[participantId][sprintId] = Math.max(
+    0,
+    Math.round(Number(days) || 0)
+  );
+  recomputeSprintLoad(task, sprintId);
+  task.updatedAt = new Date().toISOString().slice(0, 10);
+};
+
+const applyBulkAllocation = (
+  task: BacklogItem,
+  participantId: string,
+  allocations: Record<string, number>
+) => {
+  for (const [sprintId, days] of Object.entries(allocations || {})) {
+    applyAllocation(task, participantId, sprintId, days);
+  }
+};
+
+const applySprintLoad = (task: BacklogItem, sprintId: string, days: number) => {
+  task.loads[sprintId] = Math.max(0, Math.round(Number(days) || 0));
+  task.updatedAt = new Date().toISOString().slice(0, 10);
+};
 
 export const api = createApi({
   reducerPath: "api",
@@ -69,6 +172,38 @@ export const api = createApi({
         result
           ? [entityTag("Quarter", result.id), listTag("Quarter")]
           : [listTag("Quarter")],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const optimistic: Quarter = {
+          id: arg.id ?? tempId(),
+          year: arg.year ?? new Date().getFullYear(),
+          number: (arg.number as Quarter["number"]) ?? 1,
+          name: arg.name ?? "Новый квартал",
+          startDate:
+            arg.startDate ?? arg.endDate ?? new Date().toISOString().slice(0, 10),
+          endDate:
+            arg.endDate ?? arg.startDate ?? new Date().toISOString().slice(0, 10),
+        };
+
+        const patch = dispatch(
+          api.util.updateQueryData("getQuarters", undefined, (draft) => {
+            draft.push(optimistic);
+          })
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getQuarters", undefined, (draft) => {
+              const idx = draft.findIndex((q) => q.id === optimistic.id);
+              if (idx >= 0) draft[idx] = data;
+              else draft.push(data);
+            })
+          );
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось создать квартал", error);
+        }
+      },
     }),
     updateQuarter: b.mutation<Quarter, Partial<Quarter> & { id: string }>({
       query: (body) => ({ url: "/quarters/update", method: "POST", body }),
@@ -78,6 +213,27 @@ export const api = createApi({
         listTag("Sprint"),
         listTag("Task"),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getQuarters", undefined, (draft) => {
+            const idx = draft.findIndex((q) => q.id === arg.id);
+            if (idx >= 0) draft[idx] = { ...draft[idx], ...arg } as Quarter;
+          })
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getQuarters", undefined, (draft) => {
+              const idx = draft.findIndex((q) => q.id === data.id);
+              if (idx >= 0) draft[idx] = data;
+            })
+          );
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось обновить квартал", error);
+        }
+      },
     }),
     deleteQuarter: b.mutation<Quarter, { id: string }>({
       query: (body) => ({ url: "/quarters/delete", method: "POST", body }),
@@ -89,6 +245,21 @@ export const api = createApi({
         listTag("Capacity"),
         listTag("RunVacation"),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getQuarters", undefined, (draft) => {
+            const idx = draft.findIndex((q) => q.id === arg.id);
+            if (idx >= 0) draft.splice(idx, 1);
+          })
+        );
+
+        try {
+          await queryFulfilled;
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось удалить квартал", error);
+        }
+      },
     }),
 
     // ---- Sprints ----
@@ -117,6 +288,47 @@ export const api = createApi({
         listTag("RunVacation"),
         ...(result ? [entityTag("Sprint", result.id)] : []),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const optimistic: Sprint = {
+          id: arg.id ?? tempId(),
+          quarterId: arg.quarterId ?? "",
+          name: arg.name ?? "Новый спринт",
+          startDate: arg.startDate ?? "",
+          endDate: arg.endDate ?? "",
+          workingDays: arg.workingDays ?? 0,
+          order: arg.order ?? 0,
+        } as Sprint;
+
+        const cachedArgs = collectCachedArgs<
+          { quarterId?: string } | void
+        >(getState, "getSprints", [listTag("Sprint")]);
+
+        const patches = applyPatches(
+          dispatch,
+          "getSprints",
+          cachedArgs,
+          (draft: Sprint[]) => {
+            const order =
+              arg.order ??
+              draft.filter((s: Sprint) => s.quarterId === optimistic.quarterId)
+                .length + 1;
+            draft.push({ ...optimistic, order });
+          }
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          applyPatches(dispatch, "getSprints", cachedArgs, (draft: Sprint[]) => {
+            const idx = draft.findIndex(
+              (s: Sprint) => s.id === optimistic.id || s.id === data.id
+            );
+            if (idx >= 0) draft[idx] = data;
+          });
+        } catch (error) {
+          patches.forEach((p) => p.undo());
+          notifyError("Не удалось создать спринт", error);
+        }
+      },
     }),
     updateSprint: b.mutation<Sprint, Partial<Sprint> & { id: string }>({
       query: (body) => ({ url: "/sprints/update", method: "POST", body }),
@@ -127,6 +339,32 @@ export const api = createApi({
         listTag("RunVacation"),
         listTag("Task"),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const cachedArgs = collectCachedArgs<
+          { quarterId?: string } | void
+        >(getState, "getSprints", [listTag("Sprint"), entityTag("Sprint", arg.id)]);
+
+        const patches = applyPatches(
+          dispatch,
+          "getSprints",
+          cachedArgs,
+          (draft: Sprint[]) => {
+            const idx = draft.findIndex((s: Sprint) => s.id === arg.id);
+            if (idx >= 0) draft[idx] = { ...draft[idx], ...arg } as Sprint;
+          }
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          applyPatches(dispatch, "getSprints", cachedArgs, (draft: Sprint[]) => {
+            const idx = draft.findIndex((s: Sprint) => s.id === data.id);
+            if (idx >= 0) draft[idx] = data;
+          });
+        } catch (error) {
+          patches.forEach((p) => p.undo());
+          notifyError("Не удалось обновить спринт", error);
+        }
+      },
     }),
     deleteSprint: b.mutation<Sprint, { id: string }>({
       query: (body) => ({ url: "/sprints/delete", method: "POST", body }),
@@ -137,6 +375,28 @@ export const api = createApi({
         listTag("RunVacation"),
         listTag("Task"),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const cachedArgs = collectCachedArgs<
+          { quarterId?: string } | void
+        >(getState, "getSprints", [listTag("Sprint"), entityTag("Sprint", arg.id)]);
+
+        const patches = applyPatches(
+          dispatch,
+          "getSprints",
+          cachedArgs,
+          (draft: Sprint[]) => {
+            const idx = draft.findIndex((s: Sprint) => s.id === arg.id);
+            if (idx >= 0) draft.splice(idx, 1);
+          }
+        );
+
+        try {
+          await queryFulfilled;
+        } catch (error) {
+          patches.forEach((p) => p.undo());
+          notifyError("Не удалось удалить спринт", error);
+        }
+      },
     }),
 
     // ---- Participants ----
@@ -158,6 +418,34 @@ export const api = createApi({
         listTag("RunVacation"),
         ...(result ? [entityTag("Participant", result.id)] : []),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const optimistic: Participant = {
+          id: arg.id ?? tempId(),
+          fullName: arg.fullName ?? "Новый участник",
+          role: arg.role ?? "",
+          rate: arg.rate ?? 1,
+        } as Participant;
+
+        const patch = dispatch(
+          api.util.updateQueryData("getParticipants", undefined, (draft) => {
+            draft.push(optimistic);
+          })
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getParticipants", undefined, (draft) => {
+              const idx = draft.findIndex((p) => p.id === optimistic.id);
+              if (idx >= 0) draft[idx] = data;
+              else draft.push(data);
+            })
+          );
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось создать участника", error);
+        }
+      },
     }),
     updateParticipant: b.mutation<
       Participant,
@@ -170,6 +458,27 @@ export const api = createApi({
         listTag("Capacity"),
         listTag("RunVacation"),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getParticipants", undefined, (draft) => {
+            const idx = draft.findIndex((p) => p.id === arg.id);
+            if (idx >= 0) draft[idx] = { ...draft[idx], ...arg } as Participant;
+          })
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getParticipants", undefined, (draft) => {
+              const idx = draft.findIndex((p) => p.id === data.id);
+              if (idx >= 0) draft[idx] = data;
+            })
+          );
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось обновить участника", error);
+        }
+      },
     }),
     deleteParticipant: b.mutation<Participant, { id: string }>({
       query: (body) => ({ url: "/participants/delete", method: "POST", body }),
@@ -180,6 +489,21 @@ export const api = createApi({
         listTag("RunVacation"),
         listTag("Task"),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getParticipants", undefined, (draft) => {
+            const idx = draft.findIndex((p) => p.id === arg.id);
+            if (idx >= 0) draft.splice(idx, 1);
+          })
+        );
+
+        try {
+          await queryFulfilled;
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось удалить участника", error);
+        }
+      },
     }),
     reorderParticipants: b.mutation<
       { ok: true },
@@ -187,6 +511,25 @@ export const api = createApi({
     >({
       query: (body) => ({ url: "/participants/reorder", method: "POST", body }),
       invalidatesTags: [listTag("Participant")],
+      async onQueryStarted({ orders }, { dispatch, queryFulfilled }) {
+        const orderMap = new Map<string, number>();
+        for (const o of orders) orderMap.set(o.id, o.order);
+
+        const patch = dispatch(
+          api.util.updateQueryData("getParticipants", undefined, (draft) => {
+            draft.sort(
+              (a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0)
+            );
+          })
+        );
+
+        try {
+          await queryFulfilled;
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось изменить порядок участников", error);
+        }
+      },
     }),
 
     // ---- Run/Vacation & Capacity ----
@@ -207,6 +550,57 @@ export const api = createApi({
           : { type: "RunVacation" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const quarterId = findQuarterBySprint(arg.sprintId, getState);
+        const cachedArgs = collectCachedArgs<{ quarterId: string }>(
+          getState,
+          "getRunVacation",
+          [
+            { type: "RunVacation", id: "LIST" },
+            ...(quarterId ? [{ type: "RunVacation", id: quarterId }] : []),
+          ]
+        );
+
+        const optimistic: RunVacation = {
+          participantId: arg.participantId || "",
+          sprintId: arg.sprintId || "",
+          runDays: Math.max(0, Math.round(Number(arg.runDays ?? 0))),
+          vacationNormDays: Math.max(
+            0,
+            Math.round(Number(arg.vacationNormDays ?? 0))
+          ),
+        } as RunVacation;
+
+        const patches = applyPatches(
+          dispatch,
+          "getRunVacation",
+          cachedArgs,
+          (draft: RunVacation[]) => {
+            const idx = draft.findIndex(
+              (r: RunVacation) =>
+                r.participantId === optimistic.participantId &&
+                r.sprintId === optimistic.sprintId
+            );
+            if (idx >= 0) draft[idx] = { ...draft[idx], ...optimistic };
+            else draft.push(optimistic);
+          }
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          applyPatches(dispatch, "getRunVacation", cachedArgs, (draft) => {
+            const idx = draft.findIndex(
+              (r: RunVacation) =>
+                r.participantId === data.participantId && r.sprintId === data.sprintId
+            );
+            if (idx >= 0) draft[idx] = data;
+            else draft.push(data);
+          });
+        } catch (error) {
+          patches.forEach((p) => p.undo());
+          notifyError("Не удалось сохранить нагрузку/отпуск", error);
+        }
+      },
     }),
     bulkRunVacation: b.mutation<
       { ok: true },
@@ -225,6 +619,49 @@ export const api = createApi({
           : { type: "RunVacation" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const participantMap = new Map(
+          getParticipantsFromCache(getState()).map((p) => [p.id, p])
+        );
+        const sprintIds = collectSprintsFromCache(getState())
+          .filter((s) => s.quarterId === arg.quarterId)
+          .map((s) => s.id);
+        const roleSet = arg.roles?.length ? new Set(arg.roles) : null;
+
+        const cachedArgs = collectCachedArgs<{ quarterId: string }>(
+          getState,
+          "getRunVacation",
+          [
+            { type: "RunVacation", id: "LIST" },
+            { type: "RunVacation", id: arg.quarterId },
+          ]
+        );
+
+        const patches = applyPatches(
+          dispatch,
+          "getRunVacation",
+          cachedArgs,
+          (draft: RunVacation[]) => {
+            for (const rv of draft) {
+              if (!sprintIds.includes(rv.sprintId)) continue;
+              const participant = participantMap.get(rv.participantId);
+              if (roleSet && (!participant || !roleSet.has(participant.role))) continue;
+              const base = Number(arg.daysPerSprint) || 0;
+              const next = arg.multiplyByRate
+                ? Math.max(0, Math.round(base * (participant?.rate ?? 1)))
+                : Math.max(0, Math.round(base));
+              rv.runDays = next;
+            }
+          }
+        );
+
+        try {
+          await queryFulfilled;
+        } catch (error) {
+          patches.forEach((p) => p.undo());
+          notifyError("Не удалось применить массовое обновление нагрузки", error);
+        }
+      },
     }),
     getCapacity: b.query<CapacityRow[], { quarterId: string }>({
       query: ({ quarterId }) =>
@@ -257,6 +694,57 @@ export const api = createApi({
         listTag("Task"),
         ...(result ? [entityTag("Task", result.id)] : []),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const now = new Date().toISOString().slice(0, 10);
+        const optimistic: BacklogItem = {
+          id: arg.id ?? tempId(),
+          title: arg.title ?? "Новая задача",
+          description: arg.description ?? "",
+          dod: arg.dod ?? "",
+          priority: (arg.priority as BacklogItem["priority"]) ?? 2,
+          customer: arg.customer ?? "",
+          stream: arg.stream ?? "",
+          participantIds: Array.isArray(arg.participantIds)
+            ? [...arg.participantIds]
+            : [],
+          loads: { ...(arg.loads || {}) },
+          allocations: arg.allocations ? { ...arg.allocations } : undefined,
+          notes: arg.notes ? { ...arg.notes } : undefined,
+          quarterIds: arg.quarterIds ? [...arg.quarterIds] : undefined,
+          releaseDate: arg.releaseDate,
+          releaseSprintId: arg.releaseSprintId,
+          leaderId: arg.leaderId ?? null,
+          createdAt: now,
+          updatedAt: now,
+        } as BacklogItem;
+
+        const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+          getState,
+          "getTasks",
+          [{ type: "Task", id: "LIST" }]
+        );
+
+        const patches = applyPatches(
+          dispatch,
+          "getTasks",
+          cachedArgs,
+          (draft: BacklogItem[]) => {
+            draft.push(optimistic);
+          }
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: BacklogItem[]) => {
+            const idx = draft.findIndex((t: BacklogItem) => t.id === optimistic.id);
+            if (idx >= 0) draft[idx] = data;
+            else draft.push(data);
+          });
+        } catch (error) {
+          patches.forEach((p) => p.undo());
+          notifyError("Не удалось создать задачу", error);
+        }
+      },
     }),
     updateTask: b.mutation<BacklogItem, Partial<BacklogItem> & { id: string }>(
       {
@@ -265,6 +753,37 @@ export const api = createApi({
           { type: "Task" as const, id: arg.id },
           { type: "Task" as const, id: "LIST" as const },
         ],
+        async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+          const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+            getState,
+            "getTasks",
+            [
+              { type: "Task", id: "LIST" },
+              { type: "Task", id: arg.id },
+            ]
+          );
+
+          const patches = applyPatches(
+            dispatch,
+            "getTasks",
+            cachedArgs,
+            (draft: BacklogItem[]) => {
+              const idx = draft.findIndex((t: BacklogItem) => t.id === arg.id);
+              if (idx >= 0) draft[idx] = { ...draft[idx], ...arg } as BacklogItem;
+            }
+          );
+
+          try {
+            const { data } = await queryFulfilled;
+            applyPatches(dispatch, "getTasks", cachedArgs, (draft: BacklogItem[]) => {
+              const idx = draft.findIndex((t: BacklogItem) => t.id === data.id);
+              if (idx >= 0) draft[idx] = data;
+            });
+          } catch (error) {
+            patches.forEach((p) => p.undo());
+            notifyError("Не удалось обновить задачу", error);
+          }
+        },
       }
     ),
     deleteTask: b.mutation<BacklogItem, { id: string }>({
@@ -273,6 +792,33 @@ export const api = createApi({
         { type: "Task" as const, id: arg.id },
         { type: "Task" as const, id: "LIST" as const },
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+          getState,
+          "getTasks",
+          [
+            { type: "Task", id: "LIST" },
+            { type: "Task", id: arg.id },
+          ]
+        );
+
+        const patches = applyPatches(
+          dispatch,
+          "getTasks",
+          cachedArgs,
+          (draft: BacklogItem[]) => {
+            const idx = draft.findIndex((t: BacklogItem) => t.id === arg.id);
+            if (idx >= 0) draft.splice(idx, 1);
+          }
+        );
+
+        try {
+          await queryFulfilled;
+        } catch (error) {
+          patches.forEach((p) => p.undo());
+          notifyError("Не удалось удалить задачу", error);
+        }
+      },
     }),
 
     // Новый (детализация по участникам)
@@ -285,6 +831,43 @@ export const api = createApi({
         { type: "Task" as const, id: arg.taskId },
         { type: "Task" as const, id: "LIST" as const },
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+          getState,
+          "getTasks",
+          [
+            { type: "Task", id: "LIST" },
+            { type: "Task", id: arg.taskId },
+          ]
+        );
+
+        const patches = applyPatches(
+          dispatch,
+          "getTasks",
+          cachedArgs,
+          (draft: BacklogItem[]) => {
+            const task = draft.find((t: BacklogItem) => t.id === arg.taskId);
+            if (task)
+              applyAllocation(
+                task,
+                arg.participantId,
+                arg.sprintId,
+                arg.days
+              );
+          }
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: BacklogItem[]) => {
+            const idx = draft.findIndex((t: BacklogItem) => t.id === data.id);
+            if (idx >= 0) draft[idx] = data;
+          });
+        } catch (error) {
+          patches.forEach((p) => p.undo());
+          notifyError("Не удалось сохранить распределение задачи", error);
+        }
+      },
     }),
 
     upsertTaskAllocationBulk: b.mutation<
@@ -296,6 +879,37 @@ export const api = createApi({
         { type: "Task" as const, id: arg.taskId },
         { type: "Task" as const, id: "LIST" as const },
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+          getState,
+          "getTasks",
+          [
+            { type: "Task", id: "LIST" },
+            { type: "Task", id: arg.taskId },
+          ]
+        );
+
+        const patches = applyPatches(
+          dispatch,
+          "getTasks",
+          cachedArgs,
+          (draft: BacklogItem[]) => {
+            const task = draft.find((t: BacklogItem) => t.id === arg.taskId);
+            if (task) applyBulkAllocation(task, arg.participantId, arg.allocations);
+          }
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: BacklogItem[]) => {
+            const idx = draft.findIndex((t: BacklogItem) => t.id === data.id);
+            if (idx >= 0) draft[idx] = data;
+          });
+        } catch (error) {
+          patches.forEach((p) => p.undo());
+          notifyError("Не удалось сохранить распределение по спринтам", error);
+        }
+      },
     }),
 
     // Легаси-алиас для совместимости с undoSlice и старым кодом
@@ -308,6 +922,37 @@ export const api = createApi({
         { type: "Task" as const, id: arg.taskId },
         { type: "Task" as const, id: "LIST" as const },
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+          getState,
+          "getTasks",
+          [
+            { type: "Task", id: "LIST" },
+            { type: "Task", id: arg.taskId },
+          ]
+        );
+
+        const patches = applyPatches(
+          dispatch,
+          "getTasks",
+          cachedArgs,
+          (draft: BacklogItem[]) => {
+            const task = draft.find((t: BacklogItem) => t.id === arg.taskId);
+            if (task) applySprintLoad(task, arg.sprintId, arg.days);
+          }
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: BacklogItem[]) => {
+            const idx = draft.findIndex((t: BacklogItem) => t.id === data.id);
+            if (idx >= 0) draft[idx] = data;
+          });
+        } catch (error) {
+          patches.forEach((p) => p.undo());
+          notifyError("Не удалось сохранить загрузку задачи", error);
+        }
+      },
     }),
 
     // ---- Releases ----
@@ -327,6 +972,50 @@ export const api = createApi({
         listTag("Release"),
         ...(result ? [entityTag("Release", result.id)] : []),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const now = new Date().toISOString().slice(0, 10);
+        const optimistic: Release = {
+          id: arg.id ?? tempId(),
+          name: arg.name,
+          promDate: arg.promDate,
+          psiDate: arg.psiDate,
+          opsStart: arg.opsStart,
+          opsEnd: arg.opsEnd,
+          regressStart: arg.regressStart,
+          regressEnd: arg.regressEnd,
+          ffDate: arg.ffDate,
+          ffInnerDate: arg.ffInnerDate,
+          iftStart: arg.iftStart,
+          iftEnd: arg.iftEnd,
+          buildDate: arg.buildDate,
+          crDate: arg.crDate,
+          devStart: arg.devStart,
+          devEnd: arg.devEnd,
+          stDate: arg.stDate,
+          createdAt: now,
+          updatedAt: now,
+        } as Release;
+
+        const patch = dispatch(
+          api.util.updateQueryData("getReleases", undefined, (draft) => {
+            draft.push(optimistic);
+          })
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getReleases", undefined, (draft) => {
+              const idx = draft.findIndex((r) => r.id === optimistic.id);
+              if (idx >= 0) draft[idx] = data;
+              else draft.push(data);
+            })
+          );
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось создать релиз", error);
+        }
+      },
     }),
     updateRelease: b.mutation<
       Release,
@@ -337,6 +1026,27 @@ export const api = createApi({
         { type: "Release" as const, id: arg.id },
         { type: "Release" as const, id: "LIST" as const },
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getReleases", undefined, (draft) => {
+            const idx = draft.findIndex((r) => r.id === arg.id);
+            if (idx >= 0) draft[idx] = { ...draft[idx], ...arg } as Release;
+          })
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getReleases", undefined, (draft) => {
+              const idx = draft.findIndex((r) => r.id === data.id);
+              if (idx >= 0) draft[idx] = data;
+            })
+          );
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось обновить релиз", error);
+        }
+      },
     }),
     deleteRelease: b.mutation<Release, { id: string }>({
       query: (body) => ({ url: "/releases/delete", method: "POST", body }),
@@ -344,6 +1054,21 @@ export const api = createApi({
         { type: "Release" as const, id: arg.id },
         { type: "Release" as const, id: "LIST" as const },
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getReleases", undefined, (draft) => {
+            const idx = draft.findIndex((r) => r.id === arg.id);
+            if (idx >= 0) draft.splice(idx, 1);
+          })
+        );
+
+        try {
+          await queryFulfilled;
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось удалить релиз", error);
+        }
+      },
     }),
 
     // ---- Export ----
