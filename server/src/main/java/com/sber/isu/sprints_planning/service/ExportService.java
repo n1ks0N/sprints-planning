@@ -335,7 +335,7 @@ public class ExportService {
         try {
             return WorkbookUtil.createSafeSheetName(original, ' ');
         } catch (IllegalArgumentException e) {
-            String sanitized = original.replaceAll("[\\\\/?*\n\r\t\[\]:]", " ").trim();
+            String sanitized = original.replaceAll("[\\/?*\n\r\t\[\]:]", " ").trim();
             if (sanitized.isBlank()) {
                 sanitized = "Sheet";
             }
