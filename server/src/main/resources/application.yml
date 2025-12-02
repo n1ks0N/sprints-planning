@@ -23,7 +23,7 @@ spring:
 server:
   port: 8080
   servlet:
-    context-path: /api
+    context-path: /api/v1/sprints-planning
 app:
   capacity:
     norm-factor: 0.75
