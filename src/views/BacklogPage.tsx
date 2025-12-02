@@ -987,9 +987,7 @@ export default function BacklogPage() {
     getTaskQuarters,
   ]);
 
-  const deferredFilteredTasks = React.useDeferredValue(filteredTasks);
-  const isTasksPending = deferredFilteredTasks !== filteredTasks;
-  const isUiPending = isQuarterPending || isTasksPending;
+  const isUiPending = isQuarterPending;
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
@@ -1091,6 +1089,26 @@ export default function BacklogPage() {
       scheduleTaskUpdate(task.id, key, value);
     },
     [scheduleTaskUpdate, taskDrafts]
+  );
+
+  const handleAutocompleteChange = React.useCallback(
+    (
+      task: BacklogItem,
+      key: Extract<TaskDraftField, "customer" | "stream">
+    ) =>
+      (_: any, value: string | null, reason: string) => {
+        const next = value ?? "";
+        stageTaskField(task, key, next);
+
+        if (
+          reason === "selectOption" ||
+          reason === "createOption" ||
+          reason === "clear"
+        ) {
+          commitTaskField(task, key, next);
+        }
+      },
+    [commitTaskField, stageTaskField]
   );
 
   const detectSprintByDate = (iso?: string): string | undefined => {
@@ -1420,8 +1438,8 @@ export default function BacklogPage() {
   );
 
   const activeTask = React.useMemo(
-    () => deferredFilteredTasks.find((t) => t.id === activeTaskId) || null,
-    [activeTaskId, deferredFilteredTasks]
+    () => filteredTasks.find((t) => t.id === activeTaskId) || null,
+    [activeTaskId, filteredTasks]
   );
 
   const handleTaskDragStart = React.useCallback((event: DragStartEvent) => {
@@ -1438,7 +1456,7 @@ export default function BacklogPage() {
       setActiveTaskId(null);
       if (!over || active.id === over.id) return;
 
-      const currentIds = deferredFilteredTasks.map((t) => t.id);
+      const currentIds = filteredTasks.map((t) => t.id);
       const oldIndex = currentIds.indexOf(String(active.id));
       const newIndex = currentIds.indexOf(String(over.id));
       if (oldIndex < 0 || newIndex < 0) return;
@@ -1453,7 +1471,7 @@ export default function BacklogPage() {
       });
       applyTaskOrderOptimistic(reordered);
     },
-    [applyTaskOrderOptimistic, deferredFilteredTasks]
+    [applyTaskOrderOptimistic, filteredTasks]
   );
 
   const HeaderSprint = ({
@@ -1799,6 +1817,7 @@ export default function BacklogPage() {
               freeSolo
               options={customerOptions}
               value={resolveTaskFieldValue(task, "customer")}
+              onChange={handleAutocompleteChange(task, "customer")}
               onInputChange={(_, v) =>
                 stageTaskField(task, "customer", v || "")
               }
@@ -1814,6 +1833,7 @@ export default function BacklogPage() {
               freeSolo
               options={streamOptions}
               value={resolveTaskFieldValue(task, "stream")}
+              onChange={handleAutocompleteChange(task, "stream")}
               onInputChange={(_, v) => stageTaskField(task, "stream", v || "")}
               onBlur={() => commitTaskField(task, "stream")}
               renderInput={(params) => (
@@ -2296,17 +2316,17 @@ export default function BacklogPage() {
           onDragCancel={handleTaskDragCancel}
         >
           <SortableContext
-            items={deferredFilteredTasks.map((t) => t.id)}
+            items={filteredTasks.map((t) => t.id)}
             strategy={verticalListSortingStrategy}
           >
             <Stack spacing={2}>
-              {deferredFilteredTasks.map((t) => (
+              {filteredTasks.map((t) => (
                 <SortableTask key={t.id} task={t}>
                   {(dragHandleProps) => renderTaskTable(t, dragHandleProps)}
                 </SortableTask>
               ))}
 
-              {!deferredFilteredTasks.length && !isFetching && (
+              {!filteredTasks.length && !isFetching && (
                 <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
                   <Typography color="text.secondary">
                     Нет задач по текущим фильтрам
