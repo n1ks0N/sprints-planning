@@ -1,7 +1,7 @@
 const webpack = require('webpack');
 
 const USE_MOCK = process.env.USE_MOCK === 'true';
-const API_URL = process.env.API_URL || '/api';
+const API_URL = process.env.API_URL || '/isu/isu_backend_common/sprints-planning';
 
 module.exports = {
   entry: './src/index.ts',
