@@ -4,7 +4,6 @@ import {
   Paper,
   Typography,
   Stack,
-  Box,
   Button,
   IconButton,
   Table,
@@ -62,11 +61,6 @@ function addBusinessDaysISO(iso: string, delta: number) {
 const fmt = "YYYY-MM-DD";
 const parseISODate = (iso?: string | null) => (iso ? moment(iso, fmt, true) : null);
 const isoFromMoment = (d: moment.Moment) => d.format(fmt);
-const ru = (iso?: string) =>
-  iso && moment(iso, fmt, true).isValid()
-    ? moment(iso, fmt).format("DD.MM.YYYY ddd")
-    : "—";
-
 type K =
   | "stDate"
   | "devStart"
@@ -326,72 +320,45 @@ function InlineDate({
   onCommit: (iso: string) => void;
   label?: string;
 }) {
-  const [open, setOpen] = React.useState(false);
-  const inputRef = React.useRef<HTMLInputElement | null>(null);
-
-  React.useEffect(() => {
-    if (!open) return;
-    const t = window.setTimeout(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select?.();
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, [open]);
-
   return (
-    <Box
-      sx={{ cursor: "pointer", width: "100%", textAlign: "center" }}
-      onClick={() => setOpen(true)}
-      title="Изменить дату"
-    >
-      {!open && (
-        <Typography component="span" sx={{ display: "block", lineHeight: 1.2 }}>
-          {ru(value)}
-        </Typography>
-      )}
-
-      {open && (
-        <DatePicker
-          open
-          onOpen={() => setOpen(true)}
-          onClose={() => setOpen(false)}
-          value={parseISODate(value)}
-          onChange={(newValue, context) => {
-            if (context?.validationError) return;
-            if (!newValue) {
-              onCommit("");
-              return;
-            }
-            onCommit(isoFromMoment(newValue));
-          }}
-          format="DD.MM.YYYY"
-          slotProps={{
-            textField: {
-              size: "small",
-              fullWidth: true,
-              inputRef,
-              autoFocus: true,
-              inputProps: { "aria-label": label },
-              onClick: () => setOpen(true),
-              onFocus: () => setOpen(true),
-              onKeyDown: (e) => {
-                if (e.key === "Escape") setOpen(false);
-                if (e.key === "Enter") setOpen(false);
-              },
-              sx: {
-                textAlign: "center",
-                "& .MuiOutlinedInput-notchedOutline": { display: "none" },
-                "& .MuiInputBase-input": { p: 0.5, textAlign: "center" },
-                bgcolor: "transparent",
-              },
-            },
-            openPickerButton: { size: "small", sx: { fontSize: "1.1rem" } },
-            actionBar: { actions: ["clear"] },
-          }}
-          enableAccessibleFieldDOMStructure={false}
-        />
-      )}
-    </Box>
+    <DatePicker
+      value={parseISODate(value)}
+      onChange={(newValue, context) => {
+        if (context?.validationError) return;
+        if (!newValue) {
+          onCommit("");
+          return;
+        }
+        onCommit(isoFromMoment(newValue));
+      }}
+      format="DD.MM.YYYY"
+      slotProps={{
+        textField: {
+          size: "small",
+          fullWidth: true,
+          InputLabelProps: { shrink: true },
+          inputProps: { "aria-label": label },
+          onClick: (e) => {
+            const input = e.currentTarget.querySelector("input");
+            input?.focus();
+            const button = e.currentTarget.querySelector("button");
+            (button as HTMLButtonElement | null)?.click();
+          },
+          sx: {
+            textAlign: "center",
+            "& .MuiOutlinedInput-notchedOutline": { display: "none" },
+            "& .MuiInputBase-input": { p: 0.5, textAlign: "center" },
+            bgcolor: "transparent",
+          },
+        },
+        openPickerButton: {
+          size: "small",
+          sx: { fontSize: "1.1rem", pr: 0.5 },
+        },
+        actionBar: { actions: ["clear"] as const },
+      }}
+      enableAccessibleFieldDOMStructure={false}
+    />
   );
 }
 
@@ -524,11 +491,16 @@ export default function ReleasesPage() {
                     "input"
                   ) as HTMLInputElement | null);
                   input?.focus();
+                  const button = e.currentTarget.querySelector("button");
+                  (button as HTMLButtonElement | null)?.click();
                 },
                 sx: { "& .MuiInputBase-input": { fontSize: "0.95rem" } },
               },
-              openPickerButton: { size: "small", sx: { fontSize: "1.1rem" } },
-              actionBar: { actions: ["clear"] },
+              openPickerButton: {
+                size: "small",
+                sx: { fontSize: "1.1rem", pr: 0.5 },
+              },
+              actionBar: { actions: ["clear"] as const },
             }}
           />
           <Button

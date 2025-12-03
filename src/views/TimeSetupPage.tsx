@@ -79,6 +79,12 @@ const pickerSlotProps = (opts?: { error?: boolean }) =>
       size: "small",
       error: !!opts?.error,
       InputLabelProps: { shrink: true },
+      onClick: (e: React.MouseEvent<HTMLDivElement>) => {
+        const input = e.currentTarget.querySelector("input");
+        input?.focus();
+        const button = e.currentTarget.querySelector("button");
+        (button as HTMLButtonElement | null)?.click();
+      },
       sx: {
         "& .MuiInputBase-input": {
           fontSize: "0.9rem",
@@ -86,7 +92,10 @@ const pickerSlotProps = (opts?: { error?: boolean }) =>
         },
       },
     },
-    openPickerButton: { size: "small", sx: { fontSize: "1.1rem" } },
+    openPickerButton: {
+      size: "small",
+      sx: { fontSize: "1.1rem", pr: 0.5 },
+    },
     actionBar: { actions: ["clear"] as const },
   } satisfies DatePickerSlotProps<false>);
 
@@ -224,6 +233,7 @@ export default function TimeSetupPage() {
   const [editingSprintId, setEditingSprintId] = React.useState<string | null>(
     null
   );
+  const skipFirstEditWorkingDays = React.useRef<boolean>(false);
   const [sEditName, setSEditName] = React.useState<string>("");
   const [sEditStart, setSEditStart] = React.useState<string>("");
   const [sEditEnd, setSEditEnd] = React.useState<string>("");
@@ -439,6 +449,10 @@ export default function TimeSetupPage() {
   ]);
 
   React.useEffect(() => {
+    if (skipFirstEditWorkingDays.current) {
+      skipFirstEditWorkingDays.current = false;
+      return;
+    }
     if (!sEditWorkingDaysDirty && sEditStart && sEditEnd && !sEditError) {
       setSEditWorkingDays(workingDaysInclusive(sEditStart, sEditEnd));
     }
@@ -604,6 +618,7 @@ export default function TimeSetupPage() {
     setSEditStart(s.startDate);
     setSEditEnd(s.endDate);
     setSEditWorkingDays(s.workingDays);
+    skipFirstEditWorkingDays.current = true;
     setSEditWorkingDaysDirty(false);
     setSEditError("");
   };
