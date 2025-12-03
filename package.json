@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev:local": "cross-env USE_MOCK=false API_URL=/isu/isu_backend_common/sprints-planning webpack serve --mode development --open",
+    "dev:local": "cross-env USE_MOCK=false API_URL=/api/v1/sprints-planning webpack serve --mode development --open",
     "dev:remote": "cross-env USE_MOCK=false webpack serve --mode development --open",
     "build:remote": "cross-env USE_MOCK=false webpack --config webpack.build.js --mode production",
     "typecheck": "tsc --noEmit"

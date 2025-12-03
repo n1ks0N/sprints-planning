@@ -22,9 +22,9 @@
 
 ## Запуск фронтенда (локально)
 
-Фронтенд и бэкенд теперь работают на префиксе `/isu/isu_backend_common/sprints-planning`. В `package.json` есть три основных скрипта:
+Бэкенд слушает префикс `/api/v1/sprints-planning`. Для фронтенда есть три основных сценария (`package.json`):
 
-1. Локальный фронт + локальный бэкенд (DevServer проксирует на `http://localhost:8080`):
+1. Локальный фронт + локальный бэкенд (DevServer проксирует на `http://localhost:8080/api/v1/sprints-planning`):
    ```bash
    npm install
    npm run dev:local
