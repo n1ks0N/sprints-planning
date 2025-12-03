@@ -341,15 +341,19 @@ function InlineDate({
           InputLabelProps: { shrink: true },
           inputProps: { "aria-label": label },
           sx: {
+            maxWidth: 124,
+            minWidth: 110,
+            mx: "auto",
             textAlign: "center",
             "& .MuiOutlinedInput-notchedOutline": { display: "none" },
-            "& .MuiInputBase-input": { p: 0.5, textAlign: "center" },
+            "& .MuiInputBase-input": { p: 0.4, textAlign: "center", fontSize: "0.9rem" },
+            "& .MuiInputBase-root": { pr: 0.25, height: 34 },
             bgcolor: "transparent",
           },
         },
         openPickerButton: {
           size: "small",
-          sx: { fontSize: "1.1rem", pr: 0.5 },
+          sx: { fontSize: "1rem", pr: 0.25 },
         },
         actionBar: { actions: ["clear"] as const },
       }}
@@ -483,11 +487,15 @@ export default function ReleasesPage() {
               textField: {
                 size: "small",
                 InputLabelProps: { shrink: true },
-                sx: { "& .MuiInputBase-input": { fontSize: "0.95rem" } },
+                sx: {
+                  width: 170,
+                  "& .MuiInputBase-input": { fontSize: "0.95rem" },
+                  "& .MuiInputBase-root": { height: 36 },
+                },
               },
               openPickerButton: {
                 size: "small",
-                sx: { fontSize: "1.1rem", pr: 0.5 },
+                sx: { fontSize: "1rem", pr: 0.25 },
               },
               actionBar: { actions: ["clear"] as const },
             }}
