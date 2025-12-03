@@ -93,7 +93,8 @@ export type Release = {
   regressEnd?: string;    // Регресс (конец)
 
   ffDate?: string;        // FF = regressStart - 1
-  ffInnerDate?: string;   // FF InnerSource = ffDate - 3
+  ffDevToolsDate?: string; // FF DevTools = ffDate - 2
+  ffInnerDate?: string;   // FF InnerSource = ffDevToolsDate - 1
 
   iftStart?: string;      // ИФТ 5 дней (начало = ffInnerDate - 5)
   iftEnd?: string;        // ИФТ (конец)

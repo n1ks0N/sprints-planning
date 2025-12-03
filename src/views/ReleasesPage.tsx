@@ -4,7 +4,6 @@ import {
   Paper,
   Typography,
   Stack,
-  Box,
   Button,
   IconButton,
   Table,
@@ -12,12 +11,14 @@ import {
   TableRow,
   TableCell,
   TableBody,
-  TextField,
   Tooltip,
   Checkbox,
   FormControlLabel,
   TableContainer,
 } from "@mui/material";
+import { LocalizationProvider, DatePicker } from "@mui/x-date-pickers";
+import { AdapterMoment } from "@mui/x-date-pickers/AdapterMoment";
+import { ruRU } from "@mui/x-date-pickers/locales";
 import { Add, Delete, Backspace } from "@mui/icons-material";
 import moment from "moment";
 import "moment/locale/ru";
@@ -57,11 +58,10 @@ function addBusinessDaysISO(iso: string, delta: number) {
   }
   return toISOlocal(d);
 }
-const ru = (iso?: string) =>
-  iso && moment(iso, "YYYY-MM-DD", true).isValid()
-    ? moment(iso, "YYYY-MM-DD").format("DD.MM.YYYY ddd")
-    : "—";
-
+const fmt = "YYYY-MM-DD";
+const parseISODate = (iso?: string | null) => (iso ? moment(iso, fmt, true) : null);
+const isoFromMoment = (d: moment.Moment) => d.format(fmt);
+const desktopPickerMedia = "(min-width: 0px)";
 type K =
   | "stDate"
   | "devStart"
@@ -71,6 +71,7 @@ type K =
   | "iftStart"
   | "iftEnd"
   | "ffInnerDate"
+  | "ffDevToolsDate"
   | "ffDate"
   | "regressStart"
   | "regressEnd"
@@ -82,162 +83,111 @@ type K =
 function recalcPrevious(current: Release, anchor: K, iso: string): Release {
   const out: Release = { ...current, [anchor]: iso };
 
-  const fromOpsStart = (opsStart: string) => {
-    const regressStart = addBusinessDaysISO(opsStart, -4);
-    const regressEnd = addBusinessDaysISO(regressStart, +3);
-    const ffDate = addBusinessDaysISO(regressStart, -1);
-    const ffInnerDate = addBusinessDaysISO(ffDate, -3);
-    const iftStart = addBusinessDaysISO(ffInnerDate, -5);
-    const iftEnd = addBusinessDaysISO(iftStart, +4);
-    const buildDate = addBusinessDaysISO(iftStart, -1);
-    const crDate = addBusinessDaysISO(buildDate, -1);
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.regressStart = regressStart;
-    out.regressEnd = regressEnd;
-    out.ffDate = ffDate;
-    out.ffInnerDate = ffInnerDate;
-    out.iftStart = iftStart;
-    out.iftEnd = iftEnd;
-    out.buildDate = buildDate;
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromRegressStart = (regressStart: string) => {
-    const regressEnd = addBusinessDaysISO(regressStart, +3);
-    const ffDate = addBusinessDaysISO(regressStart, -1);
-    const ffInnerDate = addBusinessDaysISO(ffDate, -3);
-    const iftStart = addBusinessDaysISO(ffInnerDate, -5);
-    const iftEnd = addBusinessDaysISO(iftStart, +4);
-    const buildDate = addBusinessDaysISO(iftStart, -1);
-    const crDate = addBusinessDaysISO(buildDate, -1);
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.regressStart = regressStart;
-    out.regressEnd = regressEnd;
-    out.ffDate = ffDate;
-    out.ffInnerDate = ffInnerDate;
-    out.iftStart = iftStart;
-    out.iftEnd = iftEnd;
-    out.buildDate = buildDate;
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromFF = (ffDate: string) => {
-    const ffInnerDate = addBusinessDaysISO(ffDate, -3);
-    const iftStart = addBusinessDaysISO(ffInnerDate, -5);
-    const iftEnd = addBusinessDaysISO(iftStart, +4);
-    const buildDate = addBusinessDaysISO(iftStart, -1);
-    const crDate = addBusinessDaysISO(buildDate, -1);
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.ffDate = ffDate;
-    out.ffInnerDate = ffInnerDate;
-    out.iftStart = iftStart;
-    out.iftEnd = iftEnd;
-    out.buildDate = buildDate;
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromFFInner = (ffInnerDate: string) => {
-    const ffDate = addBusinessDaysISO(ffInnerDate, +3);
-    fromFF(ffDate);
-    out.ffInnerDate = ffInnerDate;
-  };
-
-  const fromIftStart = (iftStart: string) => {
-    const iftEnd = addBusinessDaysISO(iftStart, +4);
-    const buildDate = addBusinessDaysISO(iftStart, -1);
-    const crDate = addBusinessDaysISO(buildDate, -1);
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.iftStart = iftStart;
-    out.iftEnd = iftEnd;
-    out.buildDate = buildDate;
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromBuild = (buildDate: string) => {
-    const crDate = addBusinessDaysISO(buildDate, -1);
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.buildDate = buildDate;
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromCR = (crDate: string) => {
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromDevEnd = (devEnd: string) => {
-    const devStart = addBusinessDaysISO(devEnd, -6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.devEnd = devEnd;
-    out.devStart = devStart;
-    out.stDate = stDate;
-  };
-
   const fromDevStart = (devStart: string) => {
     const stDate = addBusinessDaysISO(devStart, -1);
     out.devStart = devStart;
     out.stDate = stDate;
   };
 
+  const fromDevEnd = (devEnd: string) => {
+    const devStart = addBusinessDaysISO(devEnd, -6);
+    out.devEnd = devEnd;
+    fromDevStart(devStart);
+  };
+
+  const fromCR = (crDate: string) => {
+    const devStart = addBusinessDaysISO(crDate, -7);
+    const devEnd = addBusinessDaysISO(devStart, +6);
+    out.crDate = crDate;
+    out.devStart = devStart;
+    out.devEnd = devEnd;
+    fromDevStart(devStart);
+  };
+
+  const fromBuild = (buildDate: string) => {
+    const crDate = addBusinessDaysISO(buildDate, -1);
+    out.buildDate = buildDate;
+    fromCR(crDate);
+  };
+
+  const fromIftStart = (iftStart: string) => {
+    const iftEnd = addBusinessDaysISO(iftStart, +4);
+    out.iftStart = iftStart;
+    out.iftEnd = iftEnd;
+    const buildDate = addBusinessDaysISO(iftStart, -1);
+    fromBuild(buildDate);
+  };
+
+  const fromFFInner = (ffInnerDate: string) => {
+    const iftStart = addBusinessDaysISO(ffInnerDate, -5);
+    out.ffInnerDate = ffInnerDate;
+    fromIftStart(iftStart);
+  };
+
+  const fromFFDevTools = (ffDevToolsDate: string) => {
+    const ffInnerDate = addBusinessDaysISO(ffDevToolsDate, -1);
+    const ffDate = addBusinessDaysISO(ffDevToolsDate, +2);
+    out.ffDevToolsDate = ffDevToolsDate;
+    out.ffDate = ffDate;
+    fromFFInner(ffInnerDate);
+  };
+
+  const fromFF = (ffDate: string) => {
+    const ffDevToolsDate = addBusinessDaysISO(ffDate, -2);
+    out.ffDate = ffDate;
+    fromFFDevTools(ffDevToolsDate);
+  };
+
+  const fromRegressStart = (regressStart: string) => {
+    const regressEnd = addBusinessDaysISO(regressStart, +3);
+    out.regressStart = regressStart;
+    out.regressEnd = regressEnd;
+    const ffDate = addBusinessDaysISO(regressStart, -1);
+    fromFF(ffDate);
+  };
+
+  const fromRegressEnd = (regressEnd: string) => {
+    const regressStart = addBusinessDaysISO(regressEnd, -3);
+    out.regressEnd = regressEnd;
+    fromRegressStart(regressStart);
+  };
+
+  const fromOpsStart = (opsStart: string) => {
+    const regressEnd = addBusinessDaysISO(opsStart, -1);
+    out.opsStart = opsStart;
+    out.opsEnd = addBusinessDaysISO(opsStart, +2);
+    fromRegressEnd(regressEnd);
+  };
+
+  const fromOpsEnd = (opsEnd: string) => {
+    const opsStart = addBusinessDaysISO(opsEnd, -2);
+    out.opsEnd = opsEnd;
+    fromOpsStart(opsStart);
+  };
+
+  const fromPSI = (psiDate: string) => {
+    const opsEnd = addBusinessDaysISO(psiDate, -1);
+    out.psiDate = psiDate;
+    fromOpsEnd(opsEnd);
+  };
+
+  const fromProm = (promDate: string) => {
+    const psiDate = addBusinessDaysISO(promDate, -1);
+    out.promDate = promDate;
+    fromPSI(psiDate);
+  };
+
   switch (anchor) {
     case "promDate": {
-      const psi = addBusinessDaysISO(iso, -1);
-      out.psiDate = psi;
-      const opsStart = addBusinessDaysISO(psi, -3);
-      out.opsStart = opsStart;
-      out.opsEnd = addBusinessDaysISO(opsStart, +2);
-      fromOpsStart(opsStart);
+      fromProm(iso);
       break;
     }
     case "psiDate": {
-      const opsStart = addBusinessDaysISO(iso, -3);
-      out.opsStart = opsStart;
-      out.opsEnd = addBusinessDaysISO(opsStart, +2);
-      fromOpsStart(opsStart);
+      fromPSI(iso);
       break;
     }
     case "opsEnd": {
-      const opsStart = addBusinessDaysISO(iso, -2);
-      out.opsStart = opsStart;
-      out.opsEnd = iso;
-      fromOpsStart(opsStart);
+      fromOpsEnd(iso);
       break;
     }
     case "opsStart":
@@ -245,9 +195,7 @@ function recalcPrevious(current: Release, anchor: K, iso: string): Release {
       break;
 
     case "regressEnd": {
-      const regressStart = addBusinessDaysISO(iso, -3);
-      fromRegressStart(regressStart);
-      out.regressEnd = iso;
+      fromRegressEnd(iso);
       break;
     }
     case "regressStart":
@@ -258,14 +206,18 @@ function recalcPrevious(current: Release, anchor: K, iso: string): Release {
       fromFF(iso);
       break;
 
+    case "ffDevToolsDate":
+      fromFFDevTools(iso);
+      break;
+
     case "ffInnerDate":
       fromFFInner(iso);
       break;
 
     case "iftEnd": {
       const iftStart = addBusinessDaysISO(iso, -4);
-      fromIftStart(iftStart);
       out.iftEnd = iso;
+      fromIftStart(iftStart);
       break;
     }
     case "iftStart":
@@ -286,6 +238,7 @@ function recalcPrevious(current: Release, anchor: K, iso: string): Release {
 
     case "devStart":
       fromDevStart(iso);
+      out.devEnd = addBusinessDaysISO(iso, +6);
       break;
 
     case "stDate":
@@ -295,6 +248,23 @@ function recalcPrevious(current: Release, anchor: K, iso: string): Release {
 
   return out;
 }
+
+const isReleaseCleared = (r: Release) =>
+  !r.psiDate &&
+  !r.opsStart &&
+  !r.opsEnd &&
+  !r.regressStart &&
+  !r.regressEnd &&
+  !r.ffDate &&
+  !r.ffDevToolsDate &&
+  !r.ffInnerDate &&
+  !r.iftStart &&
+  !r.iftEnd &&
+  !r.buildDate &&
+  !r.crDate &&
+  !r.devStart &&
+  !r.devEnd &&
+  !r.stDate;
 
 function InlineDate({
   value,
@@ -306,52 +276,103 @@ function InlineDate({
   label?: string;
 }) {
   const [editing, setEditing] = React.useState(false);
-  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+
+  const parsed = parseISODate(value);
+  const display = parsed
+    ? `${parsed.format("DD.MM.YYYY")} (${parsed.format("dd")})`
+    : "—";
+
+  const handleBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget;
+    if (next && wrapperRef.current?.contains(next as Node)) {
+      return;
+    }
+    setEditing(false);
+    setPickerOpen(false);
+  };
 
   React.useEffect(() => {
-    if (editing && inputRef.current) {
-      try {
-        (inputRef.current as any).showPicker?.();
-      } catch {}
-      inputRef.current.focus();
-      inputRef.current.select?.();
+    if (editing) {
+      setPickerOpen(true);
+    } else {
+      setPickerOpen(false);
     }
   }, [editing]);
 
   return (
-    <Box
-      sx={{ cursor: "pointer", width: "100%", textAlign: "center" }}
-      onClick={() => setEditing(true)}
-      title="Изменить дату"
-    >
-      {!editing ? (
-        <Typography component="span" sx={{ display: "block", lineHeight: 1.2 }}>
-          {ru(value)}
-        </Typography>
-      ) : (
-        <TextField
-          inputRef={inputRef}
-          size="small"
-          type="date"
-          value={value || ""}
-          onChange={(e) => onCommit(e.target.value)}
-          onBlur={() => setEditing(false)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === "Escape") {
-              (e.currentTarget as HTMLInputElement).blur();
+    <div ref={wrapperRef} onBlur={handleBlur}>
+      {editing ? (
+        <DatePicker
+          open={pickerOpen}
+          onOpen={() => setPickerOpen(true)}
+          onClose={() => setPickerOpen(false)}
+          onAccept={() => setEditing(false)}
+          value={parsed}
+          onChange={(newValue, context) => {
+            if (context?.validationError) return;
+            if (!newValue) {
+              onCommit("");
+              return;
             }
+            onCommit(isoFromMoment(newValue));
           }}
-          InputLabelProps={{ shrink: true }}
-          inputProps={{ "aria-label": label }}
-          sx={{
-            width: "100%",
-            "& .MuiOutlinedInput-notchedOutline": { display: "none" },
-            "& .MuiInputBase-input": { p: 0, textAlign: "center" },
-            bgcolor: "transparent",
+          format="DD.MM.YYYY"
+          desktopModeMediaQuery={desktopPickerMedia}
+          slotProps={{
+            textField: {
+              size: "small",
+              fullWidth: true,
+              InputLabelProps: { shrink: true },
+              inputProps: { "aria-label": label },
+              autoFocus: true,
+              sx: {
+                maxWidth: 132,
+                minWidth: 120,
+                mx: "auto",
+                textAlign: "center",
+                "& .MuiOutlinedInput-notchedOutline": { display: "none" },
+                "& .MuiInputBase-input": { p: 0.4, textAlign: "center", fontSize: "0.9rem" },
+                "& .MuiInputBase-root": { pr: 0.25, height: 34 },
+                bgcolor: "transparent",
+              },
+            },
+            openPickerButton: {
+              size: "small",
+              sx: { fontSize: "1rem", pr: 0.25 },
+            },
+            actionBar: { actions: ["clear"] as const },
           }}
+          enableAccessibleFieldDOMStructure={false}
         />
+      ) : (
+        <Button
+          variant="text"
+          color="inherit"
+          onClick={() => setEditing(true)}
+          fullWidth
+          sx={{
+            minWidth: 110,
+            maxWidth: 140,
+            px: 0.5,
+            py: 0.5,
+            mx: "auto",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 1,
+            textTransform: "none",
+            fontSize: "0.9rem",
+            lineHeight: 1.2,
+            color: "text.primary",
+            "&:hover": { bgcolor: "action.hover" },
+          }}
+        >
+          {display}
+        </Button>
       )}
-    </Box>
+    </div>
   );
 }
 
@@ -362,6 +383,9 @@ export default function ReleasesPage() {
   const [deleteRelease] = useDeleteReleaseMutation();
 
   const [hidePast, setHidePast] = React.useState(true);
+  const [manualReleaseIds, setManualReleaseIds] = React.useState<Set<string>>(
+    () => new Set()
+  );
 
   const todayISO = toISOlocal(new Date());
   const releases = React.useMemo(() => {
@@ -379,15 +403,34 @@ export default function ReleasesPage() {
     return arr;
   }, [releasesRaw, hidePast, todayISO]);
 
+  React.useEffect(() => {
+    setManualReleaseIds((prev) => {
+      const next = new Set(prev);
+      releasesRaw.forEach((r) => {
+        if (isReleaseCleared(r)) {
+          next.add(r.id);
+        }
+      });
+      return next;
+    });
+  }, [releasesRaw]);
+
   const [newProm, setNewProm] = React.useState<string>("");
   const onAdd = async () => {
     if (!newProm) return;
-    await addRelease({ promDate: newProm }).unwrap();
+    const auto = recalcPrevious({} as Release, "promDate", newProm);
+    const { id: _omit, createdAt, updatedAt, ...payload } = auto as Partial<Release>;
+    await addRelease(payload as Partial<Release> & { promDate: string }).unwrap();
     setNewProm("");
   };
 
   const onClear = async (r: Release) => {
     await updateRelease({ id: r.id, action: "clear" } as any).unwrap();
+    setManualReleaseIds((prev) => {
+      const next = new Set(prev);
+      next.add(r.id);
+      return next;
+    });
   };
 
   const onDelete = async (r: Release) => {
@@ -397,6 +440,17 @@ export default function ReleasesPage() {
 
   const commit = async (r: Release, field: K, iso: string) => {
     if (!iso) return;
+    const manual = manualReleaseIds.has(r.id) || isReleaseCleared(r);
+    if (manual) {
+      await updateRelease({ id: r.id, [field]: iso } as any).unwrap();
+      setManualReleaseIds((prev) => {
+        const next = new Set(prev);
+        next.add(r.id);
+        return next;
+      });
+      return;
+    }
+
     const updated = recalcPrevious(r, field, iso);
     const { id: _omit, ...patch } = updated as Release & { id: string };
     await updateRelease({ id: r.id, ...patch }).unwrap();
@@ -407,10 +461,15 @@ export default function ReleasesPage() {
   const stickyBg = "background.paper";
 
   return (
-    <Paper
-      elevation={0}
-      sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
+    <LocalizationProvider
+      dateAdapter={AdapterMoment}
+      adapterLocale="ru"
+      localeText={ruRU.components.MuiLocalizationProvider.defaultProps.localeText}
     >
+      <Paper
+        elevation={0}
+        sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
+      >
       <Stack
         direction={{ xs: "column", md: "row" }}
         spacing={2}
@@ -431,20 +490,30 @@ export default function ReleasesPage() {
         />
 
         <Stack direction="row" spacing={1} alignItems="center">
-          <TextField
-            size="small"
-            type="date"
+          <DatePicker
             label="Дата ПРОМ"
-            value={newProm}
-            onChange={(e) => setNewProm(e.target.value)}
-            InputLabelProps={{ shrink: true }}
-            onClick={(e) => {
-              const input = e.currentTarget.querySelector(
-                "input"
-              ) as HTMLInputElement;
-              try {
-                (input as any)?.showPicker?.();
-              } catch {}
+            value={parseISODate(newProm)}
+            onChange={(newValue, context) => {
+              if (context?.validationError) return;
+              setNewProm(newValue && newValue.isValid() ? isoFromMoment(newValue) : "");
+            }}
+            format="DD.MM.YYYY"
+            desktopModeMediaQuery={desktopPickerMedia}
+            slotProps={{
+              textField: {
+                size: "small",
+                InputLabelProps: { shrink: true },
+                sx: {
+                  width: 170,
+                  "& .MuiInputBase-input": { fontSize: "0.95rem" },
+                  "& .MuiInputBase-root": { height: 36 },
+                },
+              },
+              openPickerButton: {
+                size: "small",
+                sx: { fontSize: "1rem", pr: 0.25 },
+              },
+              actionBar: { actions: ["clear"] as const },
             }}
           />
           <Button
@@ -480,18 +549,19 @@ export default function ReleasesPage() {
               <TableCell sx={{ minWidth: 110 }}>СТ</TableCell>
               <TableCell sx={{ minWidth: 140 }}>Разработка (начало)</TableCell>
               <TableCell sx={{ minWidth: 140 }}>
-                Разработка (окончание)
+                Разработка (конец)
               </TableCell>
               <TableCell sx={{ minWidth: 110 }}>CR</TableCell>
               <TableCell sx={{ minWidth: 110 }}>Сборка</TableCell>
               <TableCell sx={{ minWidth: 140 }}>ИФТ (начало)</TableCell>
-              <TableCell sx={{ minWidth: 140 }}>ИФТ (окончание)</TableCell>
+              <TableCell sx={{ minWidth: 140 }}>ИФТ (конец)</TableCell>
               <TableCell sx={{ minWidth: 150 }}>FF InnerSource</TableCell>
+              <TableCell sx={{ minWidth: 140 }}>FF DevTools</TableCell>
               <TableCell sx={{ minWidth: 110 }}>FF</TableCell>
               <TableCell sx={{ minWidth: 150 }}>Регресс (начало)</TableCell>
-              <TableCell sx={{ minWidth: 150 }}>Регресс (окончание)</TableCell>
+              <TableCell sx={{ minWidth: 150 }}>Регресс (конец)</TableCell>
               <TableCell sx={{ minWidth: 130 }}>OPS (начало)</TableCell>
-              <TableCell sx={{ minWidth: 130 }}>OPS (окончание)</TableCell>
+              <TableCell sx={{ minWidth: 130 }}>OPS (конец)</TableCell>
               <TableCell sx={{ minWidth: 120 }}>ПСИ</TableCell>
 
               <TableCell
@@ -584,6 +654,13 @@ export default function ReleasesPage() {
                     value={r.ffInnerDate}
                     onCommit={(iso) => commit(r, "ffInnerDate", iso)}
                     label="FF InnerSource"
+                  />
+                </TableCell>
+                <TableCell>
+                  <InlineDate
+                    value={r.ffDevToolsDate}
+                    onCommit={(iso) => commit(r, "ffDevToolsDate", iso)}
+                    label="FF DevTools"
                   />
                 </TableCell>
                 <TableCell>
@@ -686,6 +763,7 @@ export default function ReleasesPage() {
           </TableBody>
         </Table>
       </TableContainer>
-    </Paper>
+      </Paper>
+    </LocalizationProvider>
   );
 }
