@@ -340,12 +340,6 @@ function InlineDate({
           fullWidth: true,
           InputLabelProps: { shrink: true },
           inputProps: { "aria-label": label },
-          onClick: (e) => {
-            const input = e.currentTarget.querySelector("input");
-            input?.focus();
-            const button = e.currentTarget.querySelector("button");
-            (button as HTMLButtonElement | null)?.click();
-          },
           sx: {
             textAlign: "center",
             "& .MuiOutlinedInput-notchedOutline": { display: "none" },
@@ -489,14 +483,6 @@ export default function ReleasesPage() {
               textField: {
                 size: "small",
                 InputLabelProps: { shrink: true },
-                onClick: (e) => {
-                  const input = (e.currentTarget.querySelector(
-                    "input"
-                  ) as HTMLInputElement | null);
-                  input?.focus();
-                  const button = e.currentTarget.querySelector("button");
-                  (button as HTMLButtonElement | null)?.click();
-                },
                 sx: { "& .MuiInputBase-input": { fontSize: "0.95rem" } },
               },
               openPickerButton: {

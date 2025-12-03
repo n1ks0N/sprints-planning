@@ -80,12 +80,6 @@ const pickerSlotProps = (opts?: { error?: boolean }) =>
       size: "small",
       error: !!opts?.error,
       InputLabelProps: { shrink: true },
-      onClick: (e: React.MouseEvent<HTMLDivElement>) => {
-        const input = e.currentTarget.querySelector("input");
-        input?.focus();
-        const button = e.currentTarget.querySelector("button");
-        (button as HTMLButtonElement | null)?.click();
-      },
       sx: {
         "& .MuiInputBase-input": {
           fontSize: "0.9rem",
