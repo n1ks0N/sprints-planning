@@ -2,6 +2,9 @@ const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const common = require('./webpack.common');
 
+const API_URL = process.env.API_URL || '/isu/isu_backend_common/sprints-planning';
+const shouldProxy = API_URL.startsWith('/');
+
 module.exports = {
   ...common,
   output: {
@@ -18,8 +21,8 @@ module.exports = {
     static: path.join(__dirname, 'public'),
     historyApiFallback: true,
     port: 5173,
-    proxy: [
-      { context: ['/api'], target: 'http://localhost:8080', changeOrigin: true },
-    ],
+    proxy: shouldProxy
+      ? [{ context: [API_URL], target: 'http://localhost:8080', changeOrigin: true }]
+      : [],
   },
 };

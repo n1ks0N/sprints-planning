@@ -23,6 +23,7 @@ services:
       context: ./server
       dockerfile: Dockerfile
     environment:
+      SERVER_SERVLET_CONTEXT_PATH: /api/v1/sprints-planning
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/sprints?stringtype=unspecified
       SPRING_DATASOURCE_USERNAME: sprints
       SPRING_DATASOURCE_PASSWORD: sprints

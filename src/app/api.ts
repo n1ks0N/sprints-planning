@@ -36,7 +36,7 @@ const USE_MOCK = process.env.USE_MOCK === "true";
 
 const baseQuery = USE_MOCK
   ? (mockBaseQuery as BaseQueryFn)
-  : fetchBaseQuery({ baseUrl: process.env.API_URL || "/api" });
+  : fetchBaseQuery({ baseUrl: process.env.API_URL || "/api/v1/sprints-planning" });
 
 type TagDescriptor<T extends string> = {
   type: T;
@@ -1074,7 +1074,7 @@ export const api = createApi({
     // ---- Export ----
     exportExcel: b.query<Blob, void>({
       async queryFn() {
-        const baseUrl = process.env.API_URL || "/api";
+        const baseUrl = process.env.API_URL || "/api/v1/sprints-planning";
         try {
           const response = await fetch(`${baseUrl}/export/excel`);
           const blob = await response.blob();
