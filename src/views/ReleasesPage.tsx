@@ -322,6 +322,7 @@ function InlineDate({
   label?: string;
 }) {
   const [editing, setEditing] = React.useState(false);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
 
   const parsed = parseISODate(value);
@@ -335,12 +336,25 @@ function InlineDate({
       return;
     }
     setEditing(false);
+    setPickerOpen(false);
   };
+
+  React.useEffect(() => {
+    if (editing) {
+      setPickerOpen(true);
+    } else {
+      setPickerOpen(false);
+    }
+  }, [editing]);
 
   return (
     <div ref={wrapperRef} onBlur={handleBlur}>
       {editing ? (
         <DatePicker
+          open={pickerOpen}
+          onOpen={() => setPickerOpen(true)}
+          onClose={() => setPickerOpen(false)}
+          onAccept={() => setEditing(false)}
           value={parsed}
           onChange={(newValue, context) => {
             if (context?.validationError) return;
@@ -350,7 +364,6 @@ function InlineDate({
             }
             onCommit(isoFromMoment(newValue));
           }}
-          onClose={() => setEditing(false)}
           format="DD.MM.YYYY"
           desktopModeMediaQuery={desktopPickerMedia}
           slotProps={{
