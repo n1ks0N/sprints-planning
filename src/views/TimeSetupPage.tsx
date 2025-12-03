@@ -79,14 +79,6 @@ const pickerSlotProps = (opts?: { error?: boolean }) =>
       size: "small",
       error: !!opts?.error,
       InputLabelProps: { shrink: true },
-      onClick: (e: React.MouseEvent<HTMLDivElement>) => {
-        const input = e.currentTarget.querySelector("input");
-        input?.focus();
-      },
-      onFocus: (e: React.FocusEvent<HTMLDivElement>) => {
-        const input = e.currentTarget.querySelector("input");
-        input?.focus();
-      },
       sx: {
         "& .MuiInputBase-input": {
           fontSize: "0.9rem",
@@ -96,7 +88,7 @@ const pickerSlotProps = (opts?: { error?: boolean }) =>
     },
     openPickerButton: { size: "small", sx: { fontSize: "1.1rem" } },
     actionBar: { actions: ["clear"] as const },
-  } satisfies DatePickerSlotProps<true>);
+  } satisfies DatePickerSlotProps<false>);
 
 function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
   if (a.length !== b.length) return false;
@@ -704,6 +696,7 @@ export default function TimeSetupPage() {
                     setSEditStart(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!sEditError })}
                 />
               </Grid>
@@ -715,6 +708,7 @@ export default function TimeSetupPage() {
                     setSEditEnd(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!sEditError })}
                 />
               </Grid>
@@ -817,6 +811,7 @@ export default function TimeSetupPage() {
                     setSStart(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!sError })}
                 />
               </Grid>
@@ -828,6 +823,7 @@ export default function TimeSetupPage() {
                     setSEnd(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!sError })}
                 />
               </Grid>
@@ -927,6 +923,7 @@ export default function TimeSetupPage() {
                     setQEditStart(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!qEditError })}
                 />
               </Grid>
@@ -938,6 +935,7 @@ export default function TimeSetupPage() {
                     setQEditEnd(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!qEditError })}
                 />
               </Grid>
@@ -1063,23 +1061,25 @@ export default function TimeSetupPage() {
                     <DatePicker
                       label="Дата начала"
                       value={toPickerValue(qStart)}
-                    onChange={(newValue) =>
-                      setQStart(newValue && newValue.isValid() ? iso(newValue) : "")
-                    }
-                    format="DD.MM.YYYY"
-                    slotProps={pickerSlotProps({ error: !!qError })}
-                  />
+                      onChange={(newValue) =>
+                        setQStart(newValue && newValue.isValid() ? iso(newValue) : "")
+                      }
+                      format="DD.MM.YYYY"
+                      enableAccessibleFieldDOMStructure={false}
+                      slotProps={pickerSlotProps({ error: !!qError })}
+                    />
                 </Grid>
                 <Grid item xs={6} md={3}>
-                  <DatePicker
-                    label="Дата окончания"
+                    <DatePicker
+                      label="Дата окончания"
                       value={toPickerValue(qEnd)}
-                    onChange={(newValue) =>
-                      setQEnd(newValue && newValue.isValid() ? iso(newValue) : "")
-                    }
-                    format="DD.MM.YYYY"
-                    slotProps={pickerSlotProps({ error: !!qError })}
-                  />
+                      onChange={(newValue) =>
+                        setQEnd(newValue && newValue.isValid() ? iso(newValue) : "")
+                      }
+                      format="DD.MM.YYYY"
+                      enableAccessibleFieldDOMStructure={false}
+                      slotProps={pickerSlotProps({ error: !!qError })}
+                    />
                 </Grid>
                   <Grid
                     item

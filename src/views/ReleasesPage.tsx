@@ -388,6 +388,7 @@ function InlineDate({
             openPickerButton: { size: "small", sx: { fontSize: "1.1rem" } },
             actionBar: { actions: ["clear"] },
           }}
+          enableAccessibleFieldDOMStructure={false}
         />
       )}
     </Box>
