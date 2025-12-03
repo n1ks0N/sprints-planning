@@ -26,8 +26,17 @@ function clone<T>(v: T): T {
 }
 
 function addDaysISO(iso: string, days: number): string {
-  const d = new Date(iso);
-  d.setDate(d.getDate() + days);
+  let d = new Date(iso);
+  if (days === 0) return iso;
+  const step = days > 0 ? 1 : -1;
+  let left = Math.abs(days);
+  while (left > 0) {
+    d.setDate(d.getDate() + step);
+    const day = d.getDay();
+    if (day !== 0 && day !== 6) {
+      left -= 1;
+    }
+  }
   return d.toISOString().slice(0, 10);
 }
 
@@ -56,14 +65,15 @@ function ensureTaskLoadsForAllSprints(item: BacklogItem) {
 
 function computeReleaseFromProm(promDate: string) {
   const psiDate = addDaysISO(promDate, -1);
-  const opsStart = addDaysISO(psiDate, -3);
-  const opsEnd = addDaysISO(opsStart, 2);
+  const opsEnd = addDaysISO(psiDate, -1);
+  const opsStart = addDaysISO(opsEnd, -2);
 
-  const regressStart = addDaysISO(opsStart, -4);
-  const regressEnd = addDaysISO(regressStart, 3);
+  const regressEnd = addDaysISO(opsStart, -1);
+  const regressStart = addDaysISO(regressEnd, -3);
 
   const ffDate = addDaysISO(regressStart, -1);
-  const ffInnerDate = addDaysISO(ffDate, -3);
+  const ffDevToolsDate = addDaysISO(ffDate, -2);
+  const ffInnerDate = addDaysISO(ffDevToolsDate, -1);
 
   const iftStart = addDaysISO(ffInnerDate, -5);
   const iftEnd = addDaysISO(iftStart, 4);
@@ -83,6 +93,7 @@ function computeReleaseFromProm(promDate: string) {
     regressStart,
     regressEnd,
     ffDate,
+    ffDevToolsDate,
     ffInnerDate,
     iftStart,
     iftEnd,
@@ -466,6 +477,7 @@ export const mockBaseQuery: BaseQueryFn<
         regressStart: set.regressStart,
         regressEnd: set.regressEnd,
         ffDate: set.ffDate,
+        ffDevToolsDate: set.ffDevToolsDate,
         ffInnerDate: set.ffInnerDate,
         iftStart: set.iftStart,
         iftEnd: set.iftEnd,
@@ -497,6 +509,7 @@ export const mockBaseQuery: BaseQueryFn<
           regressStart: undefined,
           regressEnd: undefined,
           ffDate: undefined,
+          ffDevToolsDate: undefined,
           ffInnerDate: undefined,
           iftStart: undefined,
           iftEnd: undefined,

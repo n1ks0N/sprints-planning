@@ -984,6 +984,7 @@ export const api = createApi({
           regressStart: arg.regressStart,
           regressEnd: arg.regressEnd,
           ffDate: arg.ffDate,
+          ffDevToolsDate: arg.ffDevToolsDate,
           ffInnerDate: arg.ffInnerDate,
           iftStart: arg.iftStart,
           iftEnd: arg.iftEnd,
