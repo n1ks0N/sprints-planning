@@ -2,7 +2,7 @@ const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const common = require('./webpack.common');
 
-const API_URL = process.env.API_URL || '/isu/isu_backend_common/sprints-planning';
+const API_URL = process.env.API_URL || '/api/v1/sprints-planning';
 const shouldProxy = API_URL.startsWith('/');
 
 module.exports = {
