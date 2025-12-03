@@ -1,11 +1,13 @@
 package com.sber.isu.sprints_planning.mapper;
 
+import com.sber.isu.sprints_planning.dto.ApiCallHistoryDto;
 import com.sber.isu.sprints_planning.dto.ParticipantDto;
 import com.sber.isu.sprints_planning.dto.QuarterDto;
 import com.sber.isu.sprints_planning.dto.ReleaseDto;
 import com.sber.isu.sprints_planning.dto.RunVacationDto;
 import com.sber.isu.sprints_planning.dto.SprintDto;
 import com.sber.isu.sprints_planning.dto.TaskDto;
+import com.sber.isu.sprints_planning.model.ApiCallHistoryEntity;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
 import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.ReleaseEntity;
@@ -131,6 +133,19 @@ public final class DtoMapper {
             toIso(entity.getStDate()),
             toIso(entity.getCreatedAt()),
             toIso(entity.getUpdatedAt())
+        );
+    }
+
+    public static ApiCallHistoryDto toApiCallHistoryDto(ApiCallHistoryEntity entity) {
+        return new ApiCallHistoryDto(
+            entity.getId(),
+            entity.getSessionId(),
+            entity.getUserName(),
+            entity.getAction(),
+            entity.getPath(),
+            entity.getHttpMethod(),
+            entity.getStatusCode(),
+            entity.getCreatedAt()
         );
     }
 

@@ -8,6 +8,8 @@ import type {
   CapacityCell,
   BacklogItem,
   Release,
+  ApiSessionHistory,
+  ApiHistoryAction,
 } from "../types";
 import {
   quarters,
@@ -20,6 +22,27 @@ import {
 } from "./mockData";
 
 const normFactor = 0.75;
+const now = new Date().toISOString();
+
+const mockHistory: ApiSessionHistory[] = [
+  {
+    sessionId: "demo-session",
+    userName: "Demo пользователь",
+    lastActionAt: now,
+    actions: [
+      {
+        id: "demo-action-1",
+        sessionId: "demo-session",
+        userName: "Demo пользователь",
+        action: "Просмотр данных бэклога",
+        path: "/tasks",
+        httpMethod: "GET",
+        statusCode: 200,
+        createdAt: now,
+      } satisfies ApiHistoryAction,
+    ],
+  },
+];
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v));
@@ -536,6 +559,10 @@ export const mockBaseQuery: BaseQueryFn<
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
       return { data: blob };
+    }
+
+    if (url === "/history" && method === "GET") {
+      return { data: clone(mockHistory) as ApiSessionHistory[] };
     }
 
     return { error: { status: 404, data: "Unknown endpoint" } as any };

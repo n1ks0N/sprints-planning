@@ -1,0 +1,79 @@
+import {
+  Alert,
+  CircularProgress,
+  Divider,
+  Paper,
+  Stack,
+  Typography,
+} from "@mui/material";
+import { useGetHistoryQuery } from "../app/api";
+
+const formatDateTime = (value: string) =>
+  new Date(value).toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+export default function HistoryPage() {
+  const { data, isLoading, isError } = useGetHistoryQuery();
+
+  if (isLoading) {
+    return (
+      <Stack alignItems="center" py={4}>
+        <CircularProgress />
+      </Stack>
+    );
+  }
+
+  if (isError) {
+    return <Alert severity="error">Не удалось загрузить историю действий</Alert>;
+  }
+
+  if (!data || data.length === 0) {
+    return <Alert severity="info">История действий пока пуста</Alert>;
+  }
+
+  return (
+    <Stack spacing={2}>
+      {data.map((session) => (
+        <Paper key={session.sessionId} sx={{ p: 2 }}>
+          <Stack spacing={1}>
+            <Stack direction="row" justifyContent="space-between" alignItems="baseline">
+              <Typography variant="h6">{session.userName}</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Последняя активность: {formatDateTime(session.lastActionAt)}
+              </Typography>
+            </Stack>
+            <Typography variant="caption" color="text.secondary">
+              Сессия: {session.sessionId}
+            </Typography>
+            <Divider />
+            <Stack spacing={1} mt={1}>
+              {session.actions.map((action) => (
+                <Stack
+                  key={action.id}
+                  direction="row"
+                  spacing={2}
+                  alignItems="flex-start"
+                  flexWrap="wrap"
+                >
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ minWidth: 160 }}
+                  >
+                    {formatDateTime(action.createdAt)}
+                  </Typography>
+                  <Typography variant="body1">{action.action}</Typography>
+                </Stack>
+              ))}
+            </Stack>
+          </Stack>
+        </Paper>
+      ))}
+    </Stack>
+  );
+}
