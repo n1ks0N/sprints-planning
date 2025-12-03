@@ -14,7 +14,11 @@ import {
   Checkbox,
   FormControlLabel,
 } from "@mui/material";
-import { LocalizationProvider, DatePicker } from "@mui/x-date-pickers";
+import {
+  LocalizationProvider,
+  DatePicker,
+  type DatePickerSlotProps,
+} from "@mui/x-date-pickers";
 import { ruRU } from "@mui/x-date-pickers/locales";
 import { AdapterMoment } from "@mui/x-date-pickers/AdapterMoment";
 import AddIcon from "@mui/icons-material/Add";
@@ -68,30 +72,31 @@ const workingDaysInclusive = (startISO: string, endISO: string) => {
   return days;
 };
 
-const pickerSlotProps = (opts?: { error?: boolean }) => ({
-  textField: {
-    fullWidth: true,
-    size: "small",
-    error: !!opts?.error,
-    InputLabelProps: { shrink: true },
-    onClick: (e: React.MouseEvent<HTMLDivElement>) => {
-      const input = e.currentTarget.querySelector("input");
-      input?.focus();
-    },
-    onFocus: (e: React.FocusEvent<HTMLDivElement>) => {
-      const input = e.currentTarget.querySelector("input");
-      input?.focus();
-    },
-    sx: {
-      "& .MuiInputBase-input": {
-        fontSize: "0.9rem",
-        py: 1,
+const pickerSlotProps = (opts?: { error?: boolean }) =>
+  ({
+    textField: {
+      fullWidth: true,
+      size: "small",
+      error: !!opts?.error,
+      InputLabelProps: { shrink: true },
+      onClick: (e: React.MouseEvent<HTMLDivElement>) => {
+        const input = e.currentTarget.querySelector("input");
+        input?.focus();
+      },
+      onFocus: (e: React.FocusEvent<HTMLDivElement>) => {
+        const input = e.currentTarget.querySelector("input");
+        input?.focus();
+      },
+      sx: {
+        "& .MuiInputBase-input": {
+          fontSize: "0.9rem",
+          py: 1,
+        },
       },
     },
-  },
-  openPickerButton: { size: "small", sx: { fontSize: "1.1rem" } },
-  actionBar: { actions: ["clear"] },
-});
+    openPickerButton: { size: "small", sx: { fontSize: "1.1rem" } },
+    actionBar: { actions: ["clear"] as const },
+  } satisfies DatePickerSlotProps<moment.Moment, true>);
 
 function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
   if (a.length !== b.length) return false;
