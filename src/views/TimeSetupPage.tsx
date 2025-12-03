@@ -96,7 +96,7 @@ const pickerSlotProps = (opts?: { error?: boolean }) =>
     },
     openPickerButton: { size: "small", sx: { fontSize: "1.1rem" } },
     actionBar: { actions: ["clear"] as const },
-  } satisfies DatePickerSlotProps<moment.Moment, true>);
+  } satisfies DatePickerSlotProps<true>);
 
 function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
   if (a.length !== b.length) return false;
