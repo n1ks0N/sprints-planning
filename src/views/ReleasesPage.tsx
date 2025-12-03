@@ -19,6 +19,7 @@ import {
 } from "@mui/material";
 import { LocalizationProvider, DatePicker } from "@mui/x-date-pickers";
 import { AdapterMoment } from "@mui/x-date-pickers/AdapterMoment";
+import { ruRU } from "@mui/x-date-pickers/locales";
 import { Add, Delete, Backspace } from "@mui/icons-material";
 import moment from "moment";
 import "moment/locale/ru";
@@ -58,9 +59,13 @@ function addBusinessDaysISO(iso: string, delta: number) {
   }
   return toISOlocal(d);
 }
-const parseISODate = (iso?: string | null) =>
-  iso ? moment(iso, "YYYY-MM-DD", true) : null;
-const isoFromMoment = (d: moment.Moment) => d.format("YYYY-MM-DD");
+const fmt = "YYYY-MM-DD";
+const parseISODate = (iso?: string | null) => (iso ? moment(iso, fmt, true) : null);
+const isoFromMoment = (d: moment.Moment) => d.format(fmt);
+const ru = (iso?: string) =>
+  iso && moment(iso, fmt, true).isValid()
+    ? moment(iso, fmt).format("DD.MM.YYYY ddd")
+    : "—";
 
 type K =
   | "stDate"
@@ -321,31 +326,71 @@ function InlineDate({
   onCommit: (iso: string) => void;
   label?: string;
 }) {
+  const [open, setOpen] = React.useState(false);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select?.();
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [open]);
+
   return (
-    <DatePicker
-      value={parseISODate(value)}
-      onChange={(newValue, context) => {
-        if (context?.validationError) return;
-        if (!newValue) return;
-        onCommit(isoFromMoment(newValue));
-      }}
-      format="DD.MM.YYYY"
-      slotProps={{
-        textField: {
-          size: "small",
-          fullWidth: true,
-          inputProps: { "aria-label": label },
-          sx: {
-            textAlign: "center",
-            "& .MuiOutlinedInput-notchedOutline": { display: "none" },
-            "& .MuiInputBase-input": { p: 0.5, textAlign: "center" },
-            bgcolor: "transparent",
-          },
-        },
-        openPickerButton: { size: "small" },
-        actionBar: { actions: ["clear"] },
-      }}
-    />
+    <Box
+      sx={{ cursor: "pointer", width: "100%", textAlign: "center" }}
+      onClick={() => setOpen(true)}
+      title="Изменить дату"
+    >
+      {!open && (
+        <Typography component="span" sx={{ display: "block", lineHeight: 1.2 }}>
+          {ru(value)}
+        </Typography>
+      )}
+
+      {open && (
+        <DatePicker
+          open
+          onOpen={() => setOpen(true)}
+          onClose={() => setOpen(false)}
+          value={parseISODate(value)}
+          onChange={(newValue, context) => {
+            if (context?.validationError) return;
+            if (!newValue) {
+              onCommit("");
+              return;
+            }
+            onCommit(isoFromMoment(newValue));
+          }}
+          format="DD.MM.YYYY"
+          slotProps={{
+            textField: {
+              size: "small",
+              fullWidth: true,
+              inputRef,
+              autoFocus: true,
+              inputProps: { "aria-label": label },
+              onClick: () => setOpen(true),
+              onFocus: () => setOpen(true),
+              onKeyDown: (e) => {
+                if (e.key === "Escape") setOpen(false);
+                if (e.key === "Enter") setOpen(false);
+              },
+              sx: {
+                textAlign: "center",
+                "& .MuiOutlinedInput-notchedOutline": { display: "none" },
+                "& .MuiInputBase-input": { p: 0.5, textAlign: "center" },
+                bgcolor: "transparent",
+              },
+            },
+            openPickerButton: { size: "small", sx: { fontSize: "1.1rem" } },
+            actionBar: { actions: ["clear"] },
+          }}
+        />
+      )}
+    </Box>
   );
 }
 
@@ -432,7 +477,11 @@ export default function ReleasesPage() {
   const stickyBg = "background.paper";
 
   return (
-    <LocalizationProvider dateAdapter={AdapterMoment} adapterLocale="ru">
+    <LocalizationProvider
+      dateAdapter={AdapterMoment}
+      adapterLocale="ru"
+      localeText={ruRU.components.MuiLocalizationProvider.defaultProps.localeText}
+    >
       <Paper
         elevation={0}
         sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
@@ -469,7 +518,15 @@ export default function ReleasesPage() {
               textField: {
                 size: "small",
                 InputLabelProps: { shrink: true },
+                onClick: (e) => {
+                  const input = (e.currentTarget.querySelector(
+                    "input"
+                  ) as HTMLInputElement | null);
+                  input?.focus();
+                },
+                sx: { "& .MuiInputBase-input": { fontSize: "0.95rem" } },
               },
+              openPickerButton: { size: "small", sx: { fontSize: "1.1rem" } },
               actionBar: { actions: ["clear"] },
             }}
           />

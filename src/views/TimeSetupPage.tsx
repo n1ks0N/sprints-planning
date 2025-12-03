@@ -15,6 +15,7 @@ import {
   FormControlLabel,
 } from "@mui/material";
 import { LocalizationProvider, DatePicker } from "@mui/x-date-pickers";
+import { ruRU } from "@mui/x-date-pickers/locales";
 import { AdapterMoment } from "@mui/x-date-pickers/AdapterMoment";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
@@ -66,6 +67,31 @@ const workingDaysInclusive = (startISO: string, endISO: string) => {
   }
   return days;
 };
+
+const pickerSlotProps = (opts?: { error?: boolean }) => ({
+  textField: {
+    fullWidth: true,
+    size: "small",
+    error: !!opts?.error,
+    InputLabelProps: { shrink: true },
+    onClick: (e: React.MouseEvent<HTMLDivElement>) => {
+      const input = e.currentTarget.querySelector("input");
+      input?.focus();
+    },
+    onFocus: (e: React.FocusEvent<HTMLDivElement>) => {
+      const input = e.currentTarget.querySelector("input");
+      input?.focus();
+    },
+    sx: {
+      "& .MuiInputBase-input": {
+        fontSize: "0.9rem",
+        py: 1,
+      },
+    },
+  },
+  openPickerButton: { size: "small", sx: { fontSize: "1.1rem" } },
+  actionBar: { actions: ["clear"] },
+});
 
 function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
   if (a.length !== b.length) return false;
@@ -673,14 +699,7 @@ export default function TimeSetupPage() {
                     setSEditStart(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
-                  slotProps={{
-                    textField: {
-                      fullWidth: true,
-                      size: "small",
-                      error: !!sEditError,
-                    },
-                    actionBar: { actions: ["clear"] },
-                  }}
+                  slotProps={pickerSlotProps({ error: !!sEditError })}
                 />
               </Grid>
               <Grid item xs={6}>
@@ -691,14 +710,7 @@ export default function TimeSetupPage() {
                     setSEditEnd(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
-                  slotProps={{
-                    textField: {
-                      fullWidth: true,
-                      size: "small",
-                      error: !!sEditError,
-                    },
-                    actionBar: { actions: ["clear"] },
-                  }}
+                  slotProps={pickerSlotProps({ error: !!sEditError })}
                 />
               </Grid>
               <Grid item xs={6}>
@@ -800,14 +812,7 @@ export default function TimeSetupPage() {
                     setSStart(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
-                  slotProps={{
-                    textField: {
-                      fullWidth: true,
-                      size: "small",
-                      error: !!sError,
-                    },
-                    actionBar: { actions: ["clear"] },
-                  }}
+                  slotProps={pickerSlotProps({ error: !!sError })}
                 />
               </Grid>
               <Grid item xs={6}>
@@ -818,14 +823,7 @@ export default function TimeSetupPage() {
                     setSEnd(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
-                  slotProps={{
-                    textField: {
-                      fullWidth: true,
-                      size: "small",
-                      error: !!sError,
-                    },
-                    actionBar: { actions: ["clear"] },
-                  }}
+                  slotProps={pickerSlotProps({ error: !!sError })}
                 />
               </Grid>
               <Grid item xs={6}>
@@ -924,14 +922,7 @@ export default function TimeSetupPage() {
                     setQEditStart(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
-                  slotProps={{
-                    textField: {
-                      fullWidth: true,
-                      size: "small",
-                      error: !!qEditError,
-                    },
-                    actionBar: { actions: ["clear"] },
-                  }}
+                  slotProps={pickerSlotProps({ error: !!qEditError })}
                 />
               </Grid>
               <Grid item xs={6} md={3}>
@@ -942,14 +933,7 @@ export default function TimeSetupPage() {
                     setQEditEnd(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
-                  slotProps={{
-                    textField: {
-                      fullWidth: true,
-                      size: "small",
-                      error: !!qEditError,
-                    },
-                    actionBar: { actions: ["clear"] },
-                  }}
+                  slotProps={pickerSlotProps({ error: !!qEditError })}
                 />
               </Grid>
               <Grid
@@ -1000,7 +984,11 @@ export default function TimeSetupPage() {
   };
 
   return (
-    <LocalizationProvider dateAdapter={AdapterMoment} adapterLocale="ru">
+    <LocalizationProvider
+      dateAdapter={AdapterMoment}
+      adapterLocale="ru"
+      localeText={ruRU.components.MuiLocalizationProvider.defaultProps.localeText}
+    >
       <Paper elevation={0} sx={{ p: 2 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>
           Кварталы и спринты
@@ -1070,38 +1058,24 @@ export default function TimeSetupPage() {
                     <DatePicker
                       label="Дата начала"
                       value={toPickerValue(qStart)}
-                      onChange={(newValue) =>
-                        setQStart(newValue && newValue.isValid() ? iso(newValue) : "")
-                      }
-                      format="DD.MM.YYYY"
-                      slotProps={{
-                        textField: {
-                          fullWidth: true,
-                          size: "small",
-                          error: !!qError,
-                        },
-                        actionBar: { actions: ["clear"] },
-                      }}
-                    />
-                  </Grid>
-                  <Grid item xs={6} md={3}>
-                    <DatePicker
-                      label="Дата окончания"
+                    onChange={(newValue) =>
+                      setQStart(newValue && newValue.isValid() ? iso(newValue) : "")
+                    }
+                    format="DD.MM.YYYY"
+                    slotProps={pickerSlotProps({ error: !!qError })}
+                  />
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <DatePicker
+                    label="Дата окончания"
                       value={toPickerValue(qEnd)}
-                      onChange={(newValue) =>
-                        setQEnd(newValue && newValue.isValid() ? iso(newValue) : "")
-                      }
-                      format="DD.MM.YYYY"
-                      slotProps={{
-                        textField: {
-                          fullWidth: true,
-                          size: "small",
-                          error: !!qError,
-                        },
-                        actionBar: { actions: ["clear"] },
-                      }}
-                    />
-                  </Grid>
+                    onChange={(newValue) =>
+                      setQEnd(newValue && newValue.isValid() ? iso(newValue) : "")
+                    }
+                    format="DD.MM.YYYY"
+                    slotProps={pickerSlotProps({ error: !!qError })}
+                  />
+                </Grid>
                   <Grid
                     item
                     xs={12}
