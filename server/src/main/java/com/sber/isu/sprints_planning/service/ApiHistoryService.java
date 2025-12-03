@@ -37,16 +37,13 @@ public class ApiHistoryService {
     public void log(HttpServletRequest request, int statusCode) {
         String sessionId = request.getHeader("X-Session-Id");
         String userName = request.getHeader("X-User-Name");
-        if (sessionId == null || sessionId.isBlank() || userName == null || userName.isBlank()) {
-            return;
-        }
-        if (statusCode >= 400) {
+        if (sessionId == null || sessionId.isBlank()) {
             return;
         }
 
         ApiCallHistoryEntity entity = new ApiCallHistoryEntity();
         entity.setSessionId(sessionId);
-        entity.setUserName(userName);
+        entity.setUserName(userName == null || userName.isBlank() ? "unknown" : userName);
         entity.setHttpMethod(request.getMethod());
         entity.setPath(extractPath(request));
         entity.setAction(actionDescriptionResolver.resolve(entity.getHttpMethod(), entity.getPath()));
@@ -67,7 +64,10 @@ public class ApiHistoryService {
 
         Map<String, List<ApiCallHistoryEntity>> grouped = new LinkedHashMap<>();
         for (ApiCallHistoryEntity entity : items) {
-            grouped.computeIfAbsent(entity.getSessionId(), k -> new ArrayList<>()).add(entity);
+            if (isAction(entity)) {
+                grouped.computeIfAbsent(entity.getSessionId(), k -> new ArrayList<>())
+                    .add(entity);
+            }
         }
 
         return grouped.values().stream()
@@ -86,6 +86,10 @@ public class ApiHistoryService {
             .toList();
         return new ApiSessionHistoryDto(latest.getSessionId(), latest.getUserName(),
             latest.getCreatedAt(), actions);
+    }
+
+    private boolean isAction(ApiCallHistoryEntity entity) {
+        return !"GET".equalsIgnoreCase(entity.getHttpMethod());
     }
 
     private String extractPath(HttpServletRequest request) {

@@ -1,8 +1,4 @@
-import {
-  createApi,
-  fetchBaseQuery,
-  BaseQueryFn,
-} from "@reduxjs/toolkit/query/react";
+import { createApi, fetchBaseQuery, BaseQueryFn } from "@reduxjs/toolkit/query/react";
 import type { FetchBaseQueryError } from "@reduxjs/toolkit/query";
 import type {
   Quarter,
@@ -14,7 +10,6 @@ import type {
   Release,
   ApiSessionHistory,
 } from "../types";
-import { mockBaseQuery } from "../mock/mockApi";
 
 type AnyState = unknown;
 
@@ -32,8 +27,6 @@ const notifyError = (message: string, error: any) => {
 };
 
 const tempId = () => `temp-${Math.random().toString(36).slice(2)}`;
-
-const USE_MOCK = process.env.USE_MOCK === "true";
 
 const SESSION_STORAGE_KEY = "sprints-planning-session-id";
 const USER_NAME_KEY = "sprints-planning-user-name";
@@ -78,31 +71,42 @@ if (typeof window !== "undefined") {
   ensureSessionId();
 }
 
-const rawBaseQuery: BaseQueryFn = USE_MOCK
-  ? (mockBaseQuery as BaseQueryFn)
-  : (fetchBaseQuery({
-      baseUrl: process.env.API_URL || "/api/v1/sprints-planning",
-      prepareHeaders: (headers) => {
-        const sessionId = ensureSessionId();
-        const userName = getStoredUserName();
-        if (sessionId) headers.set("X-Session-Id", sessionId);
-        if (userName) headers.set("X-User-Name", userName);
-        return headers;
-      },
-    }) as BaseQueryFn);
+const rawBaseQuery: BaseQueryFn = fetchBaseQuery({
+  baseUrl: process.env.API_URL || "/api/v1/sprints-planning",
+  prepareHeaders: (headers) => {
+    const sessionId = ensureSessionId();
+    const userName = getStoredUserName();
+    if (sessionId) headers.set("X-Session-Id", sessionId);
+    if (userName) headers.set("X-User-Name", userName);
+    return headers;
+  },
+}) as BaseQueryFn;
+
+const getMethod = (args: unknown): string => {
+  if (typeof args === "string" || args === undefined || args === null) return "GET";
+  const value = (args as any).method;
+  if (typeof value === "string") return value.toUpperCase();
+  return "GET";
+};
+
+const isActionMethod = (method: string) =>
+  ["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase());
 
 const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
   const hasWindow = typeof window !== "undefined";
   if (hasWindow) {
     ensureSessionId();
-    const userName = ensureUserName();
-    if (!userName) {
-      return {
-        error: {
-          status: 400,
-          data: "Имя пользователя обязательно для отправки запросов",
-        } as FetchBaseQueryError,
-      };
+    const method = getMethod(args);
+    if (isActionMethod(method)) {
+      const userName = ensureUserName();
+      if (!userName) {
+        return {
+          error: {
+            status: 400,
+            data: "Имя пользователя обязательно для отправки запросов",
+          } as FetchBaseQueryError,
+        };
+      }
     }
   }
   return rawBaseQuery(args, api, extraOptions);
