@@ -321,44 +321,91 @@ function InlineDate({
   onCommit: (iso: string) => void;
   label?: string;
 }) {
+  const [editing, setEditing] = React.useState(false);
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+
+  const parsed = parseISODate(value);
+  const display = parsed
+    ? `${parsed.format("DD.MM.YYYY")} (${parsed.format("dd")})`
+    : "—";
+
+  const handleBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget;
+    if (next && wrapperRef.current?.contains(next as Node)) {
+      return;
+    }
+    setEditing(false);
+  };
+
   return (
-    <DatePicker
-      value={parseISODate(value)}
-      onChange={(newValue, context) => {
-        if (context?.validationError) return;
-        if (!newValue) {
-          onCommit("");
-          return;
-        }
-        onCommit(isoFromMoment(newValue));
-      }}
-      format="DD.MM.YYYY"
-      desktopModeMediaQuery={desktopPickerMedia}
-      slotProps={{
-        textField: {
-          size: "small",
-          fullWidth: true,
-          InputLabelProps: { shrink: true },
-          inputProps: { "aria-label": label },
-          sx: {
-            maxWidth: 124,
+    <div ref={wrapperRef} onBlur={handleBlur}>
+      {editing ? (
+        <DatePicker
+          value={parsed}
+          onChange={(newValue, context) => {
+            if (context?.validationError) return;
+            if (!newValue) {
+              onCommit("");
+              return;
+            }
+            onCommit(isoFromMoment(newValue));
+          }}
+          onClose={() => setEditing(false)}
+          format="DD.MM.YYYY"
+          desktopModeMediaQuery={desktopPickerMedia}
+          slotProps={{
+            textField: {
+              size: "small",
+              fullWidth: true,
+              InputLabelProps: { shrink: true },
+              inputProps: { "aria-label": label },
+              autoFocus: true,
+              sx: {
+                maxWidth: 132,
+                minWidth: 120,
+                mx: "auto",
+                textAlign: "center",
+                "& .MuiOutlinedInput-notchedOutline": { display: "none" },
+                "& .MuiInputBase-input": { p: 0.4, textAlign: "center", fontSize: "0.9rem" },
+                "& .MuiInputBase-root": { pr: 0.25, height: 34 },
+                bgcolor: "transparent",
+              },
+            },
+            openPickerButton: {
+              size: "small",
+              sx: { fontSize: "1rem", pr: 0.25 },
+            },
+            actionBar: { actions: ["clear"] as const },
+          }}
+          enableAccessibleFieldDOMStructure={false}
+        />
+      ) : (
+        <Button
+          variant="text"
+          color="inherit"
+          onClick={() => setEditing(true)}
+          fullWidth
+          sx={{
             minWidth: 110,
+            maxWidth: 140,
+            px: 0.5,
+            py: 0.5,
             mx: "auto",
-            textAlign: "center",
-            "& .MuiOutlinedInput-notchedOutline": { display: "none" },
-            "& .MuiInputBase-input": { p: 0.4, textAlign: "center", fontSize: "0.9rem" },
-            "& .MuiInputBase-root": { pr: 0.25, height: 34 },
-            bgcolor: "transparent",
-          },
-        },
-        openPickerButton: {
-          size: "small",
-          sx: { fontSize: "1rem", pr: 0.25 },
-        },
-        actionBar: { actions: ["clear"] as const },
-      }}
-      enableAccessibleFieldDOMStructure={false}
-    />
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 1,
+            textTransform: "none",
+            fontSize: "0.9rem",
+            lineHeight: 1.2,
+            color: "text.primary",
+            "&:hover": { bgcolor: "action.hover" },
+          }}
+        >
+          {display}
+        </Button>
+      )}
+    </div>
   );
 }
 
