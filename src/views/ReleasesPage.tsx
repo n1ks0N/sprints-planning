@@ -12,12 +12,13 @@ import {
   TableRow,
   TableCell,
   TableBody,
-  TextField,
   Tooltip,
   Checkbox,
   FormControlLabel,
   TableContainer,
 } from "@mui/material";
+import { LocalizationProvider, DatePicker } from "@mui/x-date-pickers";
+import { AdapterMoment } from "@mui/x-date-pickers/AdapterMoment";
 import { Add, Delete, Backspace } from "@mui/icons-material";
 import moment from "moment";
 import "moment/locale/ru";
@@ -57,10 +58,9 @@ function addBusinessDaysISO(iso: string, delta: number) {
   }
   return toISOlocal(d);
 }
-const ru = (iso?: string) =>
-  iso && moment(iso, "YYYY-MM-DD", true).isValid()
-    ? moment(iso, "YYYY-MM-DD").format("DD.MM.YYYY ddd")
-    : "—";
+const parseISODate = (iso?: string | null) =>
+  iso ? moment(iso, "YYYY-MM-DD", true) : null;
+const isoFromMoment = (d: moment.Moment) => d.format("YYYY-MM-DD");
 
 type K =
   | "stDate"
@@ -296,6 +296,22 @@ function recalcPrevious(current: Release, anchor: K, iso: string): Release {
   return out;
 }
 
+const isReleaseCleared = (r: Release) =>
+  !r.psiDate &&
+  !r.opsStart &&
+  !r.opsEnd &&
+  !r.regressStart &&
+  !r.regressEnd &&
+  !r.ffDate &&
+  !r.ffInnerDate &&
+  !r.iftStart &&
+  !r.iftEnd &&
+  !r.buildDate &&
+  !r.crDate &&
+  !r.devStart &&
+  !r.devEnd &&
+  !r.stDate;
+
 function InlineDate({
   value,
   onCommit,
@@ -305,53 +321,31 @@ function InlineDate({
   onCommit: (iso: string) => void;
   label?: string;
 }) {
-  const [editing, setEditing] = React.useState(false);
-  const inputRef = React.useRef<HTMLInputElement | null>(null);
-
-  React.useEffect(() => {
-    if (editing && inputRef.current) {
-      try {
-        (inputRef.current as any).showPicker?.();
-      } catch {}
-      inputRef.current.focus();
-      inputRef.current.select?.();
-    }
-  }, [editing]);
-
   return (
-    <Box
-      sx={{ cursor: "pointer", width: "100%", textAlign: "center" }}
-      onClick={() => setEditing(true)}
-      title="Изменить дату"
-    >
-      {!editing ? (
-        <Typography component="span" sx={{ display: "block", lineHeight: 1.2 }}>
-          {ru(value)}
-        </Typography>
-      ) : (
-        <TextField
-          inputRef={inputRef}
-          size="small"
-          type="date"
-          value={value || ""}
-          onChange={(e) => onCommit(e.target.value)}
-          onBlur={() => setEditing(false)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === "Escape") {
-              (e.currentTarget as HTMLInputElement).blur();
-            }
-          }}
-          InputLabelProps={{ shrink: true }}
-          inputProps={{ "aria-label": label }}
-          sx={{
-            width: "100%",
+    <DatePicker
+      value={parseISODate(value)}
+      onChange={(newValue, context) => {
+        if (context?.validationError) return;
+        if (!newValue) return;
+        onCommit(isoFromMoment(newValue));
+      }}
+      format="DD.MM.YYYY"
+      slotProps={{
+        textField: {
+          size: "small",
+          fullWidth: true,
+          inputProps: { "aria-label": label },
+          sx: {
+            textAlign: "center",
             "& .MuiOutlinedInput-notchedOutline": { display: "none" },
-            "& .MuiInputBase-input": { p: 0, textAlign: "center" },
+            "& .MuiInputBase-input": { p: 0.5, textAlign: "center" },
             bgcolor: "transparent",
-          }}
-        />
-      )}
-    </Box>
+          },
+        },
+        openPickerButton: { size: "small" },
+        actionBar: { actions: ["clear"] },
+      }}
+    />
   );
 }
 
@@ -362,6 +356,9 @@ export default function ReleasesPage() {
   const [deleteRelease] = useDeleteReleaseMutation();
 
   const [hidePast, setHidePast] = React.useState(true);
+  const [manualReleaseIds, setManualReleaseIds] = React.useState<Set<string>>(
+    () => new Set()
+  );
 
   const todayISO = toISOlocal(new Date());
   const releases = React.useMemo(() => {
@@ -379,6 +376,18 @@ export default function ReleasesPage() {
     return arr;
   }, [releasesRaw, hidePast, todayISO]);
 
+  React.useEffect(() => {
+    setManualReleaseIds((prev) => {
+      const next = new Set(prev);
+      releasesRaw.forEach((r) => {
+        if (isReleaseCleared(r)) {
+          next.add(r.id);
+        }
+      });
+      return next;
+    });
+  }, [releasesRaw]);
+
   const [newProm, setNewProm] = React.useState<string>("");
   const onAdd = async () => {
     if (!newProm) return;
@@ -388,6 +397,11 @@ export default function ReleasesPage() {
 
   const onClear = async (r: Release) => {
     await updateRelease({ id: r.id, action: "clear" } as any).unwrap();
+    setManualReleaseIds((prev) => {
+      const next = new Set(prev);
+      next.add(r.id);
+      return next;
+    });
   };
 
   const onDelete = async (r: Release) => {
@@ -397,6 +411,17 @@ export default function ReleasesPage() {
 
   const commit = async (r: Release, field: K, iso: string) => {
     if (!iso) return;
+    const manual = manualReleaseIds.has(r.id) || isReleaseCleared(r);
+    if (manual) {
+      await updateRelease({ id: r.id, [field]: iso } as any).unwrap();
+      setManualReleaseIds((prev) => {
+        const next = new Set(prev);
+        next.add(r.id);
+        return next;
+      });
+      return;
+    }
+
     const updated = recalcPrevious(r, field, iso);
     const { id: _omit, ...patch } = updated as Release & { id: string };
     await updateRelease({ id: r.id, ...patch }).unwrap();
@@ -407,10 +432,11 @@ export default function ReleasesPage() {
   const stickyBg = "background.paper";
 
   return (
-    <Paper
-      elevation={0}
-      sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
-    >
+    <LocalizationProvider dateAdapter={AdapterMoment} adapterLocale="ru">
+      <Paper
+        elevation={0}
+        sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
+      >
       <Stack
         direction={{ xs: "column", md: "row" }}
         spacing={2}
@@ -431,20 +457,20 @@ export default function ReleasesPage() {
         />
 
         <Stack direction="row" spacing={1} alignItems="center">
-          <TextField
-            size="small"
-            type="date"
+          <DatePicker
             label="Дата ПРОМ"
-            value={newProm}
-            onChange={(e) => setNewProm(e.target.value)}
-            InputLabelProps={{ shrink: true }}
-            onClick={(e) => {
-              const input = e.currentTarget.querySelector(
-                "input"
-              ) as HTMLInputElement;
-              try {
-                (input as any)?.showPicker?.();
-              } catch {}
+            value={parseISODate(newProm)}
+            onChange={(newValue, context) => {
+              if (context?.validationError) return;
+              setNewProm(newValue && newValue.isValid() ? isoFromMoment(newValue) : "");
+            }}
+            format="DD.MM.YYYY"
+            slotProps={{
+              textField: {
+                size: "small",
+                InputLabelProps: { shrink: true },
+              },
+              actionBar: { actions: ["clear"] },
             }}
           />
           <Button
@@ -480,18 +506,18 @@ export default function ReleasesPage() {
               <TableCell sx={{ minWidth: 110 }}>СТ</TableCell>
               <TableCell sx={{ minWidth: 140 }}>Разработка (начало)</TableCell>
               <TableCell sx={{ minWidth: 140 }}>
-                Разработка (окончание)
+                Разработка (конец)
               </TableCell>
               <TableCell sx={{ minWidth: 110 }}>CR</TableCell>
               <TableCell sx={{ minWidth: 110 }}>Сборка</TableCell>
               <TableCell sx={{ minWidth: 140 }}>ИФТ (начало)</TableCell>
-              <TableCell sx={{ minWidth: 140 }}>ИФТ (окончание)</TableCell>
+              <TableCell sx={{ minWidth: 140 }}>ИФТ (конец)</TableCell>
               <TableCell sx={{ minWidth: 150 }}>FF InnerSource</TableCell>
               <TableCell sx={{ minWidth: 110 }}>FF</TableCell>
               <TableCell sx={{ minWidth: 150 }}>Регресс (начало)</TableCell>
-              <TableCell sx={{ minWidth: 150 }}>Регресс (окончание)</TableCell>
+              <TableCell sx={{ minWidth: 150 }}>Регресс (конец)</TableCell>
               <TableCell sx={{ minWidth: 130 }}>OPS (начало)</TableCell>
-              <TableCell sx={{ minWidth: 130 }}>OPS (окончание)</TableCell>
+              <TableCell sx={{ minWidth: 130 }}>OPS (конец)</TableCell>
               <TableCell sx={{ minWidth: 120 }}>ПСИ</TableCell>
 
               <TableCell
@@ -686,6 +712,7 @@ export default function ReleasesPage() {
           </TableBody>
         </Table>
       </TableContainer>
-    </Paper>
+      </Paper>
+    </LocalizationProvider>
   );
 }

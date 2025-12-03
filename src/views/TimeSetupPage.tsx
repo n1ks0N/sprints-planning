@@ -14,6 +14,8 @@ import {
   Checkbox,
   FormControlLabel,
 } from "@mui/material";
+import { LocalizationProvider, DatePicker } from "@mui/x-date-pickers";
+import { AdapterMoment } from "@mui/x-date-pickers/AdapterMoment";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
 import SaveIcon from "@mui/icons-material/Save";
@@ -47,6 +49,8 @@ const addMonths = (d: moment.Moment, n: number) => d.clone().add(n, "month");
 const quarterOfMonth0 = (m0: number) =>
   (Math.floor(m0 / 3) + 1) as 1 | 2 | 3 | 4;
 const fmtRU = (isoDate: string) => moment(isoDate, fmt).format("DD.MM.YYYY");
+const toPickerValue = (isoDate?: string | null) =>
+  isoDate ? parseISO(isoDate) : null;
 const workingDaysInclusive = (startISO: string, endISO: string) => {
   const start = parseISO(startISO);
   const end = parseISO(endISO);
@@ -114,16 +118,6 @@ function calcNextSprintDefaults(quarter: Quarter, allSprints: Sprint[]) {
   const name = `Sprint ${qSprints.length + 1}`;
   return { startISO: iso(start), endISO: iso(finalEnd), name };
 }
-
-const openDatePickerOnMouseDown: React.MouseEventHandler<HTMLInputElement> = (
-  e
-) => {
-  const input = e.currentTarget as HTMLInputElement & {
-    showPicker?: () => void;
-  };
-  input.showPicker?.();
-  e.preventDefault();
-};
 
 export default function TimeSetupPage() {
   const { data: quarters = [] } = useGetQuartersQuery();
@@ -656,7 +650,7 @@ export default function TimeSetupPage() {
               {s.name || `Sprint ${indexInQuarter + 1}`}
             </Typography>
             <Typography variant="body2" sx={{ mt: 0.5 }}>
-              Рабочих дней (пн–пт): <b>{s.workingDays}</b>
+              Рабочих дней: <b>{s.workingDays}</b>
             </Typography>
           </>
         ) : (
@@ -672,29 +666,39 @@ export default function TimeSetupPage() {
             />
             <Grid container spacing={1}>
               <Grid item xs={6}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  type="date"
+                <DatePicker
                   label="Дата начала"
-                  value={sEditStart}
-                  onChange={(e) => setSEditStart(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
-                  error={!!sEditError}
+                  value={toPickerValue(sEditStart)}
+                  onChange={(newValue) =>
+                    setSEditStart(newValue && newValue.isValid() ? iso(newValue) : "")
+                  }
+                  format="DD.MM.YYYY"
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      size: "small",
+                      error: !!sEditError,
+                    },
+                    actionBar: { actions: ["clear"] },
+                  }}
                 />
               </Grid>
               <Grid item xs={6}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  type="date"
+                <DatePicker
                   label="Дата окончания"
-                  value={sEditEnd}
-                  onChange={(e) => setSEditEnd(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
-                  error={!!sEditError}
+                  value={toPickerValue(sEditEnd)}
+                  onChange={(newValue) =>
+                    setSEditEnd(newValue && newValue.isValid() ? iso(newValue) : "")
+                  }
+                  format="DD.MM.YYYY"
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      size: "small",
+                      error: !!sEditError,
+                    },
+                    actionBar: { actions: ["clear"] },
+                  }}
                 />
               </Grid>
               <Grid item xs={6}>
@@ -789,29 +793,39 @@ export default function TimeSetupPage() {
             />
             <Grid container spacing={1}>
               <Grid item xs={6}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  type="date"
+                <DatePicker
                   label="Дата начала"
-                  value={sStart}
-                  onChange={(e) => setSStart(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
-                  error={!!sError}
+                  value={toPickerValue(sStart)}
+                  onChange={(newValue) =>
+                    setSStart(newValue && newValue.isValid() ? iso(newValue) : "")
+                  }
+                  format="DD.MM.YYYY"
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      size: "small",
+                      error: !!sError,
+                    },
+                    actionBar: { actions: ["clear"] },
+                  }}
                 />
               </Grid>
               <Grid item xs={6}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  type="date"
+                <DatePicker
                   label="Дата окончания"
-                  value={sEnd}
-                  onChange={(e) => setSEnd(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
-                  error={!!sError}
+                  value={toPickerValue(sEnd)}
+                  onChange={(newValue) =>
+                    setSEnd(newValue && newValue.isValid() ? iso(newValue) : "")
+                  }
+                  format="DD.MM.YYYY"
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      size: "small",
+                      error: !!sError,
+                    },
+                    actionBar: { actions: ["clear"] },
+                  }}
                 />
               </Grid>
               <Grid item xs={6}>
@@ -903,29 +917,39 @@ export default function TimeSetupPage() {
             </Typography>
             <Grid container spacing={1} alignItems="center">
               <Grid item xs={6} md={3}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  type="date"
+                <DatePicker
                   label="Дата начала"
-                  value={qEditStart}
-                  onChange={(e) => setQEditStart(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
-                  error={!!qEditError}
+                  value={toPickerValue(qEditStart)}
+                  onChange={(newValue) =>
+                    setQEditStart(newValue && newValue.isValid() ? iso(newValue) : "")
+                  }
+                  format="DD.MM.YYYY"
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      size: "small",
+                      error: !!qEditError,
+                    },
+                    actionBar: { actions: ["clear"] },
+                  }}
                 />
               </Grid>
               <Grid item xs={6} md={3}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  type="date"
+                <DatePicker
                   label="Дата окончания"
-                  value={qEditEnd}
-                  onChange={(e) => setQEditEnd(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                  inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
-                  error={!!qEditError}
+                  value={toPickerValue(qEditEnd)}
+                  onChange={(newValue) =>
+                    setQEditEnd(newValue && newValue.isValid() ? iso(newValue) : "")
+                  }
+                  format="DD.MM.YYYY"
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      size: "small",
+                      error: !!qEditError,
+                    },
+                    actionBar: { actions: ["clear"] },
+                  }}
                 />
               </Grid>
               <Grid
@@ -976,128 +1000,140 @@ export default function TimeSetupPage() {
   };
 
   return (
-    <Paper elevation={0} sx={{ p: 2 }}>
-      <Typography variant="h6" sx={{ mb: 2 }}>
-        Кварталы и спринты
-      </Typography>
+    <LocalizationProvider dateAdapter={AdapterMoment} adapterLocale="ru">
+      <Paper elevation={0} sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Кварталы и спринты
+        </Typography>
 
-      <Stack
-        direction="row"
-        spacing={2}
-        alignItems="center"
-        sx={{ mb: 2, flexWrap: { xs: "wrap", md: "nowrap" } }}
-      >
-        <FilterAutocomplete
-          multiple
-          allowCustom={false}
-          label="Фильтр по кварталам"
-          options={quarterFilterOptions}
-          value={selectedQuarterIds}
-          onChange={handleQuarterFilterChange}
-          sx={{ minWidth: 280, flex: 1 }}
-        />
+        <Stack
+          direction="row"
+          spacing={2}
+          alignItems="center"
+          sx={{ mb: 2, flexWrap: { xs: "wrap", md: "nowrap" } }}
+        >
+          <FilterAutocomplete
+            multiple
+            allowCustom={false}
+            label="Фильтр по кварталам"
+            options={quarterFilterOptions}
+            value={selectedQuarterIds}
+            onChange={handleQuarterFilterChange}
+            sx={{ minWidth: 280, flex: 1 }}
+          />
 
-        <FormControlLabel
-          control={<Checkbox checked={hidePast} onChange={onToggleHidePast} />}
-          label="Скрыть прошедшие"
-          sx={{ whiteSpace: "nowrap" }}
-        />
-      </Stack>
+          <FormControlLabel
+            control={<Checkbox checked={hidePast} onChange={onToggleHidePast} />}
+            label="Скрыть прошедшие"
+            sx={{ whiteSpace: "nowrap" }}
+          />
+        </Stack>
 
-      <Stack spacing={2}>
-        {visibleQuarters.map((q) => renderQuarterRow(q))}
+        <Stack spacing={2}>
+          {visibleQuarters.map((q) => renderQuarterRow(q))}
 
-        <Paper variant="outlined" sx={{ p: 2 }}>
-          {!openQuarterRow ? (
-            <Box
-              sx={{
-                p: 2,
-                border: "2px dashed #cbd5e1",
-                borderRadius: 2,
-                textAlign: "center",
-              }}
-            >
-              <Button
-                startIcon={<AddIcon />}
-                onClick={openAddQuarter}
-                sx={{ fontWeight: 700 }}
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            {!openQuarterRow ? (
+              <Box
+                sx={{
+                  p: 2,
+                  border: "2px dashed #cbd5e1",
+                  borderRadius: 2,
+                  textAlign: "center",
+                }}
               >
-                Добавить квартал
-              </Button>
-            </Box>
-          ) : (
-            <Box>
-              <Grid container spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label="Название квартала"
-                    value={qName}
-                    onChange={(e) => setQName(e.target.value)}
-                    placeholder="Например: Q4 2025"
-                  />
-                </Grid>
-              </Grid>
-
-              <Grid container spacing={1} alignItems="center">
-                <Grid item xs={6} md={3}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    type="date"
-                    label="Дата начала"
-                    value={qStart}
-                    onChange={(e) => setQStart(e.target.value)}
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
-                    error={!!qError}
-                  />
-                </Grid>
-                <Grid item xs={6} md={3}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    type="date"
-                    label="Дата окончания"
-                    value={qEnd}
-                    onChange={(e) => setQEnd(e.target.value)}
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
-                    error={!!qError}
-                  />
-                </Grid>
-                <Grid
-                  item
-                  xs={12}
-                  md={6}
-                  sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}
+                <Button
+                  startIcon={<AddIcon />}
+                  onClick={openAddQuarter}
+                  sx={{ fontWeight: 700 }}
                 >
-                  <Button
-                    variant="outlined"
-                    onClick={() => setOpenQuarterRow(false)}
-                  >
-                    Отмена
-                  </Button>
-                  <Button
-                    variant="contained"
-                    onClick={submitQuarter}
-                    disabled={addingQuarter || !!qError || !qStart || !qEnd}
-                  >
-                    Сохранить
-                  </Button>
+                  Добавить квартал
+                </Button>
+              </Box>
+            ) : (
+              <Box>
+                <Grid container spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Название квартала"
+                      value={qName}
+                      onChange={(e) => setQName(e.target.value)}
+                      placeholder="Например: Q4 2025"
+                    />
+                  </Grid>
                 </Grid>
-              </Grid>
 
-              {qError && (
-                <Box sx={{ mt: 1 }}>
-                  <Alert severity="error">{qError}</Alert>
-                </Box>
-              )}
-            </Box>
-          )}
-        </Paper>
-      </Stack>
-    </Paper>
+                <Grid container spacing={1} alignItems="center">
+                  <Grid item xs={6} md={3}>
+                    <DatePicker
+                      label="Дата начала"
+                      value={toPickerValue(qStart)}
+                      onChange={(newValue) =>
+                        setQStart(newValue && newValue.isValid() ? iso(newValue) : "")
+                      }
+                      format="DD.MM.YYYY"
+                      slotProps={{
+                        textField: {
+                          fullWidth: true,
+                          size: "small",
+                          error: !!qError,
+                        },
+                        actionBar: { actions: ["clear"] },
+                      }}
+                    />
+                  </Grid>
+                  <Grid item xs={6} md={3}>
+                    <DatePicker
+                      label="Дата окончания"
+                      value={toPickerValue(qEnd)}
+                      onChange={(newValue) =>
+                        setQEnd(newValue && newValue.isValid() ? iso(newValue) : "")
+                      }
+                      format="DD.MM.YYYY"
+                      slotProps={{
+                        textField: {
+                          fullWidth: true,
+                          size: "small",
+                          error: !!qError,
+                        },
+                        actionBar: { actions: ["clear"] },
+                      }}
+                    />
+                  </Grid>
+                  <Grid
+                    item
+                    xs={12}
+                    md={6}
+                    sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}
+                  >
+                    <Button
+                      variant="outlined"
+                      onClick={() => setOpenQuarterRow(false)}
+                    >
+                      Отмена
+                    </Button>
+                    <Button
+                      variant="contained"
+                      onClick={submitQuarter}
+                      disabled={addingQuarter || !!qError || !qStart || !qEnd}
+                    >
+                      Сохранить
+                    </Button>
+                  </Grid>
+                </Grid>
+
+                {qError && (
+                  <Box sx={{ mt: 1 }}>
+                    <Alert severity="error">{qError}</Alert>
+                  </Box>
+                )}
+              </Box>
+            )}
+          </Paper>
+        </Stack>
+      </Paper>
+    </LocalizationProvider>
   );
 }
