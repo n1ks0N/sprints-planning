@@ -56,6 +56,7 @@ const quarterOfMonth0 = (m0: number) =>
 const fmtRU = (isoDate: string) => moment(isoDate, fmt).format("DD.MM.YYYY");
 const toPickerValue = (isoDate?: string | null) =>
   isoDate ? parseISO(isoDate) : null;
+const desktopPickerMedia = "(min-width: 0px)";
 const workingDaysInclusive = (startISO: string, endISO: string) => {
   const start = parseISO(startISO);
   const end = parseISO(endISO);
@@ -711,6 +712,7 @@ export default function TimeSetupPage() {
                     setSEditStart(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  desktopModeMediaQuery={desktopPickerMedia}
                   enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!sEditError })}
                 />
@@ -723,6 +725,7 @@ export default function TimeSetupPage() {
                     setSEditEnd(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  desktopModeMediaQuery={desktopPickerMedia}
                   enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!sEditError })}
                 />
@@ -826,6 +829,7 @@ export default function TimeSetupPage() {
                     setSStart(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  desktopModeMediaQuery={desktopPickerMedia}
                   enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!sError })}
                 />
@@ -838,6 +842,7 @@ export default function TimeSetupPage() {
                     setSEnd(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  desktopModeMediaQuery={desktopPickerMedia}
                   enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!sError })}
                 />
@@ -938,6 +943,7 @@ export default function TimeSetupPage() {
                     setQEditStart(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  desktopModeMediaQuery={desktopPickerMedia}
                   enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!qEditError })}
                 />
@@ -950,6 +956,7 @@ export default function TimeSetupPage() {
                     setQEditEnd(newValue && newValue.isValid() ? iso(newValue) : "")
                   }
                   format="DD.MM.YYYY"
+                  desktopModeMediaQuery={desktopPickerMedia}
                   enableAccessibleFieldDOMStructure={false}
                   slotProps={pickerSlotProps({ error: !!qEditError })}
                 />
@@ -1080,6 +1087,7 @@ export default function TimeSetupPage() {
                         setQStart(newValue && newValue.isValid() ? iso(newValue) : "")
                       }
                       format="DD.MM.YYYY"
+                      desktopModeMediaQuery={desktopPickerMedia}
                       enableAccessibleFieldDOMStructure={false}
                       slotProps={pickerSlotProps({ error: !!qError })}
                     />
@@ -1092,6 +1100,7 @@ export default function TimeSetupPage() {
                         setQEnd(newValue && newValue.isValid() ? iso(newValue) : "")
                       }
                       format="DD.MM.YYYY"
+                      desktopModeMediaQuery={desktopPickerMedia}
                       enableAccessibleFieldDOMStructure={false}
                       slotProps={pickerSlotProps({ error: !!qError })}
                     />

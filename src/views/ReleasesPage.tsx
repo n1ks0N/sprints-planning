@@ -61,6 +61,7 @@ function addBusinessDaysISO(iso: string, delta: number) {
 const fmt = "YYYY-MM-DD";
 const parseISODate = (iso?: string | null) => (iso ? moment(iso, fmt, true) : null);
 const isoFromMoment = (d: moment.Moment) => d.format(fmt);
+const desktopPickerMedia = "(min-width: 0px)";
 type K =
   | "stDate"
   | "devStart"
@@ -332,6 +333,7 @@ function InlineDate({
         onCommit(isoFromMoment(newValue));
       }}
       format="DD.MM.YYYY"
+      desktopModeMediaQuery={desktopPickerMedia}
       slotProps={{
         textField: {
           size: "small",
@@ -482,6 +484,7 @@ export default function ReleasesPage() {
               setNewProm(newValue && newValue.isValid() ? isoFromMoment(newValue) : "");
             }}
             format="DD.MM.YYYY"
+            desktopModeMediaQuery={desktopPickerMedia}
             slotProps={{
               textField: {
                 size: "small",
