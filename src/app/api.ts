@@ -28,8 +28,9 @@ const notifyError = (message: string, error: any) => {
 
 const tempId = () => `temp-${Math.random().toString(36).slice(2)}`;
 
-const SESSION_STORAGE_KEY = "sprints-planning-session-id";
+const SESSION_COOKIE_KEY = "sprints-planning-session-id";
 const USER_NAME_KEY = "sprints-planning-user-name";
+const SESSION_TTL_MS = 30 * 60 * 1000;
 
 const createSessionId = () => {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -38,13 +39,41 @@ const createSessionId = () => {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 };
 
+const readCookie = (key: string): string | null => {
+  if (typeof document === "undefined") return null;
+  const cookies = document.cookie?.split(";") || [];
+  for (const cookie of cookies) {
+    const [rawKey, ...rest] = cookie.trim().split("=");
+    if (rawKey === key) {
+      const value = rest.join("=");
+      return value ? decodeURIComponent(value) : null;
+    }
+  }
+  return null;
+};
+
+const writeCookie = (key: string, value: string, ttlMs: number) => {
+  if (typeof document === "undefined") return;
+  const expires = new Date(Date.now() + ttlMs).toUTCString();
+  document.cookie = `${key}=${encodeURIComponent(value)}; path=/; expires=${expires}`;
+};
+
+const getSessionId = (): string | null => readCookie(SESSION_COOKIE_KEY);
+
 const ensureSessionId = (): string | null => {
   if (typeof window === "undefined") return null;
-  const existing = sessionStorage.getItem(SESSION_STORAGE_KEY);
+  const existing = getSessionId();
   if (existing) return existing;
   const next = createSessionId();
-  sessionStorage.setItem(SESSION_STORAGE_KEY, next);
+  writeCookie(SESSION_COOKIE_KEY, next, SESSION_TTL_MS);
   return next;
+};
+
+const refreshSessionTtl = () => {
+  const sessionId = getSessionId();
+  if (sessionId) {
+    writeCookie(SESSION_COOKIE_KEY, sessionId, SESSION_TTL_MS);
+  }
 };
 
 const getStoredUserName = (): string | null => {
@@ -94,9 +123,10 @@ const isActionMethod = (method: string) =>
 
 const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
   const hasWindow = typeof window !== "undefined";
+  const method = getMethod(args);
+
   if (hasWindow) {
     ensureSessionId();
-    const method = getMethod(args);
     if (isActionMethod(method)) {
       const userName = ensureUserName();
       if (!userName) {
@@ -109,7 +139,14 @@ const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
       }
     }
   }
-  return rawBaseQuery(args, api, extraOptions);
+
+  const result = await rawBaseQuery(args, api, extraOptions);
+
+  if (hasWindow && isActionMethod(method) && !("error" in result)) {
+    refreshSessionTtl();
+  }
+
+  return result;
 };
 
 type TagDescriptor<T extends string> = {
@@ -1150,6 +1187,10 @@ export const api = createApi({
     getHistory: b.query<ApiSessionHistory[], void>({
       query: () => ({ url: "/history", method: "GET" }),
       providesTags: [listTag("History")],
+      keepUnusedDataFor: 0,
+      refetchOnMountOrArgChange: true,
+      refetchOnReconnect: true,
+      refetchOnFocus: true,
     }),
 
     // ---- Export ----

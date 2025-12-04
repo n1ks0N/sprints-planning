@@ -1,11 +1,14 @@
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   CircularProgress,
   Divider,
-  Paper,
   Stack,
   Typography,
 } from "@mui/material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useGetHistoryQuery } from "../app/api";
 
 const formatDateTime = (value: string) =>
@@ -39,19 +42,27 @@ export default function HistoryPage() {
   return (
     <Stack spacing={2}>
       {data.map((session) => (
-        <Paper key={session.sessionId} sx={{ p: 2 }}>
-          <Stack spacing={1}>
-            <Stack direction="row" justifyContent="space-between" alignItems="baseline">
-              <Typography variant="h6">{session.userName}</Typography>
-              <Typography variant="body2" color="text.secondary">
-                Последняя активность: {formatDateTime(session.lastActionAt)}
+        <Accordion
+          key={`${session.sessionId}-${session.lastActionAt}`}
+          disableGutters
+          TransitionProps={{ unmountOnExit: true }}
+        >
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Stack spacing={0.5} sx={{ width: "100%" }}>
+              <Stack direction="row" justifyContent="space-between" alignItems="baseline">
+                <Typography variant="h6">{session.userName}</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Последняя активность: {formatDateTime(session.lastActionAt)}
+                </Typography>
+              </Stack>
+              <Typography variant="caption" color="text.secondary">
+                Сессия: {session.sessionId}
               </Typography>
             </Stack>
-            <Typography variant="caption" color="text.secondary">
-              Сессия: {session.sessionId}
-            </Typography>
-            <Divider />
-            <Stack spacing={1} mt={1}>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Divider sx={{ mb: 1 }} />
+            <Stack spacing={1}>
               {session.actions.map((action) => (
                 <Stack
                   key={action.id}
@@ -71,8 +82,8 @@ export default function HistoryPage() {
                 </Stack>
               ))}
             </Stack>
-          </Stack>
-        </Paper>
+          </AccordionDetails>
+        </Accordion>
       ))}
     </Stack>
   );

@@ -10,9 +10,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Sort;
@@ -62,18 +60,37 @@ public class ApiHistoryService {
         List<ApiCallHistoryEntity> items = historyRepository.findAll(
             Sort.by(Sort.Direction.DESC, "createdAt"));
 
-        Map<String, List<ApiCallHistoryEntity>> grouped = new LinkedHashMap<>();
-        for (ApiCallHistoryEntity entity : items) {
-            if (isAction(entity)) {
-                grouped.computeIfAbsent(entity.getSessionId(), k -> new ArrayList<>())
-                    .add(entity);
+        List<ApiCallHistoryEntity> actions = items.stream()
+            .filter(this::isAction)
+            .sorted(Comparator.comparing(ApiCallHistoryEntity::getCreatedAt).reversed())
+            .toList();
+
+        List<ApiSessionHistoryDto> result = new ArrayList<>();
+        List<ApiCallHistoryEntity> current = new ArrayList<>();
+        String currentSession = null;
+        String currentUser = null;
+
+        for (ApiCallHistoryEntity entity : actions) {
+            boolean sameGroup = currentSession != null
+                && currentUser != null
+                && currentSession.equals(entity.getSessionId())
+                && currentUser.equals(entity.getUserName());
+
+            if (!sameGroup && !current.isEmpty()) {
+                result.add(toSessionDto(current));
+                current = new ArrayList<>();
             }
+
+            currentSession = entity.getSessionId();
+            currentUser = entity.getUserName();
+            current.add(entity);
         }
 
-        return grouped.values().stream()
-            .map(this::toSessionDto)
-            .sorted(Comparator.comparing(ApiSessionHistoryDto::lastActionAt).reversed())
-            .toList();
+        if (!current.isEmpty()) {
+            result.add(toSessionDto(current));
+        }
+
+        return result;
     }
 
     private ApiSessionHistoryDto toSessionDto(List<ApiCallHistoryEntity> entities) {
