@@ -10,15 +10,9 @@
   - `available = base - runDays - vacationNormDays`
   Показаны значения на спринт и суммарно за квартал.
 
-## Запуск (MOCK API)
-```bash
-npm install
-npm run dev
-```
-Откроется http://localhost:5173 — все данные в in-memory mock API.
-
-## Реальный backend
-DevServer проксирует `/api` → `http://localhost:8080`. Для подключения бэкенда запустите его и выполните:
+## Запуск
+DevServer проксирует `/api` → `http://localhost:8080`.
 ```bash
 npm run dev:api
 ```
+Откроется http://localhost:5173 — данные читаются и сохраняются через backend.

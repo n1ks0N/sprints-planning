@@ -109,3 +109,21 @@ export type Release = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type ApiHistoryAction = {
+  id: string;
+  sessionId: string;
+  userName: string;
+  action: string;
+  path: string;
+  httpMethod: string;
+  statusCode: number;
+  createdAt: string;
+};
+
+export type ApiSessionHistory = {
+  sessionId: string;
+  userName: string;
+  lastActionAt: string;
+  actions: ApiHistoryAction[];
+};

@@ -1,8 +1,4 @@
-import {
-  createApi,
-  fetchBaseQuery,
-  BaseQueryFn,
-} from "@reduxjs/toolkit/query/react";
+import { createApi, fetchBaseQuery, BaseQueryFn } from "@reduxjs/toolkit/query/react";
 import type { FetchBaseQueryError } from "@reduxjs/toolkit/query";
 import type {
   Quarter,
@@ -12,8 +8,8 @@ import type {
   CapacityRow,
   BacklogItem,
   Release,
+  ApiSessionHistory,
 } from "../types";
-import { mockBaseQuery } from "../mock/mockApi";
 
 type AnyState = unknown;
 
@@ -32,11 +28,126 @@ const notifyError = (message: string, error: any) => {
 
 const tempId = () => `temp-${Math.random().toString(36).slice(2)}`;
 
-const USE_MOCK = process.env.USE_MOCK === "true";
+const SESSION_COOKIE_KEY = "sprints-planning-session-id";
+const USER_NAME_KEY = "sprints-planning-user-name";
+const SESSION_TTL_MS = 30 * 60 * 1000;
 
-const baseQuery = USE_MOCK
-  ? (mockBaseQuery as BaseQueryFn)
-  : fetchBaseQuery({ baseUrl: process.env.API_URL || "/api/v1/sprints-planning" });
+const createSessionId = () => {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
+
+const readCookie = (key: string): string | null => {
+  if (typeof document === "undefined") return null;
+  const cookies = document.cookie?.split(";") || [];
+  for (const cookie of cookies) {
+    const [rawKey, ...rest] = cookie.trim().split("=");
+    if (rawKey === key) {
+      const value = rest.join("=");
+      return value ? decodeURIComponent(value) : null;
+    }
+  }
+  return null;
+};
+
+const writeCookie = (key: string, value: string, ttlMs: number) => {
+  if (typeof document === "undefined") return;
+  const expires = new Date(Date.now() + ttlMs).toUTCString();
+  document.cookie = `${key}=${encodeURIComponent(value)}; path=/; expires=${expires}`;
+};
+
+const getSessionId = (): string | null => readCookie(SESSION_COOKIE_KEY);
+
+const ensureSessionId = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const existing = getSessionId();
+  if (existing) return existing;
+  const next = createSessionId();
+  writeCookie(SESSION_COOKIE_KEY, next, SESSION_TTL_MS);
+  return next;
+};
+
+const refreshSessionTtl = () => {
+  const sessionId = getSessionId();
+  if (sessionId) {
+    writeCookie(SESSION_COOKIE_KEY, sessionId, SESSION_TTL_MS);
+  }
+};
+
+const getStoredUserName = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const value = localStorage.getItem(USER_NAME_KEY)?.trim();
+  return value?.length ? value : null;
+};
+
+const promptForUserName = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const input = window.prompt("Укажите ваше имя для истории изменений");
+  const value = input?.trim();
+  if (!value) {
+    window.alert("Введите имя, чтобы продолжить работу с сервисом.");
+    return null;
+  }
+  localStorage.setItem(USER_NAME_KEY, value);
+  return value;
+};
+
+const ensureUserName = (): string | null => getStoredUserName() ?? promptForUserName();
+
+if (typeof window !== "undefined") {
+  ensureSessionId();
+}
+
+const rawBaseQuery: BaseQueryFn = fetchBaseQuery({
+  baseUrl: process.env.API_URL || "/api/v1/sprints-planning",
+  prepareHeaders: (headers) => {
+    const sessionId = ensureSessionId();
+    const userName = getStoredUserName();
+    if (sessionId) headers.set("X-Session-Id", sessionId);
+    if (userName) headers.set("X-User-Name", userName);
+    return headers;
+  },
+}) as BaseQueryFn;
+
+const getMethod = (args: unknown): string => {
+  if (typeof args === "string" || args === undefined || args === null) return "GET";
+  const value = (args as any).method;
+  if (typeof value === "string") return value.toUpperCase();
+  return "GET";
+};
+
+const isActionMethod = (method: string) =>
+  ["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase());
+
+const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
+  const hasWindow = typeof window !== "undefined";
+  const method = getMethod(args);
+
+  if (hasWindow) {
+    ensureSessionId();
+    if (isActionMethod(method)) {
+      const userName = ensureUserName();
+      if (!userName) {
+        return {
+          error: {
+            status: 400,
+            data: "Имя пользователя обязательно для отправки запросов",
+          } as FetchBaseQueryError,
+        };
+      }
+    }
+  }
+
+  const result = await rawBaseQuery(args, api, extraOptions);
+
+  if (hasWindow && isActionMethod(method) && !("error" in result)) {
+    refreshSessionTtl();
+  }
+
+  return result;
+};
 
 type TagDescriptor<T extends string> = {
   type: T;
@@ -153,6 +264,7 @@ export const api = createApi({
     "Capacity",
     "Task",
     "Release",
+    "History",
   ],
   endpoints: (b) => ({
     // ---- Quarters ----
@@ -1071,6 +1183,13 @@ export const api = createApi({
       },
     }),
 
+    // ---- History ----
+    getHistory: b.query<ApiSessionHistory[], void>({
+      query: () => ({ url: "/history", method: "GET" }),
+      providesTags: [listTag("History")],
+      keepUnusedDataFor: 0,
+    }),
+
     // ---- Export ----
     exportExcel: b.query<Blob, void>({
       async queryFn() {
@@ -1135,6 +1254,8 @@ export const {
   useAddReleaseMutation,
   useUpdateReleaseMutation,
   useDeleteReleaseMutation,
+
+  useGetHistoryQuery,
 
   useLazyExportExcelQuery,
 } = api;

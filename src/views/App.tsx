@@ -16,6 +16,7 @@ import CapacityPage from "./CapacityPage";
 import BacklogPage from "./BacklogPage";
 import ParticipantWorkloadPage from "./ParticipantWorkloadPage";
 import ReleasesPage from "./ReleasesPage";
+import HistoryPage from "./HistoryPage";
 import { useDispatch } from "react-redux";
 import { undoLast } from "../app/undoSlice";
 import { useLazyExportExcelQuery } from "../app/api";
@@ -82,6 +83,9 @@ export default function App() {
             <Button component={Link} to="/releases">
               Релизы
             </Button>
+            <Button component={Link} to="/history">
+              История
+            </Button>
             <Tooltip title="Экспортировать план в Excel">
               <span>
                 <Button
@@ -112,6 +116,7 @@ export default function App() {
             element={<ParticipantWorkloadPage />}
           />
           <Route path="/releases" element={<ReleasesPage />} />
+          <Route path="/history" element={<HistoryPage />} />
         </Routes>
       </Container>
     </>

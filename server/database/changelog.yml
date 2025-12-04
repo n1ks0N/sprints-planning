@@ -2,3 +2,6 @@ databaseChangeLog:
   - include:
       file: 1.0.0/1.0.0_1_init.sql
       relativeToChangelogFile: true
+  - include:
+      file: 1.0.1/1.0.1_1_api_history.sql
+      relativeToChangelogFile: true
