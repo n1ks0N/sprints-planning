@@ -1188,9 +1188,6 @@ export const api = createApi({
       query: () => ({ url: "/history", method: "GET" }),
       providesTags: [listTag("History")],
       keepUnusedDataFor: 0,
-      refetchOnMountOrArgChange: true,
-      refetchOnReconnect: true,
-      refetchOnFocus: true,
     }),
 
     // ---- Export ----

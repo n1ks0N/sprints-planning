@@ -21,7 +21,11 @@ const formatDateTime = (value: string) =>
   });
 
 export default function HistoryPage() {
-  const { data, isLoading, isError } = useGetHistoryQuery();
+  const { data, isLoading, isError } = useGetHistoryQuery(undefined, {
+    refetchOnMountOrArgChange: true,
+    refetchOnReconnect: true,
+    refetchOnFocus: true,
+  });
 
   if (isLoading) {
     return (
