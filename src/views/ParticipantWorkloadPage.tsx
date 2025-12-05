@@ -4,14 +4,13 @@ import {
   Typography,
   Stack,
   Chip,
-  Select,
-  MenuItem,
   Table,
   TableHead,
   TableBody,
   TableRow,
   TableCell,
   TableContainer,
+  Tooltip,
 } from "@mui/material";
 import {
   useGetParticipantsQuery,
@@ -48,12 +47,13 @@ export default function ParticipantWorkloadPage() {
   const { data: tasks = [] } = useGetTasksQuery(undefined);
 
   const sprintsInScope = React.useMemo(() => {
+    const selected = new Set(ui.selectedQuarterIds);
     const list =
-      ui.quarterId === "all"
+      selected.size === 0
         ? [...allSprints]
-        : allSprints.filter((s) => s.quarterId === ui.quarterId);
+        : allSprints.filter((s) => selected.has(s.quarterId));
     return list.sort(byStart);
-  }, [allSprints, ui.quarterId]);
+  }, [allSprints, ui.selectedQuarterIds]);
 
   const participantOptions = React.useMemo(
     () =>
@@ -65,17 +65,20 @@ export default function ParticipantWorkloadPage() {
   );
 
   const quarterOptions = React.useMemo(
-    () => [
-      { value: "all", label: "Все кварталы" },
-      ...quarters
+    () =>
+      quarters
         .slice()
         .sort((a, b) => a.endDate.localeCompare(b.endDate))
         .map((q) => ({
           value: q.id,
           label: `${q.name} (${q.startDate} → ${q.endDate})`,
         })),
-    ],
     [quarters]
+  );
+
+  const priorityOptions = React.useMemo(
+    () => [1, 2, 3].map((p) => ({ value: String(p), label: String(p) })),
+    []
   );
 
   const roleOptions = React.useMemo(() => {
@@ -92,6 +95,21 @@ export default function ParticipantWorkloadPage() {
       dispatch(setParticipantWorkloadFilters({ rolesFilter: next }));
     },
     [dispatch, ui.rolesFilter]
+  );
+
+  const handlePriorityFilterChange = React.useCallback(
+    (values: string[]) => {
+      const next = Array.from(new Set(values))
+        .map((v) => Number(v))
+        .filter((n): n is number => [1, 2, 3].includes(n));
+      if (shallowArrayEqual(next, ui.priorityFilter)) return;
+      dispatch(
+        setParticipantWorkloadFilters({
+          priorityFilter: next.length ? next : [1, 2, 3],
+        })
+      );
+    },
+    [dispatch, ui.priorityFilter]
   );
 
   const selectedParticipants = React.useMemo(
@@ -141,18 +159,18 @@ export default function ParticipantWorkloadPage() {
         sx={{ mb: 2, flexWrap: { xs: "wrap", md: "nowrap" } }}
       >
         <FilterAutocomplete
+          multiple
           allowCustom={false}
-          label="Квартал"
+          label="Фильтр по кварталам"
           options={quarterOptions}
-          value={ui.quarterId}
-          onChange={(quarterId) =>
+          value={ui.selectedQuarterIds}
+          onChange={(ids) =>
             dispatch(
               setParticipantWorkloadFilters({
-                quarterId: quarterId || "all",
+                selectedQuarterIds: Array.from(new Set(ids)),
               })
             )
           }
-          disableClearable
           sx={{ minWidth: 240 }}
         />
 
@@ -182,28 +200,15 @@ export default function ParticipantWorkloadPage() {
           sx={{ minWidth: 240 }}
         />
 
-        <Select
+        <FilterAutocomplete
           multiple
-          size="small"
-          value={ui.priorityFilter}
-          onChange={(e) =>
-            dispatch(
-              setParticipantWorkloadFilters({
-                priorityFilter: (e.target.value as number[]).length
-                  ? (e.target.value as number[])
-                  : [1, 2, 3],
-              })
-            )
-          }
-          renderValue={(vals) => (vals as number[]).join(", ")}
-          sx={{ minWidth: 140 }}
-        >
-          {[1, 2, 3].map((p) => (
-            <MenuItem key={p} value={p}>
-              {p}
-            </MenuItem>
-          ))}
-        </Select>
+          allowCustom={false}
+          label="Приоритет"
+          options={priorityOptions}
+          value={ui.priorityFilter.map(String)}
+          onChange={handlePriorityFilterChange}
+          sx={{ minWidth: 180 }}
+        />
       </Stack>
 
       <Stack spacing={2}>
@@ -231,17 +236,19 @@ export default function ParticipantWorkloadPage() {
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell sx={{ minWidth: 300 }}>Задача</TableCell>
+                      <TableCell sx={{ minWidth: 260, maxWidth: 360, width: 360 }}>
+                        Задача
+                      </TableCell>
                       {sprintsInScope.map((s) => (
                         <TableCell key={s.id} align="center">
                           <Typography
                             variant="caption"
                             sx={{ fontWeight: 700 }}
                           >
-                            {s.name}
+                            {s.startDate} → {s.endDate}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
-                            {s.startDate} → {s.endDate}
+                            {s.name}
                           </Typography>
                         </TableCell>
                       ))}
@@ -263,16 +270,28 @@ export default function ParticipantWorkloadPage() {
                             >
                               <Chip
                                 size="small"
-                                label={`P${r.task.priority}`}
-                                color={
-                                  r.task.priority === 1
-                                    ? "error"
-                                    : r.task.priority === 2
-                                    ? "warning"
-                                    : "default"
-                                }
+                                label={r.task.priority}
+                                color="default"
+                                sx={{
+                                  bgcolor: "grey.200",
+                                  color: "text.primary",
+                                  borderColor: "grey.300",
+                                }}
                               />
-                              <Typography>{r.task.title}</Typography>
+                              <Tooltip title={r.task.title} placement="top" arrow>
+                                <Typography
+                                  sx={{
+                                    display: "-webkit-box",
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: "vertical",
+                                    overflow: "hidden",
+                                    wordBreak: "break-word",
+                                    maxWidth: 300,
+                                  }}
+                                >
+                                  {r.task.title}
+                                </Typography>
+                              </Tooltip>
                             </Stack>
                           </TableCell>
                           {r.perSprint.map((v, i) => (

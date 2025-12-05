@@ -950,8 +950,26 @@ const TaskCard = React.memo(function TaskCard({
           <Table size="small" stickyHeader>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ width: 52 }} />
-                <TableCell sx={{ minWidth: 260 }}>Участник</TableCell>
+                <TableCell
+                  sx={{
+                    width: 52,
+                    position: "sticky",
+                    left: 0,
+                    zIndex: 3,
+                    bgcolor: "background.paper",
+                  }}
+                />
+                <TableCell
+                  sx={{
+                    minWidth: 260,
+                    position: "sticky",
+                    left: 52,
+                    zIndex: 3,
+                    bgcolor: "background.paper",
+                  }}
+                >
+                  Участник
+                </TableCell>
                 {effectiveSprints.map((s) => (
                   <HeaderSprint
                     key={s.id}
@@ -962,7 +980,16 @@ const TaskCard = React.memo(function TaskCard({
                 <TableCell align="center" sx={{ minWidth: 100 }}>
                   Итого
                 </TableCell>
-                <TableCell align="right" sx={{ width: 220 }}>
+                <TableCell
+                  align="right"
+                  sx={{
+                    width: 220,
+                    position: "sticky",
+                    right: 0,
+                    zIndex: 3,
+                    bgcolor: "background.paper",
+                  }}
+                >
                   Действия
                 </TableCell>
               </TableRow>
@@ -990,7 +1017,16 @@ const TaskCard = React.memo(function TaskCard({
                           style={style}
                           sx={{ opacity: isDragging ? 0.95 : 1 }}
                         >
-                          <TableCell width={52} align="center">
+                          <TableCell
+                            width={52}
+                            align="center"
+                            sx={{
+                              position: "sticky",
+                              left: 0,
+                              bgcolor: "background.paper",
+                              zIndex: 2,
+                            }}
+                          >
                             <span
                               {...dragProps.attributes}
                               {...dragProps.listeners}
@@ -1007,7 +1043,12 @@ const TaskCard = React.memo(function TaskCard({
 
                           <TableCell
                             sx={{
-                              bgcolor: isLeader ? "warning.light" : undefined,
+                              bgcolor: isLeader
+                                ? "warning.light"
+                                : "background.paper",
+                              position: "sticky",
+                              left: 52,
+                              zIndex: 2,
                             }}
                           >
                             <Stack
@@ -1053,7 +1094,15 @@ const TaskCard = React.memo(function TaskCard({
                             {toInt(rowSum)}
                           </TableCell>
 
-                          <TableCell align="right">
+                          <TableCell
+                            align="right"
+                            sx={{
+                              position: "sticky",
+                              right: 0,
+                              bgcolor: "background.paper",
+                              zIndex: 2,
+                            }}
+                          >
                             <Stack
                               direction="row"
                               spacing={0.5}
@@ -1725,6 +1774,7 @@ export default function BacklogPage() {
   };
 
   const duplicateTask = async (task: BacklogItem) => {
+    const taskQuarters = getTaskQuarters(task);
     const copy = await addTask({
       title: `${task.title} (копия)`,
       description: (task as any).description,
@@ -1735,6 +1785,8 @@ export default function BacklogPage() {
       participantIds: task.participantIds.slice(),
       releaseDate: task.releaseDate,
       releaseSprintId: task.releaseSprintId,
+      leaderId: (task as any).leaderId ?? undefined,
+      quarterIds: taskQuarters,
     }).unwrap();
 
     const rows = allocations[task.id] || {};
@@ -1767,6 +1819,10 @@ export default function BacklogPage() {
       const base = prev[task.id] ?? Date.now();
       return { ...prev, [copy.id]: base + 1 };
     });
+
+    if (taskQuarters.length) {
+      setTaskQuartersMap((prev) => ({ ...prev, [copy.id]: taskQuarters }));
+    }
   };
 
   const removeTask = async (t: BacklogItem) => {

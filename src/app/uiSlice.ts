@@ -21,7 +21,7 @@ export type UIState = {
     selectedQuarterIds: string[];
   };
   participantWorkload: {
-    quarterId: string; // "all" | qid
+    selectedQuarterIds: string[];
     selectedParticipantIds: string[];
     rolesFilter: string[];
     priorityFilter: number[]; // [1,2,3]
@@ -53,7 +53,7 @@ function defaultState(): UIState {
     team: { filterRoles: [], filterRates: [] },
     time: { selectedQuarterIds: [] },
     participantWorkload: {
-      quarterId: "all",
+      selectedQuarterIds: [],
       selectedParticipantIds: [],
       rolesFilter: [],
       priorityFilter: [1, 2, 3],
@@ -138,10 +138,13 @@ function sanitizeParticipantWorkload(
     : defaults.priorityFilter.slice();
 
   return {
-    quarterId:
-      typeof input?.quarterId === "string"
-        ? input.quarterId
-        : defaults.quarterId,
+    selectedQuarterIds: Array.isArray(input?.selectedQuarterIds)
+      ? input.selectedQuarterIds.filter(
+          (id: any): id is string => typeof id === "string"
+        )
+      : typeof input?.quarterId === "string" && input.quarterId !== "all"
+      ? [input.quarterId]
+      : defaults.selectedQuarterIds.slice(),
     selectedParticipantIds: Array.isArray(input?.selectedParticipantIds)
       ? input.selectedParticipantIds.filter(
           (id: any): id is string => typeof id === "string"
