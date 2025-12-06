@@ -12,10 +12,10 @@ import org.springframework.data.repository.query.Param;
 public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
 
     @EntityGraph(attributePaths = {"participants", "loads", "allocations"})
-    List<TaskEntity> findAll();
+    List<TaskEntity> findAllByOrderByDisplayOrderAsc();
 
     @EntityGraph(attributePaths = {"participants", "loads", "allocations"})
-    @Query("select distinct t from TaskEntity t join t.loads l where l.sprint.quarter.id = :quarterId and l.days > 0")
+    @Query("select distinct t from TaskEntity t join t.loads l where l.sprint.quarter.id = :quarterId and l.days > 0 order by t.displayOrder")
     List<TaskEntity> findByQuarterWithLoad(@Param("quarterId") UUID quarterId);
 
     List<TaskEntity> findByReleaseSprintId(UUID sprintId);
@@ -23,4 +23,7 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
     @Modifying(clearAutomatically = true)
     @Query("update TaskEntity t set t.releaseSprint = null where t.releaseSprint.id in :sprintIds")
     void clearReleaseForSprints(@Param("sprintIds") List<UUID> sprintIds);
+
+    @Query("select coalesce(max(t.displayOrder), 0) from TaskEntity t")
+    int findMaxDisplayOrder();
 }

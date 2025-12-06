@@ -64,7 +64,7 @@ public class TaskService {
         if (quarterId != null) {
             tasks = taskRepository.findByQuarterWithLoad(quarterId);
         } else {
-            tasks = taskRepository.findAll();
+            tasks = taskRepository.findAllByOrderByDisplayOrderAsc();
         }
         List<SprintEntity> sprints = fetchAllSprints();
         tasks.forEach(task -> ensureLoadsForSprints(task, sprints));
@@ -93,6 +93,7 @@ public class TaskService {
         if (request.leaderId() != null && !request.leaderId().isBlank()) {
             entity.setLeaderParticipant(fetchParticipant(request.leaderId()));
         }
+        entity.setDisplayOrder(resolveDisplayOrder(request.order()));
         TaskEntity saved = taskRepository.save(entity);
         List<SprintEntity> sprints = fetchAllSprints();
         Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
@@ -156,6 +157,9 @@ public class TaskService {
         if (request.allocations() != null) {
             applyAllocations(entity, request.allocations(), sprintIndex);
         }
+        if (request.order() != null) {
+            entity.setDisplayOrder(Math.max(0, request.order()));
+        }
         entity.setUpdatedAt(LocalDate.now());
         ensureLoadsForSprints(entity, sprints);
         return DtoMapper.toTaskDto(entity);
@@ -193,6 +197,13 @@ public class TaskService {
         task.setUpdatedAt(LocalDate.now());
         ensureLoadsForSprints(task, fetchAllSprints());
         return DtoMapper.toTaskDto(task);
+    }
+
+    private int resolveDisplayOrder(Integer requestedOrder) {
+        if (requestedOrder != null && requestedOrder >= 0) {
+            return requestedOrder;
+        }
+        return taskRepository.findMaxDisplayOrder() + 1;
     }
 
     @Transactional

@@ -68,6 +68,9 @@ public class TaskEntity {
     @Column(name = "updated_at", nullable = false)
     private LocalDate updatedAt;
 
+    @Column(name = "display_order", nullable = false)
+    private int displayOrder;
+
     @OneToMany(mappedBy = "task", cascade = CascadeType.ALL, orphanRemoval = true)
     private Set<TaskParticipantEntity> participants = new HashSet<>();
 
@@ -203,5 +206,13 @@ public class TaskEntity {
 
     public void setAllocations(Set<TaskAllocationEntity> allocations) {
         this.allocations = allocations;
+    }
+
+    public int getDisplayOrder() {
+        return displayOrder;
+    }
+
+    public void setDisplayOrder(int displayOrder) {
+        this.displayOrder = displayOrder;
     }
 }
