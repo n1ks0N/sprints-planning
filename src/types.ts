@@ -74,6 +74,7 @@ export type BacklogItem = {
   releaseDate?: string;
   releaseSprintId?: string;
   leaderId?: string | null;
+  order?: number;
   createdAt: string;
   updatedAt: string;
 };

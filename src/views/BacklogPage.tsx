@@ -328,7 +328,6 @@ function EditableNumberCell({
 // ---------- LocalStorage ----------
 
 const LS_STATUS = "backlog.statusMap";
-const LS_TASK_ORDER = "backlog.orderMap";
 const LS_TASK_QUARTERS = "backlog.quartersMap";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
@@ -353,7 +352,6 @@ const STATUS_COLOR: Record<
 const PRIORITY_VALUES: readonly number[] = [1, 2, 3];
 
 type StatusMap = Record<string, TaskStatus>;
-type OrderMap = Record<string, number>;
 
 type DragHandleProps = {
   listeners: any;
@@ -1339,7 +1337,13 @@ export default function BacklogPage() {
             .filter(Boolean) as BacklogItem[];
 
           const untouched = draft.filter((t) => !seen.has(t.id));
-          draft.splice(0, draft.length, ...reordered, ...untouched);
+          const fullList = [...reordered, ...untouched];
+
+          fullList.forEach((task, index) => {
+            (task as any).order = index;
+          });
+
+          draft.splice(0, draft.length, ...fullList);
         })
       ),
     [dispatch]
@@ -1362,9 +1366,6 @@ export default function BacklogPage() {
 
   const [statusMap, setStatusMap] = React.useState<StatusMap>(() =>
     readLS<StatusMap>(LS_STATUS, {})
-  );
-  const [orderMap, setOrderMap] = React.useState<OrderMap>(() =>
-    readLS<OrderMap>(LS_TASK_ORDER, {})
   );
   const [taskQuartersMap, setTaskQuartersMap] = React.useState<
     Record<string, string[]>
@@ -1487,7 +1488,6 @@ export default function BacklogPage() {
   }, [allTasks]);
 
   React.useEffect(() => writeLS(LS_STATUS, statusMap), [statusMap]);
-  React.useEffect(() => writeLS(LS_TASK_ORDER, orderMap), [orderMap]);
   React.useEffect(
     () => writeLS(LS_TASK_QUARTERS, taskQuartersMap),
     [taskQuartersMap]
@@ -1664,8 +1664,8 @@ export default function BacklogPage() {
           });
 
     const withOrder = byStatus.slice().sort((a, b) => {
-      const oa = orderMap[a.id] ?? Number.MAX_SAFE_INTEGER;
-      const ob = orderMap[b.id] ?? Number.MAX_SAFE_INTEGER;
+      const oa = Number.isFinite(a.order) ? Number(a.order) : Number.MAX_SAFE_INTEGER;
+      const ob = Number.isFinite(b.order) ? Number(b.order) : Number.MAX_SAFE_INTEGER;
       if (oa !== ob) return oa - ob;
       return (a.createdAt || "").localeCompare(b.createdAt || "");
     });
@@ -1678,7 +1678,6 @@ export default function BacklogPage() {
     streamFilter,
     releaseSprintFilter,
     statusFilter,
-    orderMap,
     getTaskQuarters,
   ]);
 
@@ -1741,6 +1740,37 @@ export default function BacklogPage() {
     [updateField]
   );
 
+  const persistTaskOrder = React.useCallback(
+    async (orderedIds: string[]) => {
+      const completeIds = [
+        ...orderedIds,
+        ...allTasks.filter((t) => !orderedIds.includes(t.id)).map((t) => t.id),
+      ];
+
+      applyTaskOrderOptimistic(completeIds);
+
+      const currentOrderMap = new Map(allTasks.map((t) => [t.id, t.order]));
+      const nextOrderMap = new Map<string, number>();
+      completeIds.forEach((id, idx) => nextOrderMap.set(id, idx));
+
+      const updates = completeIds
+        .map((id) => ({ id, order: nextOrderMap.get(id)! }))
+        .filter(({ id, order }) => currentOrderMap.get(id) !== order)
+        .map((payload) =>
+          updateTask(payload as any)
+            .unwrap()
+            .catch((error) => {
+              console.error("Не удалось сохранить порядок задач", error);
+            })
+        );
+
+      if (updates.length) {
+        await Promise.all(updates);
+      }
+    },
+    [allTasks, applyTaskOrderOptimistic, updateTask]
+  );
+
   const createTask = async (quarterId?: string) => {
     const created = await addTask({
       title: "Новая задача",
@@ -1752,6 +1782,7 @@ export default function BacklogPage() {
       participantIds: [],
       releaseDate: "",
       releaseSprintId: "",
+      order: allTasks.length,
     }).unwrap();
 
     setAllocations((prev) => ({ ...prev, [created.id]: {} }));
@@ -1815,14 +1846,17 @@ export default function BacklogPage() {
       // ignore
     }
 
-    setOrderMap((prev) => {
-      const base = prev[task.id] ?? Date.now();
-      return { ...prev, [copy.id]: base + 1 };
-    });
-
     if (taskQuarters.length) {
       setTaskQuartersMap((prev) => ({ ...prev, [copy.id]: taskQuarters }));
     }
+
+    const currentIds = allTasks.map((t) => t.id);
+    const targetIndex = currentIds.indexOf(task.id);
+    const nextOrder = currentIds.slice();
+    if (targetIndex >= 0) nextOrder.splice(targetIndex + 1, 0, copy.id);
+    else nextOrder.push(copy.id);
+
+    await persistTaskOrder(nextOrder);
   };
 
   const removeTask = async (t: BacklogItem) => {
@@ -1835,11 +1869,6 @@ export default function BacklogPage() {
       return copy;
     });
     setStatusMap((prev) => {
-      const copy = { ...prev };
-      delete copy[t.id];
-      return copy;
-    });
-    setOrderMap((prev) => {
       const copy = { ...prev };
       delete copy[t.id];
       return copy;
@@ -2070,14 +2099,8 @@ export default function BacklogPage() {
     const A = current[idx];
     const B = current[swapIdx];
 
-    setOrderMap((prev) => {
-      const pa = prev[A] ?? idx;
-      const pb = prev[B] ?? swapIdx;
-      return { ...prev, [A]: pb, [B]: pa };
-    });
-
     const reordered = arrayMove(current, idx, swapIdx);
-    applyTaskOrderOptimistic(reordered);
+    void persistTaskOrder(reordered);
   };
 
   const taskSensors = useSensors(
@@ -2116,16 +2139,9 @@ export default function BacklogPage() {
       if (oldIndex < 0 || newIndex < 0) return;
 
       const reordered = arrayMove(currentIds, oldIndex, newIndex);
-      setOrderMap((prev) => {
-        const next = { ...prev };
-        reordered.forEach((id, idx) => {
-          next[id] = idx;
-        });
-        return next;
-      });
-      applyTaskOrderOptimistic(reordered);
+      void persistTaskOrder(reordered);
     },
-    [applyTaskOrderOptimistic, filteredTasks]
+    [filteredTasks, persistTaskOrder]
   );
 
   return (
@@ -2367,11 +2383,11 @@ export default function BacklogPage() {
 
         <Typography variant="caption" color="text.secondary">
           Все поля редактируются по клику. Нагрузка задаётся в ячейках «участник
-          × спринт». Статусы/лидер/порядок/копирование — локально на этой
-          странице. Выбор релиза (ПРОМ) автоматически определяет спринт и
-          подсвечивает соответствующую колонку. Дополнительно можно сдвигать
-          нагрузку по всей сетке или копировать нагрузку участника в следующий
-          квартал одной кнопкой.
+          × спринт». Статусы/лидер/копирование — локально на этой странице.
+          Порядок задач сохраняется автоматически. Выбор релиза (ПРОМ)
+          автоматически определяет спринт и подсвечивает соответствующую
+          колонку. Дополнительно можно сдвигать нагрузку по всей сетке или
+          копировать нагрузку участника в следующий квартал одной кнопкой.
         </Typography>
       </Stack>
     </Paper>
