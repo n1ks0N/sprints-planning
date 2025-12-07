@@ -158,7 +158,7 @@ public class TaskService {
             applyAllocations(entity, request.allocations(), sprintIndex);
         }
         if (request.order() != null) {
-            entity.setDisplayOrder(Math.max(0, request.order()));
+            reorderTask(entity, request.order());
         }
         entity.setUpdatedAt(LocalDate.now());
         ensureLoadsForSprints(entity, sprints);
@@ -204,6 +204,27 @@ public class TaskService {
             return requestedOrder;
         }
         return taskRepository.findMaxDisplayOrder() + 1;
+    }
+
+    private void reorderTask(TaskEntity entity, Integer requestedOrder) {
+        int currentOrder = entity.getDisplayOrder() != null
+            ? entity.getDisplayOrder()
+            : taskRepository.findMaxDisplayOrder();
+        int maxOrder = taskRepository.findMaxDisplayOrder();
+        int targetOrder = Math.max(0, Math.min(requestedOrder, maxOrder));
+
+        if (targetOrder == currentOrder) {
+            return;
+        }
+
+        UUID taskId = entity.getId();
+        if (targetOrder < currentOrder) {
+            taskRepository.incrementDisplayOrderRange(taskId, targetOrder, currentOrder);
+        } else {
+            taskRepository.decrementDisplayOrderRange(taskId, currentOrder, targetOrder);
+        }
+
+        entity.setDisplayOrder(targetOrder);
     }
 
     @Transactional

@@ -26,4 +26,20 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
 
     @Query("select coalesce(max(t.displayOrder), 0) from TaskEntity t")
     int findMaxDisplayOrder();
+
+    @Modifying(clearAutomatically = true)
+    @Query("update TaskEntity t set t.displayOrder = t.displayOrder + 1 where t.id <> :taskId and t.displayOrder >= :start and t.displayOrder < :end")
+    void incrementDisplayOrderRange(
+        @Param("taskId") UUID taskId,
+        @Param("start") int start,
+        @Param("end") int end
+    );
+
+    @Modifying(clearAutomatically = true)
+    @Query("update TaskEntity t set t.displayOrder = t.displayOrder - 1 where t.id <> :taskId and t.displayOrder > :start and t.displayOrder <= :end")
+    void decrementDisplayOrderRange(
+        @Param("taskId") UUID taskId,
+        @Param("start") int start,
+        @Param("end") int end
+    );
 }

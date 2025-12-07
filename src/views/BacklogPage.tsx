@@ -1741,31 +1741,27 @@ export default function BacklogPage() {
   );
 
   const persistTaskOrder = React.useCallback(
-    async (orderedIds: string[]) => {
+    async (orderedIds: string[], movedTaskId: string) => {
       const completeIds = [
         ...orderedIds,
         ...allTasks.filter((t) => !orderedIds.includes(t.id)).map((t) => t.id),
       ];
 
+      const targetIndex = completeIds.indexOf(movedTaskId);
+      if (targetIndex < 0) return;
+
       applyTaskOrderOptimistic(completeIds);
 
       const currentOrderMap = new Map(allTasks.map((t) => [t.id, t.order]));
-      const nextOrderMap = new Map<string, number>();
-      completeIds.forEach((id, idx) => nextOrderMap.set(id, idx));
+      const currentOrder = currentOrderMap.get(movedTaskId);
+      if (currentOrder === targetIndex) {
+        return;
+      }
 
-      const updates = completeIds
-        .map((id) => ({ id, order: nextOrderMap.get(id)! }))
-        .filter(({ id, order }) => currentOrderMap.get(id) !== order)
-        .map((payload) =>
-          updateTask(payload as any)
-            .unwrap()
-            .catch((error) => {
-              console.error("Не удалось сохранить порядок задач", error);
-            })
-        );
-
-      if (updates.length) {
-        await Promise.all(updates);
+      try {
+        await updateTask({ id: movedTaskId, order: targetIndex } as any).unwrap();
+      } catch (error) {
+        console.error("Не удалось сохранить порядок задач", error);
       }
     },
     [allTasks, applyTaskOrderOptimistic, updateTask]
@@ -1856,7 +1852,7 @@ export default function BacklogPage() {
     if (targetIndex >= 0) nextOrder.splice(targetIndex + 1, 0, copy.id);
     else nextOrder.push(copy.id);
 
-    await persistTaskOrder(nextOrder);
+    await persistTaskOrder(nextOrder, copy.id);
   };
 
   const removeTask = async (t: BacklogItem) => {
@@ -2100,7 +2096,7 @@ export default function BacklogPage() {
     const B = current[swapIdx];
 
     const reordered = arrayMove(current, idx, swapIdx);
-    void persistTaskOrder(reordered);
+    void persistTaskOrder(reordered, id);
   };
 
   const taskSensors = useSensors(
@@ -2139,7 +2135,7 @@ export default function BacklogPage() {
       if (oldIndex < 0 || newIndex < 0) return;
 
       const reordered = arrayMove(currentIds, oldIndex, newIndex);
-      void persistTaskOrder(reordered);
+      void persistTaskOrder(reordered, String(active.id));
     },
     [filteredTasks, persistTaskOrder]
   );
