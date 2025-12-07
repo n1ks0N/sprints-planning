@@ -18,6 +18,20 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
     @Query("select distinct t from TaskEntity t join t.loads l where l.sprint.quarter.id = :quarterId and l.days > 0 order by t.displayOrder")
     List<TaskEntity> findByQuarterWithLoad(@Param("quarterId") UUID quarterId);
 
+    @EntityGraph(attributePaths = {
+        "participants",
+        "participants.participant",
+        "loads",
+        "loads.sprint",
+        "allocations",
+        "allocations.participant",
+        "allocations.sprint",
+        "leaderParticipant",
+        "releaseSprint"
+    })
+    @Query("select t from TaskEntity t where t.id = :id")
+    TaskEntity findWithDetailsById(@Param("id") UUID id);
+
     List<TaskEntity> findByReleaseSprintId(UUID sprintId);
 
     @Modifying(clearAutomatically = true)

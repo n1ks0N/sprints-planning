@@ -106,8 +106,10 @@ public class TaskService {
 
     @Transactional
     public TaskDto update(TaskUpdateRequest request) {
-        TaskEntity entity = taskRepository.findById(UUID.fromString(request.id()))
-            .orElseThrow(() -> new EntityNotFoundException("Task not found"));
+        TaskEntity entity = taskRepository.findWithDetailsById(UUID.fromString(request.id()));
+        if (entity == null) {
+            throw new EntityNotFoundException("Task not found");
+        }
         if (request.title() != null) {
             entity.setTitle(request.title());
         }
