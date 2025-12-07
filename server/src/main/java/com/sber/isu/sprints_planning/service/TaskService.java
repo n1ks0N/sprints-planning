@@ -207,11 +207,11 @@ public class TaskService {
     }
 
     private void reorderTask(TaskEntity entity, Integer requestedOrder) {
-        int currentOrder = entity.getDisplayOrder() != null
-            ? entity.getDisplayOrder()
-            : taskRepository.findMaxDisplayOrder();
+        int currentOrder = entity.getDisplayOrder();
         int maxOrder = taskRepository.findMaxDisplayOrder();
-        int targetOrder = Math.max(0, Math.min(requestedOrder, maxOrder));
+        int targetOrder = requestedOrder != null
+            ? Math.max(0, Math.min(requestedOrder, maxOrder))
+            : currentOrder;
 
         if (targetOrder == currentOrder) {
             return;
