@@ -107,6 +107,7 @@ public final class DtoMapper {
             toIso(entity.getReleaseDate()),
             entity.getReleaseSprint() != null ? entity.getReleaseSprint().getId().toString() : null,
             entity.getLeaderParticipant() != null ? entity.getLeaderParticipant().getId().toString() : null,
+            entity.getDisplayOrder(),
             toIso(entity.getCreatedAt()),
             toIso(entity.getUpdatedAt())
         );

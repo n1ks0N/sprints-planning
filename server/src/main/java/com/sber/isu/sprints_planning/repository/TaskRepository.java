@@ -12,15 +12,48 @@ import org.springframework.data.repository.query.Param;
 public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
 
     @EntityGraph(attributePaths = {"participants", "loads", "allocations"})
-    List<TaskEntity> findAll();
+    List<TaskEntity> findAllByOrderByDisplayOrderAsc();
 
     @EntityGraph(attributePaths = {"participants", "loads", "allocations"})
-    @Query("select distinct t from TaskEntity t join t.loads l where l.sprint.quarter.id = :quarterId and l.days > 0")
+    @Query("select distinct t from TaskEntity t join t.loads l where l.sprint.quarter.id = :quarterId and l.days > 0 order by t.displayOrder")
     List<TaskEntity> findByQuarterWithLoad(@Param("quarterId") UUID quarterId);
+
+    @EntityGraph(attributePaths = {
+        "participants",
+        "participants.participant",
+        "loads",
+        "loads.sprint",
+        "allocations",
+        "allocations.participant",
+        "allocations.sprint",
+        "leaderParticipant",
+        "releaseSprint"
+    })
+    @Query("select t from TaskEntity t where t.id = :id")
+    TaskEntity findWithDetailsById(@Param("id") UUID id);
 
     List<TaskEntity> findByReleaseSprintId(UUID sprintId);
 
     @Modifying(clearAutomatically = true)
     @Query("update TaskEntity t set t.releaseSprint = null where t.releaseSprint.id in :sprintIds")
     void clearReleaseForSprints(@Param("sprintIds") List<UUID> sprintIds);
+
+    @Query("select coalesce(max(t.displayOrder), 0) from TaskEntity t")
+    int findMaxDisplayOrder();
+
+    @Modifying(flushAutomatically = true)
+    @Query("update TaskEntity t set t.displayOrder = t.displayOrder + 1 where t.id <> :taskId and t.displayOrder >= :start and t.displayOrder < :end")
+    void incrementDisplayOrderRange(
+        @Param("taskId") UUID taskId,
+        @Param("start") int start,
+        @Param("end") int end
+    );
+
+    @Modifying(flushAutomatically = true)
+    @Query("update TaskEntity t set t.displayOrder = t.displayOrder - 1 where t.id <> :taskId and t.displayOrder > :start and t.displayOrder <= :end")
+    void decrementDisplayOrderRange(
+        @Param("taskId") UUID taskId,
+        @Param("start") int start,
+        @Param("end") int end
+    );
 }

@@ -19,6 +19,7 @@ public record TaskDto(
     String releaseDate,
     String releaseSprintId,
     String leaderId,
+    Integer order,
     String createdAt,
     String updatedAt
 ) {

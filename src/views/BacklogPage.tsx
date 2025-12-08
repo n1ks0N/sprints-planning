@@ -328,7 +328,6 @@ function EditableNumberCell({
 // ---------- LocalStorage ----------
 
 const LS_STATUS = "backlog.statusMap";
-const LS_TASK_ORDER = "backlog.orderMap";
 const LS_TASK_QUARTERS = "backlog.quartersMap";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
@@ -353,7 +352,6 @@ const STATUS_COLOR: Record<
 const PRIORITY_VALUES: readonly number[] = [1, 2, 3];
 
 type StatusMap = Record<string, TaskStatus>;
-type OrderMap = Record<string, number>;
 
 type DragHandleProps = {
   listeners: any;
@@ -950,8 +948,26 @@ const TaskCard = React.memo(function TaskCard({
           <Table size="small" stickyHeader>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ width: 52 }} />
-                <TableCell sx={{ minWidth: 260 }}>Участник</TableCell>
+                <TableCell
+                  sx={{
+                    width: 52,
+                    position: "sticky",
+                    left: 0,
+                    zIndex: 3,
+                    bgcolor: "background.paper",
+                  }}
+                />
+                <TableCell
+                  sx={{
+                    minWidth: 260,
+                    position: "sticky",
+                    left: 52,
+                    zIndex: 3,
+                    bgcolor: "background.paper",
+                  }}
+                >
+                  Участник
+                </TableCell>
                 {effectiveSprints.map((s) => (
                   <HeaderSprint
                     key={s.id}
@@ -962,7 +978,16 @@ const TaskCard = React.memo(function TaskCard({
                 <TableCell align="center" sx={{ minWidth: 100 }}>
                   Итого
                 </TableCell>
-                <TableCell align="right" sx={{ width: 220 }}>
+                <TableCell
+                  align="right"
+                  sx={{
+                    width: 220,
+                    position: "sticky",
+                    right: 0,
+                    zIndex: 3,
+                    bgcolor: "background.paper",
+                  }}
+                >
                   Действия
                 </TableCell>
               </TableRow>
@@ -990,7 +1015,16 @@ const TaskCard = React.memo(function TaskCard({
                           style={style}
                           sx={{ opacity: isDragging ? 0.95 : 1 }}
                         >
-                          <TableCell width={52} align="center">
+                          <TableCell
+                            width={52}
+                            align="center"
+                            sx={{
+                              position: "sticky",
+                              left: 0,
+                              bgcolor: "background.paper",
+                              zIndex: 2,
+                            }}
+                          >
                             <span
                               {...dragProps.attributes}
                               {...dragProps.listeners}
@@ -1007,7 +1041,12 @@ const TaskCard = React.memo(function TaskCard({
 
                           <TableCell
                             sx={{
-                              bgcolor: isLeader ? "warning.light" : undefined,
+                              bgcolor: isLeader
+                                ? "warning.light"
+                                : "background.paper",
+                              position: "sticky",
+                              left: 52,
+                              zIndex: 2,
                             }}
                           >
                             <Stack
@@ -1053,7 +1092,15 @@ const TaskCard = React.memo(function TaskCard({
                             {toInt(rowSum)}
                           </TableCell>
 
-                          <TableCell align="right">
+                          <TableCell
+                            align="right"
+                            sx={{
+                              position: "sticky",
+                              right: 0,
+                              bgcolor: "background.paper",
+                              zIndex: 2,
+                            }}
+                          >
                             <Stack
                               direction="row"
                               spacing={0.5}
@@ -1290,7 +1337,13 @@ export default function BacklogPage() {
             .filter(Boolean) as BacklogItem[];
 
           const untouched = draft.filter((t) => !seen.has(t.id));
-          draft.splice(0, draft.length, ...reordered, ...untouched);
+          const fullList = [...reordered, ...untouched];
+
+          fullList.forEach((task, index) => {
+            (task as any).order = index;
+          });
+
+          draft.splice(0, draft.length, ...fullList);
         })
       ),
     [dispatch]
@@ -1313,9 +1366,6 @@ export default function BacklogPage() {
 
   const [statusMap, setStatusMap] = React.useState<StatusMap>(() =>
     readLS<StatusMap>(LS_STATUS, {})
-  );
-  const [orderMap, setOrderMap] = React.useState<OrderMap>(() =>
-    readLS<OrderMap>(LS_TASK_ORDER, {})
   );
   const [taskQuartersMap, setTaskQuartersMap] = React.useState<
     Record<string, string[]>
@@ -1438,7 +1488,6 @@ export default function BacklogPage() {
   }, [allTasks]);
 
   React.useEffect(() => writeLS(LS_STATUS, statusMap), [statusMap]);
-  React.useEffect(() => writeLS(LS_TASK_ORDER, orderMap), [orderMap]);
   React.useEffect(
     () => writeLS(LS_TASK_QUARTERS, taskQuartersMap),
     [taskQuartersMap]
@@ -1615,8 +1664,8 @@ export default function BacklogPage() {
           });
 
     const withOrder = byStatus.slice().sort((a, b) => {
-      const oa = orderMap[a.id] ?? Number.MAX_SAFE_INTEGER;
-      const ob = orderMap[b.id] ?? Number.MAX_SAFE_INTEGER;
+      const oa = Number.isFinite(a.order) ? Number(a.order) : Number.MAX_SAFE_INTEGER;
+      const ob = Number.isFinite(b.order) ? Number(b.order) : Number.MAX_SAFE_INTEGER;
       if (oa !== ob) return oa - ob;
       return (a.createdAt || "").localeCompare(b.createdAt || "");
     });
@@ -1629,7 +1678,6 @@ export default function BacklogPage() {
     streamFilter,
     releaseSprintFilter,
     statusFilter,
-    orderMap,
     getTaskQuarters,
   ]);
 
@@ -1692,6 +1740,33 @@ export default function BacklogPage() {
     [updateField]
   );
 
+  const persistTaskOrder = React.useCallback(
+    async (orderedIds: string[], movedTaskId: string) => {
+      const completeIds = [
+        ...orderedIds,
+        ...allTasks.filter((t) => !orderedIds.includes(t.id)).map((t) => t.id),
+      ];
+
+      const targetIndex = completeIds.indexOf(movedTaskId);
+      if (targetIndex < 0) return;
+
+      applyTaskOrderOptimistic(completeIds);
+
+      const currentOrderMap = new Map(allTasks.map((t) => [t.id, t.order]));
+      const currentOrder = currentOrderMap.get(movedTaskId);
+      if (currentOrder === targetIndex) {
+        return;
+      }
+
+      try {
+        await updateTask({ id: movedTaskId, order: targetIndex } as any).unwrap();
+      } catch (error) {
+        console.error("Не удалось сохранить порядок задач", error);
+      }
+    },
+    [allTasks, applyTaskOrderOptimistic, updateTask]
+  );
+
   const createTask = async (quarterId?: string) => {
     const created = await addTask({
       title: "Новая задача",
@@ -1703,6 +1778,7 @@ export default function BacklogPage() {
       participantIds: [],
       releaseDate: "",
       releaseSprintId: "",
+      order: allTasks.length,
     }).unwrap();
 
     setAllocations((prev) => ({ ...prev, [created.id]: {} }));
@@ -1725,6 +1801,7 @@ export default function BacklogPage() {
   };
 
   const duplicateTask = async (task: BacklogItem) => {
+    const taskQuarters = getTaskQuarters(task);
     const copy = await addTask({
       title: `${task.title} (копия)`,
       description: (task as any).description,
@@ -1735,6 +1812,8 @@ export default function BacklogPage() {
       participantIds: task.participantIds.slice(),
       releaseDate: task.releaseDate,
       releaseSprintId: task.releaseSprintId,
+      leaderId: (task as any).leaderId ?? undefined,
+      quarterIds: taskQuarters,
     }).unwrap();
 
     const rows = allocations[task.id] || {};
@@ -1763,10 +1842,17 @@ export default function BacklogPage() {
       // ignore
     }
 
-    setOrderMap((prev) => {
-      const base = prev[task.id] ?? Date.now();
-      return { ...prev, [copy.id]: base + 1 };
-    });
+    if (taskQuarters.length) {
+      setTaskQuartersMap((prev) => ({ ...prev, [copy.id]: taskQuarters }));
+    }
+
+    const currentIds = allTasks.map((t) => t.id);
+    const targetIndex = currentIds.indexOf(task.id);
+    const nextOrder = currentIds.slice();
+    if (targetIndex >= 0) nextOrder.splice(targetIndex + 1, 0, copy.id);
+    else nextOrder.push(copy.id);
+
+    await persistTaskOrder(nextOrder, copy.id);
   };
 
   const removeTask = async (t: BacklogItem) => {
@@ -1779,11 +1865,6 @@ export default function BacklogPage() {
       return copy;
     });
     setStatusMap((prev) => {
-      const copy = { ...prev };
-      delete copy[t.id];
-      return copy;
-    });
-    setOrderMap((prev) => {
       const copy = { ...prev };
       delete copy[t.id];
       return copy;
@@ -2014,14 +2095,8 @@ export default function BacklogPage() {
     const A = current[idx];
     const B = current[swapIdx];
 
-    setOrderMap((prev) => {
-      const pa = prev[A] ?? idx;
-      const pb = prev[B] ?? swapIdx;
-      return { ...prev, [A]: pb, [B]: pa };
-    });
-
     const reordered = arrayMove(current, idx, swapIdx);
-    applyTaskOrderOptimistic(reordered);
+    void persistTaskOrder(reordered, id);
   };
 
   const taskSensors = useSensors(
@@ -2060,16 +2135,9 @@ export default function BacklogPage() {
       if (oldIndex < 0 || newIndex < 0) return;
 
       const reordered = arrayMove(currentIds, oldIndex, newIndex);
-      setOrderMap((prev) => {
-        const next = { ...prev };
-        reordered.forEach((id, idx) => {
-          next[id] = idx;
-        });
-        return next;
-      });
-      applyTaskOrderOptimistic(reordered);
+      void persistTaskOrder(reordered, String(active.id));
     },
-    [applyTaskOrderOptimistic, filteredTasks]
+    [filteredTasks, persistTaskOrder]
   );
 
   return (
@@ -2311,11 +2379,11 @@ export default function BacklogPage() {
 
         <Typography variant="caption" color="text.secondary">
           Все поля редактируются по клику. Нагрузка задаётся в ячейках «участник
-          × спринт». Статусы/лидер/порядок/копирование — локально на этой
-          странице. Выбор релиза (ПРОМ) автоматически определяет спринт и
-          подсвечивает соответствующую колонку. Дополнительно можно сдвигать
-          нагрузку по всей сетке или копировать нагрузку участника в следующий
-          квартал одной кнопкой.
+          × спринт». Статусы/лидер/копирование — локально на этой странице.
+          Порядок задач сохраняется автоматически. Выбор релиза (ПРОМ)
+          автоматически определяет спринт и подсвечивает соответствующую
+          колонку. Дополнительно можно сдвигать нагрузку по всей сетке или
+          копировать нагрузку участника в следующий квартал одной кнопкой.
         </Typography>
       </Stack>
     </Paper>

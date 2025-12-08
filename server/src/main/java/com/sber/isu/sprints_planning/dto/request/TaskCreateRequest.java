@@ -18,6 +18,7 @@ public record TaskCreateRequest(
     Map<String, String> notes,
     LocalDate releaseDate,
     String releaseSprintId,
-    String leaderId
+    String leaderId,
+    Integer order
 ) {
 }

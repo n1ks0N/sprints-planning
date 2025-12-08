@@ -3,5 +3,5 @@ databaseChangeLog:
       file: 1.0.0/1.0.0_1_init.sql
       relativeToChangelogFile: true
   - include:
-      file: 1.0.1/1.0.1_1_api_history.sql
+      file: 1.0.0/1.0.0_2_api_history_and_tasks_order.sql
       relativeToChangelogFile: true
