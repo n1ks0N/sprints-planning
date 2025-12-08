@@ -16,7 +16,7 @@ const teamSlice = createSlice({
   initialState,
   reducers: {
     setCurrentTeam(state, action: PayloadAction<string>) {
-      state.currentTeam = action.payload || DEFAULT_TEAM_KEY;
+      state.currentTeam = (action.payload || DEFAULT_TEAM_KEY).toLowerCase();
       if (!state.availableTeams.some((team) => team.key === state.currentTeam)) {
         state.availableTeams = [
           ...state.availableTeams,

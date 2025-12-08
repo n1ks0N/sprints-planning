@@ -18,7 +18,7 @@ import org.hibernate.annotations.UuidGenerator;
 @Table(name = "sprints")
 public class SprintEntity {
 
-    private static final String DEFAULT_TEAM_KEY = "CUSTOMLAB";
+    private static final String DEFAULT_TEAM_KEY = "customlab";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

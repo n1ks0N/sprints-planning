@@ -1,12 +1,5 @@
 import React from "react";
-import {
-  FormControl,
-  InputLabel,
-  MenuItem,
-  Select,
-  SelectChangeEvent,
-  Tooltip,
-} from "@mui/material";
+import { FormControl, InputLabel, MenuItem, Select, SelectChangeEvent } from "@mui/material";
 import type { TeamOption } from "../teams";
 
 type Props = {
@@ -23,23 +16,21 @@ export default function TeamSwitcher({ teams, value, onChange }: Props) {
   return (
     <FormControl size="small" sx={{ minWidth: 180 }}>
       <InputLabel id="team-switcher-label">Команда</InputLabel>
-      <Tooltip title="Переключитесь на нужную команду. У каждой команды свои данные.">
-        <Select
-          labelId="team-switcher-label"
-          value={value}
-          label="Команда"
-          onChange={handleChange}
-          renderValue={(selected) =>
-            teams.find((team) => team.key === selected)?.label ?? selected
-          }
-        >
-          {teams.map((team) => (
-            <MenuItem key={team.key} value={team.key}>
-              {team.label}
-            </MenuItem>
-          ))}
-        </Select>
-      </Tooltip>
+      <Select
+        labelId="team-switcher-label"
+        value={value}
+        label="Команда"
+        onChange={handleChange}
+        renderValue={(selected) =>
+          teams.find((team) => team.key === selected)?.label ?? selected
+        }
+      >
+        {teams.map((team) => (
+          <MenuItem key={team.key} value={team.key}>
+            {team.label}
+          </MenuItem>
+        ))}
+      </Select>
     </FormControl>
   );
 }

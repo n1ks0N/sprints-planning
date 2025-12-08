@@ -9,12 +9,15 @@ import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@RequestMapping("/{teamKey}")
 public class SprintController {
 
     private final SprintService sprintService;
@@ -24,22 +27,23 @@ public class SprintController {
     }
 
     @GetMapping("/sprints")
-    public List<SprintDto> getSprints(@RequestParam(value = "quarterId", required = false) String quarterId) {
+    public List<SprintDto> getSprints(@PathVariable String teamKey,
+        @RequestParam(value = "quarterId", required = false) String quarterId) {
         return sprintService.findAll(quarterId != null ? UUID.fromString(quarterId) : null);
     }
 
     @PostMapping("/sprints")
-    public SprintDto createSprint(@RequestBody @Valid SprintCreateRequest request) {
+    public SprintDto createSprint(@PathVariable String teamKey, @RequestBody @Valid SprintCreateRequest request) {
         return sprintService.create(request);
     }
 
     @PostMapping("/sprints/update")
-    public SprintDto updateSprint(@RequestBody @Valid SprintUpdateRequest request) {
+    public SprintDto updateSprint(@PathVariable String teamKey, @RequestBody @Valid SprintUpdateRequest request) {
         return sprintService.update(request);
     }
 
     @PostMapping("/sprints/delete")
-    public SprintDto deleteSprint(@RequestBody @Valid IdRequest request) {
+    public SprintDto deleteSprint(@PathVariable String teamKey, @RequestBody @Valid IdRequest request) {
         return sprintService.delete(request);
     }
 }

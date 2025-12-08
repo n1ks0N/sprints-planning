@@ -25,7 +25,7 @@ import org.hibernate.type.SqlTypes;
 @Table(name = "tasks")
 public class TaskEntity {
 
-    private static final String DEFAULT_TEAM_KEY = "CUSTOMLAB";
+    private static final String DEFAULT_TEAM_KEY = "customlab";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

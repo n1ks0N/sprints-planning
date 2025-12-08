@@ -15,7 +15,7 @@ import org.hibernate.annotations.UuidGenerator;
 @Table(name = "participants")
 public class ParticipantEntity {
 
-    private static final String DEFAULT_TEAM_KEY = "CUSTOMLAB";
+    private static final String DEFAULT_TEAM_KEY = "customlab";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
