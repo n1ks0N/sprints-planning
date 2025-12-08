@@ -8,6 +8,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
 import java.util.UUID;
@@ -16,6 +17,8 @@ import org.hibernate.annotations.UuidGenerator;
 @Entity
 @Table(name = "sprints")
 public class SprintEntity {
+
+    private static final String DEFAULT_TEAM_KEY = "CUSTOMLAB";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -40,6 +43,9 @@ public class SprintEntity {
 
     @Column(name = "\"order\"", nullable = false)
     private int order;
+
+    @Column(name = "team_key", nullable = false)
+    private String teamKey;
 
     public UUID getId() {
         return id;
@@ -95,5 +101,20 @@ public class SprintEntity {
 
     public void setOrder(int order) {
         this.order = order;
+    }
+
+    public String getTeamKey() {
+        return teamKey;
+    }
+
+    public void setTeamKey(String teamKey) {
+        this.teamKey = teamKey;
+    }
+
+    @PrePersist
+    public void onCreate() {
+        if (teamKey == null) {
+            teamKey = DEFAULT_TEAM_KEY;
+        }
     }
 }

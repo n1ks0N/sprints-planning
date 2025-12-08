@@ -5,6 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -13,6 +14,8 @@ import org.hibernate.annotations.UuidGenerator;
 @Entity
 @Table(name = "participants")
 public class ParticipantEntity {
+
+    private static final String DEFAULT_TEAM_KEY = "CUSTOMLAB";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -30,6 +33,9 @@ public class ParticipantEntity {
 
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
+
+    @Column(name = "team_key", nullable = false)
+    private String teamKey;
 
     public UUID getId() {
         return id;
@@ -69,5 +75,20 @@ public class ParticipantEntity {
 
     public void setDisplayOrder(int displayOrder) {
         this.displayOrder = displayOrder;
+    }
+
+    public String getTeamKey() {
+        return teamKey;
+    }
+
+    public void setTeamKey(String teamKey) {
+        this.teamKey = teamKey;
+    }
+
+    @PrePersist
+    public void onCreate() {
+        if (teamKey == null) {
+            teamKey = DEFAULT_TEAM_KEY;
+        }
     }
 }
