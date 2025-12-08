@@ -1,6 +1,6 @@
 --liquibase formatted sql
 
---changeset sprints:1.1.0-1
+--changeset sprints:1.0.0-3
 CREATE TABLE teams (
     key TEXT PRIMARY KEY,
     name TEXT NOT NULL
