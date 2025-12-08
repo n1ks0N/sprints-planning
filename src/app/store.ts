@@ -2,12 +2,14 @@ import { configureStore } from "@reduxjs/toolkit";
 import { api } from "./api";
 import uiReducer, { persistUIState } from "./uiSlice";
 import undoReducer from "./undoSlice";
+import teamReducer from "./teamSlice";
 
 export const store = configureStore({
   reducer: {
     [api.reducerPath]: api.reducer,
     ui: uiReducer,
     undo: undoReducer,
+    team: teamReducer,
   },
   middleware: (gDM) => gDM().concat(api.middleware),
 });

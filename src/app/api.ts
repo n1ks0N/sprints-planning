@@ -10,6 +10,8 @@ import type {
   Release,
   ApiSessionHistory,
 } from "../types";
+import { DEFAULT_TEAM_KEY } from "../teams";
+import { selectCurrentTeamKey } from "./teamSlice";
 
 type AnyState = unknown;
 
@@ -118,12 +120,30 @@ const getMethod = (args: unknown): string => {
   return "GET";
 };
 
+const addTeamToUrl = (url: string, teamKey: string) => {
+  const normalizedTeam = teamKey || DEFAULT_TEAM_KEY;
+  const normalizedUrl = url.startsWith("/") ? url : `/${url}`;
+  if (normalizedUrl.startsWith(`/${normalizedTeam}/`)) return normalizedUrl;
+  return `/${normalizedTeam}${normalizedUrl}`;
+};
+
+const withTeamInArgs = (args: unknown, teamKey: string): unknown => {
+  if (typeof args === "string") return addTeamToUrl(args, teamKey);
+  if (typeof args === "object" && args !== null) {
+    const currentUrl = typeof (args as any).url === "string" ? (args as any).url : "/";
+    return { ...(args as any), url: addTeamToUrl(currentUrl, teamKey) };
+  }
+  return { url: addTeamToUrl("/", teamKey) };
+};
+
 const isActionMethod = (method: string) =>
   ["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase());
 
 const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
   const hasWindow = typeof window !== "undefined";
-  const method = getMethod(args);
+  const teamKey = selectCurrentTeamKey(api.getState() as any);
+  const argsWithTeam = withTeamInArgs(args, teamKey);
+  const method = getMethod(argsWithTeam);
 
   if (hasWindow) {
     ensureSessionId();
@@ -140,7 +160,7 @@ const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
     }
   }
 
-  const result = await rawBaseQuery(args, api, extraOptions);
+  const result = await rawBaseQuery(argsWithTeam, api, extraOptions);
 
   if (hasWindow && isActionMethod(method) && !("error" in result)) {
     refreshSessionTtl();
@@ -1192,10 +1212,11 @@ export const api = createApi({
 
     // ---- Export ----
     exportExcel: b.query<Blob, void>({
-      async queryFn() {
+      async queryFn(_arg, { getState }) {
         const baseUrl = process.env.API_URL || "/api/v1/sprints-planning";
+        const teamKey = selectCurrentTeamKey(getState() as any);
         try {
-          const response = await fetch(`${baseUrl}/export/excel`);
+          const response = await fetch(`${baseUrl}/${teamKey}/export/excel`);
           const blob = await response.blob();
           if (!response.ok) {
             const text = await blob.text();

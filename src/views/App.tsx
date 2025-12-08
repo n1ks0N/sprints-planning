@@ -1,5 +1,13 @@
 import * as React from "react";
-import { Routes, Route, Link } from "react-router-dom";
+import {
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 import {
   Container,
   AppBar,
@@ -8,6 +16,7 @@ import {
   Stack,
   Tooltip,
   CircularProgress,
+  Box,
 } from "@mui/material";
 
 import TimeSetupPage from "./TimeSetupPage";
@@ -17,10 +26,17 @@ import BacklogPage from "./BacklogPage";
 import ParticipantWorkloadPage from "./ParticipantWorkloadPage";
 import ReleasesPage from "./ReleasesPage";
 import HistoryPage from "./HistoryPage";
-import { useDispatch } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import { undoLast } from "../app/undoSlice";
 import { useLazyExportExcelQuery } from "../app/api";
 import moment from "moment";
+import TeamSwitcher from "../components/TeamSwitcher";
+import {
+  selectAvailableTeams,
+  selectCurrentTeamKey,
+  setCurrentTeam,
+} from "../app/teamSlice";
+import { findTeamByKey } from "../teams";
 
 function Hotkeys() {
   const dispatch = useDispatch();
@@ -40,7 +56,22 @@ function Hotkeys() {
   return null;
 }
 
-export default function App() {
+function TeamScopedApp() {
+  const { teamKey: rawTeamKey } = useParams<{ teamKey: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const dispatch = useDispatch();
+  const teams = useSelector(selectAvailableTeams);
+  const teamKey = findTeamByKey(rawTeamKey).key;
+  const currentPathSuffix = React.useMemo(
+    () => location.pathname.replace(/^\/[A-Za-z0-9_-]+/, "") || "/",
+    [location.pathname]
+  );
+
+  React.useEffect(() => {
+    dispatch(setCurrentTeam(teamKey));
+  }, [dispatch, teamKey]);
+
   const [exportExcel, { isFetching: isExporting }] = useLazyExportExcelQuery();
 
   const handleExportExcel = React.useCallback(async () => {
@@ -59,31 +90,52 @@ export default function App() {
     }
   }, [exportExcel]);
 
+  const navigateToTeam = React.useCallback(
+    (nextTeam: string) => {
+      const suffix = currentPathSuffix.startsWith("/")
+        ? currentPathSuffix
+        : `/${currentPathSuffix}`;
+      navigate(`/${nextTeam}${suffix}`);
+    },
+    [currentPathSuffix, navigate]
+  );
+
+  const buildPath = React.useCallback(
+    (suffix: string) => `/${teamKey}${suffix}`,
+    [teamKey]
+  );
+
   return (
     <>
       <Hotkeys />
       <AppBar position="static" color="default" elevation={0}>
         <Toolbar>
-          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-            <Button component={Link} to="/">
+          <Stack
+            direction="row"
+            spacing={1}
+            alignItems="center"
+            flexWrap="wrap"
+            sx={{ flexGrow: 1 }}
+          >
+            <Button component={Link} to={buildPath("/")}>
               Бэклог
             </Button>
-            <Button component={Link} to="/capacity">
+            <Button component={Link} to={buildPath("/capacity")}>
               Нагрузка
             </Button>
-            <Button component={Link} to="/participant-work">
+            <Button component={Link} to={buildPath("/participant-work")}>
               По сотрудникам
             </Button>
-            <Button component={Link} to="/time">
+            <Button component={Link} to={buildPath("/time")}>
               Кварталы/Спринты
             </Button>
-            <Button component={Link} to="/team">
+            <Button component={Link} to={buildPath("/team")}>
               Участники
             </Button>
-            <Button component={Link} to="/releases">
+            <Button component={Link} to={buildPath("/releases")}>
               Релизы
             </Button>
-            <Button component={Link} to="/history">
+            <Button component={Link} to={buildPath("/history")}>
               История
             </Button>
             <Tooltip title="Экспортировать план в Excel">
@@ -102,23 +154,38 @@ export default function App() {
               </span>
             </Tooltip>
           </Stack>
+          <Box sx={{ ml: { xs: 0, sm: 2 }, mt: { xs: 1, sm: 0 } }}>
+            <TeamSwitcher
+              teams={teams}
+              value={teamKey}
+              onChange={navigateToTeam}
+            />
+          </Box>
         </Toolbar>
       </AppBar>
 
       <Container maxWidth="xl" sx={{ py: 2 }}>
         <Routes>
-          <Route path="/time" element={<TimeSetupPage />} />
-          <Route path="/team" element={<TeamPage />} />
-          <Route path="/capacity" element={<CapacityPage />} />
+          <Route path="time" element={<TimeSetupPage />} />
+          <Route path="team" element={<TeamPage />} />
+          <Route path="capacity" element={<CapacityPage />} />
           <Route path="/" element={<BacklogPage />} />
-          <Route
-            path="/participant-work"
-            element={<ParticipantWorkloadPage />}
-          />
-          <Route path="/releases" element={<ReleasesPage />} />
-          <Route path="/history" element={<HistoryPage />} />
+          <Route path="participant-work" element={<ParticipantWorkloadPage />} />
+          <Route path="releases" element={<ReleasesPage />} />
+          <Route path="history" element={<HistoryPage />} />
         </Routes>
       </Container>
     </>
+  );
+}
+
+export default function App() {
+  const currentTeam = useSelector(selectCurrentTeamKey);
+
+  return (
+    <Routes>
+      <Route path="/:teamKey/*" element={<TeamScopedApp />} />
+      <Route path="*" element={<Navigate to={`/${currentTeam}/`} replace />} />
+    </Routes>
   );
 }
