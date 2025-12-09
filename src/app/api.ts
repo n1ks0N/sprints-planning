@@ -4,7 +4,6 @@ import type {
   Quarter,
   Sprint,
   Participant,
-  RunVacation,
   CapacityRow,
   BacklogItem,
   Release,
@@ -307,7 +306,6 @@ export const api = createApi({
     "Quarter",
     "Sprint",
     "Participant",
-    "RunVacation",
     "Capacity",
     "Task",
     "Release",
@@ -403,7 +401,6 @@ export const api = createApi({
         listTag("Sprint"),
         listTag("Task"),
         listTag("Capacity"),
-        listTag("RunVacation"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const patch = dispatch(
@@ -445,7 +442,6 @@ export const api = createApi({
         listTag("Quarter"),
         listTag("Task"),
         listTag("Capacity"),
-        listTag("RunVacation"),
         ...(result ? [entityTag("Sprint", result.id)] : []),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
@@ -496,7 +492,6 @@ export const api = createApi({
         entityTag("Sprint", arg.id),
         listTag("Sprint"),
         listTag("Capacity"),
-        listTag("RunVacation"),
         listTag("Task"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
@@ -532,7 +527,6 @@ export const api = createApi({
         entityTag("Sprint", arg.id),
         listTag("Sprint"),
         listTag("Capacity"),
-        listTag("RunVacation"),
         listTag("Task"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
@@ -575,7 +569,6 @@ export const api = createApi({
       invalidatesTags: (result) => [
         listTag("Participant"),
         listTag("Capacity"),
-        listTag("RunVacation"),
         ...(result ? [entityTag("Participant", result.id)] : []),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
@@ -616,7 +609,6 @@ export const api = createApi({
         entityTag("Participant", arg.id),
         listTag("Participant"),
         listTag("Capacity"),
-        listTag("RunVacation"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const patch = dispatch(
@@ -646,7 +638,6 @@ export const api = createApi({
         entityTag("Participant", arg.id),
         listTag("Participant"),
         listTag("Capacity"),
-        listTag("RunVacation"),
         listTag("Task"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
@@ -692,137 +683,7 @@ export const api = createApi({
       },
     }),
 
-    // ---- Run/Vacation & Capacity ----
-    getRunVacation: b.query<RunVacation[], { quarterId: string }>({
-      query: ({ quarterId }) =>
-        ({ url: "/runvac", method: "GET", params: { quarterId } }),
-      providesTags: (result, error, arg) => [
-        { type: "RunVacation" as const, id: "LIST" as const },
-        { type: "RunVacation" as const, id: arg.quarterId },
-      ],
-    }),
-    upsertRunVacation: b.mutation<RunVacation, Partial<RunVacation>>({
-      query: (body) => ({ url: "/runvac", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
-        { type: "RunVacation" as const, id: "LIST" as const },
-        arg?.sprintId
-          ? { type: "RunVacation" as const, id: arg.sprintId }
-          : { type: "RunVacation" as const, id: "LIST" as const },
-        { type: "Capacity" as const, id: "LIST" as const },
-      ],
-      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const quarterId = findQuarterBySprint(arg.sprintId, getState);
-        const cachedArgs = collectCachedArgs<{ quarterId: string }>(
-          getState,
-          "getRunVacation",
-          [
-            { type: "RunVacation", id: "LIST" },
-            ...(quarterId ? [{ type: "RunVacation", id: quarterId }] : []),
-          ]
-        );
-
-        const optimistic: RunVacation = {
-          participantId: arg.participantId || "",
-          sprintId: arg.sprintId || "",
-          runDays: Math.max(0, Math.round(Number(arg.runDays ?? 0))),
-          vacationNormDays: Math.max(
-            0,
-            Math.round(Number(arg.vacationNormDays ?? 0))
-          ),
-        } as RunVacation;
-
-        const patches = applyPatches(
-          dispatch,
-          "getRunVacation",
-          cachedArgs,
-          (draft: RunVacation[]) => {
-            const idx = draft.findIndex(
-              (r: RunVacation) =>
-                r.participantId === optimistic.participantId &&
-                r.sprintId === optimistic.sprintId
-            );
-            if (idx >= 0) draft[idx] = { ...draft[idx], ...optimistic };
-            else draft.push(optimistic);
-          }
-        );
-
-        try {
-          const { data } = await queryFulfilled;
-          applyPatches(dispatch, "getRunVacation", cachedArgs, (draft) => {
-            const idx = draft.findIndex(
-              (r: RunVacation) =>
-                r.participantId === data.participantId && r.sprintId === data.sprintId
-            );
-            if (idx >= 0) draft[idx] = data;
-            else draft.push(data);
-          });
-        } catch (error) {
-          patches.forEach((p) => p.undo());
-          notifyError("Не удалось сохранить нагрузку/отпуск", error);
-        }
-      },
-    }),
-    bulkRunVacation: b.mutation<
-      { ok: true },
-      {
-        quarterId: string;
-        roles?: string[];
-        daysPerSprint: number;
-        multiplyByRate: boolean;
-      }
-    >({
-      query: (body) => ({ url: "/runvac/bulk", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
-        { type: "RunVacation" as const, id: "LIST" as const },
-        arg.quarterId
-          ? { type: "RunVacation" as const, id: arg.quarterId }
-          : { type: "RunVacation" as const, id: "LIST" as const },
-        { type: "Capacity" as const, id: "LIST" as const },
-      ],
-      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const participantMap = new Map(
-          getParticipantsFromCache(getState()).map((p) => [p.id, p])
-        );
-        const sprintIds = collectSprintsFromCache(getState())
-          .filter((s) => s.quarterId === arg.quarterId)
-          .map((s) => s.id);
-        const roleSet = arg.roles?.length ? new Set(arg.roles) : null;
-
-        const cachedArgs = collectCachedArgs<{ quarterId: string }>(
-          getState,
-          "getRunVacation",
-          [
-            { type: "RunVacation", id: "LIST" },
-            { type: "RunVacation", id: arg.quarterId },
-          ]
-        );
-
-        const patches = applyPatches(
-          dispatch,
-          "getRunVacation",
-          cachedArgs,
-          (draft: RunVacation[]) => {
-            for (const rv of draft) {
-              if (!sprintIds.includes(rv.sprintId)) continue;
-              const participant = participantMap.get(rv.participantId);
-              if (roleSet && (!participant || !roleSet.has(participant.role))) continue;
-              const base = Number(arg.daysPerSprint) || 0;
-              const next = arg.multiplyByRate
-                ? Math.max(0, Math.round(base * (participant?.rate ?? 1)))
-                : Math.max(0, Math.round(base));
-              rv.runDays = next;
-            }
-          }
-        );
-
-        try {
-          await queryFulfilled;
-        } catch (error) {
-          patches.forEach((p) => p.undo());
-          notifyError("Не удалось применить массовое обновление нагрузки", error);
-        }
-      },
-    }),
+    // ---- Capacity ----
     getCapacity: b.query<CapacityRow[], { quarterId: string }>({
       query: ({ quarterId }) =>
         ({ url: "/capacity", method: "GET", params: { quarterId } }),
@@ -1328,9 +1189,6 @@ export const {
   useDeleteParticipantMutation,
   useReorderParticipantsMutation,
 
-  useGetRunVacationQuery,
-  useUpsertRunVacationMutation,
-  useBulkRunVacationMutation,
   useGetCapacityQuery,
 
   useGetTasksQuery,

@@ -4,14 +4,12 @@ import com.sber.isu.sprints_planning.dto.ApiCallHistoryDto;
 import com.sber.isu.sprints_planning.dto.ParticipantDto;
 import com.sber.isu.sprints_planning.dto.QuarterDto;
 import com.sber.isu.sprints_planning.dto.ReleaseDto;
-import com.sber.isu.sprints_planning.dto.RunVacationDto;
 import com.sber.isu.sprints_planning.dto.SprintDto;
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.model.ApiCallHistoryEntity;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
 import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.ReleaseEntity;
-import com.sber.isu.sprints_planning.model.RunVacationEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
 import com.sber.isu.sprints_planning.model.TaskEntity;
@@ -59,15 +57,6 @@ public final class DtoMapper {
             entity.getFullName(),
             entity.getRole(),
             entity.getRate() != null ? entity.getRate().doubleValue() : 0.0
-        );
-    }
-
-    public static RunVacationDto toRunVacationDto(RunVacationEntity entity) {
-        return new RunVacationDto(
-            entity.getParticipant().getId().toString(),
-            entity.getSprint().getId().toString(),
-            entity.getRunDays(),
-            entity.getVacationNormDays()
         );
     }
 

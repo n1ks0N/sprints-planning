@@ -15,7 +15,6 @@ public class TeamCleanupService {
         "task_loads",
         "task_participants",
         "tasks",
-        "run_vacation",
         "releases",
         "api_call_history",
         "participants",

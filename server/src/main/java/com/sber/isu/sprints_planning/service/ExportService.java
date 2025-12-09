@@ -3,7 +3,6 @@ package com.sber.isu.sprints_planning.service;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
 import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.ReleaseEntity;
-import com.sber.isu.sprints_planning.model.RunVacationEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
 import com.sber.isu.sprints_planning.model.TaskEntity;
@@ -12,7 +11,6 @@ import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
 import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
-import com.sber.isu.sprints_planning.repository.RunVacationRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
 import jakarta.transaction.Transactional;
@@ -39,20 +37,17 @@ public class ExportService {
     private final QuarterRepository quarterRepository;
     private final SprintRepository sprintRepository;
     private final ParticipantRepository participantRepository;
-    private final RunVacationRepository runVacationRepository;
     private final TaskRepository taskRepository;
     private final ReleaseRepository releaseRepository;
 
     public ExportService(QuarterRepository quarterRepository,
         SprintRepository sprintRepository,
         ParticipantRepository participantRepository,
-        RunVacationRepository runVacationRepository,
         TaskRepository taskRepository,
         ReleaseRepository releaseRepository) {
         this.quarterRepository = quarterRepository;
         this.sprintRepository = sprintRepository;
         this.participantRepository = participantRepository;
-        this.runVacationRepository = runVacationRepository;
         this.taskRepository = taskRepository;
         this.releaseRepository = releaseRepository;
     }
@@ -82,7 +77,6 @@ public class ExportService {
             writeQuartersSheet(workbook, headerStyle, quarterIndex);
             writeSprintsSheet(workbook, headerStyle, sprintIndex, quarterIndex);
             writeParticipantsSheet(workbook, headerStyle, participantIndex);
-            writeRunVacationSheet(workbook, headerStyle, quarterIndex, sprintIndex, participantIndex, teamKey);
             writeReleasesSheet(workbook, headerStyle, teamKey);
             writeTasksSheet(workbook, headerStyle, sprintIndex, participantIndex, tasks);
             writeTaskLoadsSheet(workbook, headerStyle, sprintIndex, tasks);
@@ -147,31 +141,6 @@ public class ExportService {
             row.createCell(col).setCellValue(participant.getDisplayOrder());
         }
         autosize(sheet, 4);
-    }
-
-    private void writeRunVacationSheet(Workbook workbook, CellStyle headerStyle, Map<UUID, QuarterEntity> quarterIndex,
-        Map<UUID, SprintEntity> sprintIndex, Map<UUID, ParticipantEntity> participantIndex, String teamKey) {
-        Sheet sheet = workbook.createSheet("Забеги и отпуска");
-        Row header = sheet.createRow(0);
-        createHeaderCells(header, headerStyle, "Участник", "Спринт", "Квартал", "Забег, дни", "Отпуск, дни");
-        int rowIdx = 1;
-        List<RunVacationEntity> runVacations = runVacationRepository.findByTeamKey(teamKey);
-        runVacations.sort(Comparator
-            .comparing((RunVacationEntity rv) -> participantIndex.getOrDefault(rv.getParticipant().getId(), rv.getParticipant()).getDisplayOrder())
-            .thenComparing(rv -> sprintIndex.getOrDefault(rv.getSprint().getId(), rv.getSprint()).getStartDate()));
-        for (RunVacationEntity rv : runVacations) {
-            Row row = sheet.createRow(rowIdx++);
-            int col = 0;
-            ParticipantEntity participant = participantIndex.get(rv.getParticipant().getId());
-            SprintEntity sprint = sprintIndex.get(rv.getSprint().getId());
-            QuarterEntity quarter = sprint != null ? quarterIndex.get(sprint.getQuarter().getId()) : null;
-            row.createCell(col++).setCellValue(participant != null ? participant.getFullName() : "");
-            row.createCell(col++).setCellValue(sprint != null ? sprint.getName() : "");
-            row.createCell(col++).setCellValue(quarter != null ? quarter.getName() : "");
-            row.createCell(col++).setCellValue(rv.getRunDays());
-            row.createCell(col).setCellValue(rv.getVacationNormDays());
-        }
-        autosize(sheet, 5);
     }
 
     private void writeReleasesSheet(Workbook workbook, CellStyle headerStyle, String teamKey) {

@@ -4,7 +4,6 @@ import type {
   Quarter,
   Sprint,
   BacklogItem,
-  RunVacation,
 } from "../types";
 import { api } from "./api";
 import type { AppDispatch, RootState } from "./store";
@@ -30,9 +29,7 @@ type UndoItem =
       sprintId: string;
       days: number;
     }
-  | { kind: "taskload/set"; taskId: string; sprintId: string; days: number }
-  | { kind: "runvac/set"; rv: RunVacation }
-  | { kind: "runvac/bulk-restore"; items: RunVacation[] };
+  | { kind: "taskload/set"; taskId: string; sprintId: string; days: number };
 
 type UndoState = {
   stack: UndoItem[];
@@ -151,20 +148,6 @@ export const undoLast =
               days: item.days,
             })
           ).unwrap();
-          break;
-
-        case "runvac/set":
-          await dispatch(
-            api.endpoints.upsertRunVacation.initiate(item.rv)
-          ).unwrap();
-          break;
-        case "runvac/bulk-restore":
-          // восстановим все значения покомпонентно
-          for (const rv of item.items) {
-            await dispatch(
-              api.endpoints.upsertRunVacation.initiate(rv)
-            ).unwrap();
-          }
           break;
       }
     } finally {

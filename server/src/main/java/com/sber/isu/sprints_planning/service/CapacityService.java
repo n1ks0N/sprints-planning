@@ -5,16 +5,11 @@ import com.sber.isu.sprints_planning.dto.CapacityCellDto;
 import com.sber.isu.sprints_planning.dto.CapacityRowDto;
 import com.sber.isu.sprints_planning.dto.ParticipantDto;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
-import com.sber.isu.sprints_planning.model.RunVacationEntity;
-import com.sber.isu.sprints_planning.model.RunVacationId;
 import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
-import com.sber.isu.sprints_planning.repository.RunVacationRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -23,25 +18,18 @@ public class CapacityService {
 
     private final ParticipantRepository participantRepository;
     private final SprintRepository sprintRepository;
-    private final RunVacationRepository runVacationRepository;
     private final CapacityProperties capacityProperties;
 
     public CapacityService(ParticipantRepository participantRepository,
         SprintRepository sprintRepository,
-        RunVacationRepository runVacationRepository,
         CapacityProperties capacityProperties) {
         this.participantRepository = participantRepository;
         this.sprintRepository = sprintRepository;
-        this.runVacationRepository = runVacationRepository;
         this.capacityProperties = capacityProperties;
     }
 
     public List<CapacityRowDto> calculate(String teamKey, UUID quarterId) {
         List<SprintEntity> sprints = sprintRepository.findByTeamKeyAndQuarterIdOrderByOrderAsc(teamKey, quarterId);
-        Map<RunVacationId, RunVacationEntity> runVacationMap = new HashMap<>();
-        for (RunVacationEntity entity : runVacationRepository.findByTeamKeyAndQuarterId(teamKey, quarterId)) {
-            runVacationMap.put(entity.getId(), entity);
-        }
         double normFactor = capacityProperties.normFactor();
         List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
         List<CapacityRowDto> rows = new ArrayList<>();
@@ -50,10 +38,8 @@ public class CapacityService {
             List<CapacityCellDto> cells = new ArrayList<>();
             int total = 0;
             for (SprintEntity sprint : sprints) {
-                RunVacationId id = new RunVacationId(participant.getId(), sprint.getId());
-                RunVacationEntity rv = runVacationMap.get(id);
-                int runDays = rv != null ? rv.getRunDays() : 0;
-                int vacationDays = rv != null ? rv.getVacationNormDays() : 0;
+                int runDays = 0;
+                int vacationDays = 0;
                 int baseCapacity = (int) Math.round(sprint.getWorkingDays() * participantRate * normFactor);
                 int available = Math.max(0, baseCapacity - runDays - vacationDays);
                 cells.add(new CapacityCellDto(

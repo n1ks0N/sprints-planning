@@ -24,13 +24,6 @@ export type Participant = {
   rate: number;
 };
 
-export type RunVacation = {
-  participantId: string;
-  sprintId: string;
-  runDays: number;
-  vacationNormDays: number;
-};
-
 export type CapacityCell = {
   participantId: string;
   sprintId: string;

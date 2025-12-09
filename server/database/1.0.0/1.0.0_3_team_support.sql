@@ -8,10 +8,11 @@ CREATE TABLE teams (
 
 INSERT INTO teams (key, name) VALUES ('customlab', 'Custom Lab') ON CONFLICT (key) DO NOTHING;
 
+DROP TABLE IF EXISTS run_vacation;
+
 ALTER TABLE quarters ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
 ALTER TABLE sprints ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
 ALTER TABLE participants ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
-ALTER TABLE run_vacation ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
 ALTER TABLE tasks ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
 ALTER TABLE task_participants ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
 ALTER TABLE task_loads ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
