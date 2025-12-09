@@ -19,12 +19,5 @@ ALTER TABLE task_allocations ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customla
 ALTER TABLE releases ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
 ALTER TABLE api_call_history ADD COLUMN team_key TEXT REFERENCES teams(key);
 
--- ensure all existing data is tied to the default team and keys are lowercase
-UPDATE participants SET team_key = 'customlab' WHERE team_key IS NULL OR team_key = '';
-UPDATE api_call_history SET team_key = 'customlab' WHERE team_key IS NULL OR team_key = '';
-
-UPDATE participants SET team_key = lower(team_key);
-UPDATE api_call_history SET team_key = lower(team_key);
-
 ALTER TABLE quarters DROP CONSTRAINT IF EXISTS quarters_name_key;
 ALTER TABLE quarters ADD CONSTRAINT quarters_team_name_key UNIQUE (team_key, name);
