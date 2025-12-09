@@ -24,12 +24,12 @@ public class TaskAllocationController {
     @PostMapping("/taskalloc")
     public TaskDto upsertAllocation(@PathVariable String teamKey,
         @RequestBody @Valid TaskAllocationRequest request) {
-        return taskService.upsertAllocation(request);
+        return taskService.upsertAllocation(teamKey, request);
     }
 
     @PostMapping("/taskalloc/bulk")
     public TaskDto upsertAllocations(@PathVariable String teamKey,
         @RequestBody @Valid TaskAllocationBulkRequest request) {
-        return taskService.upsertAllocations(request);
+        return taskService.upsertAllocations(teamKey, request);
     }
 }

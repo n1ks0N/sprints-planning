@@ -12,4 +12,7 @@ public interface RunVacationRepository extends JpaRepository<RunVacationEntity, 
 
     @Query("select rv from RunVacationEntity rv where rv.sprint.quarter.id = :quarterId and rv.sprint.teamKey = :teamKey")
     List<RunVacationEntity> findByTeamKeyAndQuarterId(@Param("teamKey") String teamKey, @Param("quarterId") UUID quarterId);
+
+    @Query("select rv from RunVacationEntity rv where rv.sprint.teamKey = :teamKey")
+    List<RunVacationEntity> findByTeamKey(@Param("teamKey") String teamKey);
 }

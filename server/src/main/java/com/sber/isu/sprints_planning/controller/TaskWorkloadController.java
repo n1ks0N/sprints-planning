@@ -22,6 +22,6 @@ public class TaskWorkloadController {
 
     @PostMapping("/taskload")
     public TaskDto upsertLoad(@PathVariable String teamKey, @RequestBody @Valid TaskLoadRequest request) {
-        return taskService.upsertLoad(request);
+        return taskService.upsertLoad(teamKey, request);
     }
 }

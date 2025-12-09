@@ -22,7 +22,7 @@ public class ExportController {
 
     @GetMapping("/excel")
     public ResponseEntity<ByteArrayResource> exportExcel(@PathVariable String teamKey) {
-        byte[] bytes = exportService.exportToExcel();
+        byte[] bytes = exportService.exportToExcel(teamKey);
         return ResponseEntity.ok()
             .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"sprints-planning.xlsx\"")
             .contentType(MediaType.parseMediaType(

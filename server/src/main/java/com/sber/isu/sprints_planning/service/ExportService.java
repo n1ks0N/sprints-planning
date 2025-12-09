@@ -58,26 +58,26 @@ public class ExportService {
     }
 
     @Transactional
-    public byte[] exportToExcel() {
+    public byte[] exportToExcel(String teamKey) {
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             CellStyle headerStyle = createHeaderStyle(workbook);
 
-            Map<UUID, QuarterEntity> quarterIndex = quarterRepository.findAll().stream()
+            Map<UUID, QuarterEntity> quarterIndex = quarterRepository.findByTeamKeyOrderByStartDateAsc(teamKey).stream()
                 .sorted(Comparator.comparing(QuarterEntity::getYear).thenComparing(QuarterEntity::getNumber))
                 .collect(Collectors.toMap(QuarterEntity::getId, q -> q, (a, b) -> a, java.util.LinkedHashMap::new));
 
-            Map<UUID, SprintEntity> sprintIndex = sprintRepository.findAll().stream()
+            Map<UUID, SprintEntity> sprintIndex = sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey).stream()
                 .sorted(Comparator
                     .comparing((SprintEntity s) -> s.getQuarter().getYear())
                     .thenComparing(s -> s.getQuarter().getNumber())
                     .thenComparing(SprintEntity::getOrder))
                 .collect(Collectors.toMap(SprintEntity::getId, s -> s, (a, b) -> a, java.util.LinkedHashMap::new));
 
-            Map<UUID, ParticipantEntity> participantIndex = participantRepository.findAllByOrderByDisplayOrderAsc()
+            Map<UUID, ParticipantEntity> participantIndex = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey)
                 .stream()
                 .collect(Collectors.toMap(ParticipantEntity::getId, p -> p, (a, b) -> a, java.util.LinkedHashMap::new));
 
-            List<TaskEntity> tasks = taskRepository.findAllByOrderByDisplayOrderAsc();
+            List<TaskEntity> tasks = taskRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
 
             writeQuartersSheet(workbook, headerStyle, quarterIndex);
             writeSprintsSheet(workbook, headerStyle, sprintIndex, quarterIndex);
@@ -155,7 +155,7 @@ public class ExportService {
         Row header = sheet.createRow(0);
         createHeaderCells(header, headerStyle, "Участник", "Спринт", "Квартал", "Забег, дни", "Отпуск, дни");
         int rowIdx = 1;
-        List<RunVacationEntity> runVacations = runVacationRepository.findAll();
+        List<RunVacationEntity> runVacations = runVacationRepository.findByTeamKey(teamKey);
         runVacations.sort(Comparator
             .comparing((RunVacationEntity rv) -> participantIndex.getOrDefault(rv.getParticipant().getId(), rv.getParticipant()).getDisplayOrder())
             .thenComparing(rv -> sprintIndex.getOrDefault(rv.getSprint().getId(), rv.getSprint()).getStartDate()));
