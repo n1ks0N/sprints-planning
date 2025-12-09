@@ -10,6 +10,6 @@ import org.springframework.data.repository.query.Param;
 
 public interface RunVacationRepository extends JpaRepository<RunVacationEntity, RunVacationId> {
 
-    @Query("select rv from RunVacationEntity rv where rv.sprint.quarter.id = :quarterId")
-    List<RunVacationEntity> findByQuarterId(@Param("quarterId") UUID quarterId);
+    @Query("select rv from RunVacationEntity rv where rv.sprint.quarter.id = :quarterId and rv.sprint.teamKey = :teamKey")
+    List<RunVacationEntity> findByTeamKeyAndQuarterId(@Param("teamKey") String teamKey, @Param("quarterId") UUID quarterId);
 }

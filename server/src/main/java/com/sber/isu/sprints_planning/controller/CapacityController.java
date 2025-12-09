@@ -22,6 +22,6 @@ public class CapacityController {
 
     @GetMapping("/capacity")
     public List<CapacityRowDto> getCapacity(@PathVariable String teamKey, @RequestParam("quarterId") String quarterId) {
-        return capacityService.calculate(UUID.fromString(quarterId));
+        return capacityService.calculate(teamKey, UUID.fromString(quarterId));
     }
 }

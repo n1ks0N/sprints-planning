@@ -33,17 +33,19 @@ public class RunVacationService {
         this.sprintRepository = sprintRepository;
     }
 
-    public List<RunVacationDto> findByQuarter(UUID quarterId) {
-        return runVacationRepository.findByQuarterId(quarterId).stream()
+    public List<RunVacationDto> findByQuarter(String teamKey, UUID quarterId) {
+        return runVacationRepository.findByTeamKeyAndQuarterId(teamKey, quarterId).stream()
             .map(DtoMapper::toRunVacationDto)
             .toList();
     }
 
     @Transactional
-    public RunVacationDto upsert(RunVacationUpsertRequest request) {
-        ParticipantEntity participant = participantRepository.findById(UUID.fromString(request.participantId()))
+    public RunVacationDto upsert(String teamKey, RunVacationUpsertRequest request) {
+        ParticipantEntity participant = participantRepository
+            .findByIdAndTeamKey(UUID.fromString(request.participantId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
-        SprintEntity sprint = sprintRepository.findById(UUID.fromString(request.sprintId()))
+        SprintEntity sprint = sprintRepository
+            .findByIdAndTeamKey(UUID.fromString(request.sprintId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Sprint not found"));
         RunVacationId id = new RunVacationId(participant.getId(), sprint.getId());
         RunVacationEntity entity = runVacationRepository.findById(id)
@@ -67,18 +69,18 @@ public class RunVacationService {
     }
 
     @Transactional
-    public void bulk(RunVacationBulkRequest request) {
+    public void bulk(String teamKey, RunVacationBulkRequest request) {
         UUID quarterId = request.quarterId() != null ? UUID.fromString(request.quarterId()) : null;
         if (quarterId == null) {
             throw new IllegalArgumentException("quarterId is required");
         }
-        List<SprintEntity> sprints = sprintRepository.findByQuarterIdOrderByOrderAsc(quarterId);
+        List<SprintEntity> sprints = sprintRepository.findByTeamKeyAndQuarterIdOrderByOrderAsc(teamKey, quarterId);
         Set<String> roles = request.roles() != null && !request.roles().isEmpty()
             ? Set.copyOf(request.roles())
             : null;
         double baseDays = request.daysPerSprint() != null ? request.daysPerSprint() : 0;
         boolean multiplyByRate = request.multiplyByRate() == null || request.multiplyByRate();
-        List<ParticipantEntity> participants = participantRepository.findAll();
+        List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
         for (ParticipantEntity participant : participants) {
             if (roles != null && !roles.contains(participant.getRole())) {
                 continue;

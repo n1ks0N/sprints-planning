@@ -36,14 +36,14 @@ public class CapacityService {
         this.capacityProperties = capacityProperties;
     }
 
-    public List<CapacityRowDto> calculate(UUID quarterId) {
-        List<SprintEntity> sprints = sprintRepository.findByQuarterIdOrderByOrderAsc(quarterId);
+    public List<CapacityRowDto> calculate(String teamKey, UUID quarterId) {
+        List<SprintEntity> sprints = sprintRepository.findByTeamKeyAndQuarterIdOrderByOrderAsc(teamKey, quarterId);
         Map<RunVacationId, RunVacationEntity> runVacationMap = new HashMap<>();
-        for (RunVacationEntity entity : runVacationRepository.findByQuarterId(quarterId)) {
+        for (RunVacationEntity entity : runVacationRepository.findByTeamKeyAndQuarterId(teamKey, quarterId)) {
             runVacationMap.put(entity.getId(), entity);
         }
         double normFactor = capacityProperties.normFactor();
-        List<ParticipantEntity> participants = participantRepository.findAllByOrderByDisplayOrderAsc();
+        List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
         List<CapacityRowDto> rows = new ArrayList<>();
         for (ParticipantEntity participant : participants) {
             double participantRate = participant.getRate() != null ? participant.getRate().doubleValue() : 0.0;

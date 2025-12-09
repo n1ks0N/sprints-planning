@@ -28,19 +28,19 @@ public class RunVacationController {
 
     @GetMapping("/runvac")
     public List<RunVacationDto> getRunVacation(@PathVariable String teamKey, @RequestParam("quarterId") String quarterId) {
-        return runVacationService.findByQuarter(UUID.fromString(quarterId));
+        return runVacationService.findByQuarter(teamKey, UUID.fromString(quarterId));
     }
 
     @PostMapping("/runvac")
     public RunVacationDto upsertRunVacation(@PathVariable String teamKey,
         @RequestBody @Valid RunVacationUpsertRequest request) {
-        return runVacationService.upsert(request);
+        return runVacationService.upsert(teamKey, request);
     }
 
     @PostMapping("/runvac/bulk")
     public Map<String, Boolean> bulkRunVacation(@PathVariable String teamKey,
         @RequestBody @Valid RunVacationBulkRequest request) {
-        runVacationService.bulk(request);
+        runVacationService.bulk(teamKey, request);
         return Map.of("ok", Boolean.TRUE);
     }
 }
