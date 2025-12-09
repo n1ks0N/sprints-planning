@@ -56,8 +56,10 @@ public class RunVacationService {
                 created.setSprint(sprint);
                 created.setRunDays(0);
                 created.setVacationNormDays(0);
+                created.setTeamKey(teamKey);
                 return created;
             });
+        entity.setTeamKey(teamKey);
         if (request.runDays() != null) {
             entity.setRunDays(normalizeDays(request.runDays()));
         }
@@ -96,8 +98,10 @@ public class RunVacationService {
                         created.setSprint(sprint);
                         created.setRunDays(0);
                         created.setVacationNormDays(0);
+                        created.setTeamKey(teamKey);
                         return created;
                     });
+                entity.setTeamKey(teamKey);
                 double value = baseDays;
                 if (multiplyByRate) {
                     value = baseDays * participantRate;

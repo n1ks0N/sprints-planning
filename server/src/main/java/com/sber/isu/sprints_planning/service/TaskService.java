@@ -184,17 +184,18 @@ public class TaskService {
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
         SprintEntity sprint = fetchSprint(teamKey, request.sprintId());
         TaskAllocationId id = new TaskAllocationId(task.getId(), participant.getId(), sprint.getId());
-        TaskAllocationEntity allocation = taskAllocationRepository.findById(id)
-            .orElseGet(() -> {
-                TaskAllocationEntity created = new TaskAllocationEntity();
-                created.setId(id);
-                created.setTask(task);
-                created.setParticipant(participant);
-                created.setSprint(sprint);
-                created.setDays(BigDecimal.ZERO);
-                task.getAllocations().add(created);
-                return created;
-            });
+                TaskAllocationEntity allocation = taskAllocationRepository.findById(id)
+                    .orElseGet(() -> {
+                        TaskAllocationEntity created = new TaskAllocationEntity();
+                        created.setId(id);
+                        created.setTask(task);
+                        created.setParticipant(participant);
+                        created.setSprint(sprint);
+                        created.setDays(BigDecimal.ZERO);
+                        created.setTeamKey(teamKey);
+                        task.getAllocations().add(created);
+                        return created;
+                    });
         allocation.setDays(maxOrZero(request.days()));
         recalcLoad(task, sprint);
         task.setUpdatedAt(LocalDate.now());
@@ -272,6 +273,7 @@ public class TaskService {
                 created.setTask(task);
                 created.setSprint(sprint);
                 created.setDays(BigDecimal.ZERO);
+                created.setTeamKey(teamKey);
                 task.getLoads().add(created);
                 return created;
             });
@@ -307,6 +309,7 @@ public class TaskService {
                 link.setId(new TaskParticipantId(entity.getId(), participant.getId()));
                 link.setTask(entity);
                 link.setParticipant(participant);
+                link.setTeamKey(teamKey);
                 entity.getParticipants().add(link);
             }
             link.setDisplayOrder(order++);
@@ -327,14 +330,15 @@ public class TaskService {
             TaskLoadId id = new TaskLoadId(entity.getId(), sprint.getId());
             TaskLoadEntity load = taskLoadRepository.findById(id)
                 .orElseGet(() -> {
-                    TaskLoadEntity created = new TaskLoadEntity();
-                    created.setId(id);
-                    created.setTask(entity);
-                    created.setSprint(sprint);
-                    created.setDays(BigDecimal.ZERO);
-                    entity.getLoads().add(created);
-                    return created;
-                });
+                TaskLoadEntity created = new TaskLoadEntity();
+                created.setId(id);
+                created.setTask(entity);
+                created.setSprint(sprint);
+                created.setDays(BigDecimal.ZERO);
+                created.setTeamKey(entity.getTeamKey());
+                entity.getLoads().add(created);
+                return created;
+            });
             load.setDays(maxOrZero(entry.getValue()));
         }
     }
@@ -361,6 +365,7 @@ public class TaskService {
                         created.setParticipant(participant);
                         created.setSprint(sprint);
                         created.setDays(BigDecimal.ZERO);
+                        created.setTeamKey(entity.getTeamKey());
                         entity.getAllocations().add(created);
                         return created;
                     });
@@ -379,14 +384,15 @@ public class TaskService {
                 TaskLoadId id = new TaskLoadId(entity.getId(), sprint.getId());
                 TaskLoadEntity load = taskLoadRepository.findById(id)
                     .orElseGet(() -> {
-                        TaskLoadEntity created = new TaskLoadEntity();
-                        created.setId(id);
-                        created.setTask(entity);
-                        created.setSprint(sprint);
-                        created.setDays(BigDecimal.ZERO);
-                        entity.getLoads().add(created);
-                        return created;
-                    });
+                TaskLoadEntity created = new TaskLoadEntity();
+                created.setId(id);
+                created.setTask(entity);
+                created.setSprint(sprint);
+                created.setDays(BigDecimal.ZERO);
+                created.setTeamKey(entity.getTeamKey());
+                entity.getLoads().add(created);
+                return created;
+            });
                 load.setDays(maxOrZero(load.getDays()));
                 existing.add(sprint.getId());
             }
@@ -407,6 +413,7 @@ public class TaskService {
                 created.setTask(task);
                 created.setSprint(sprint);
                 created.setDays(BigDecimal.ZERO);
+                created.setTeamKey(task.getTeamKey());
                 task.getLoads().add(created);
                 return created;
             });

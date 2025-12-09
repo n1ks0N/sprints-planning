@@ -39,6 +39,8 @@ public class ApiHistoryService {
             return;
         }
 
+        String teamKey = resolveTeamKey(request);
+
         ApiCallHistoryEntity entity = new ApiCallHistoryEntity();
         entity.setSessionId(sessionId);
         entity.setUserName(userName == null || userName.isBlank() ? "unknown" : userName);
@@ -47,6 +49,7 @@ public class ApiHistoryService {
         entity.setAction(actionDescriptionResolver.resolve(entity.getHttpMethod(), entity.getPath()));
         entity.setStatusCode(statusCode);
         entity.setCreatedAt(OffsetDateTime.now());
+        entity.setTeamKey(teamKey);
 
         try {
             historyRepository.save(entity);
@@ -56,8 +59,8 @@ public class ApiHistoryService {
     }
 
     @Transactional(readOnly = true)
-    public List<ApiSessionHistoryDto> getHistory() {
-        List<ApiCallHistoryEntity> items = historyRepository.findAll(
+    public List<ApiSessionHistoryDto> getHistory(String teamKey) {
+        List<ApiCallHistoryEntity> items = historyRepository.findAllByTeamKey(teamKey,
             Sort.by(Sort.Direction.DESC, "createdAt"));
 
         List<ApiCallHistoryEntity> actions = items.stream()
@@ -116,5 +119,23 @@ public class ApiHistoryService {
             return uri.substring(contextPath.length());
         }
         return uri;
+    }
+
+    private String resolveTeamKey(HttpServletRequest request) {
+        String path = extractPath(request);
+        if (path == null) {
+            return "customlab";
+        }
+        String[] segments = path.split("/");
+        for (String segment : segments) {
+            if (segment != null && !segment.isBlank()) {
+                try {
+                    return com.sber.isu.sprints_planning.util.TeamKeyNormalizer.normalize(segment);
+                } catch (Exception ex) {
+                    return "customlab";
+                }
+            }
+        }
+        return "customlab";
     }
 }

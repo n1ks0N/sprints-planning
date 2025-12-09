@@ -11,5 +11,4 @@ public interface ParticipantRepository extends JpaRepository<ParticipantEntity, 
 
     Optional<ParticipantEntity> findByIdAndTeamKey(UUID id, String teamKey);
 
-    List<ParticipantEntity> findAllByOrderByDisplayOrderAsc();
 }

@@ -5,6 +5,7 @@ import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.ReleaseCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.ReleaseUpdateRequest;
 import com.sber.isu.sprints_planning.service.ReleaseService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,21 +27,24 @@ public class ReleaseController {
 
     @GetMapping("/releases")
     public List<ReleaseDto> getReleases(@PathVariable String teamKey) {
-        return releaseService.findAll();
+        return releaseService.findAll(TeamKeyNormalizer.normalize(teamKey));
     }
 
     @PostMapping("/releases")
     public ReleaseDto createRelease(@PathVariable String teamKey, @RequestBody @Valid ReleaseCreateRequest request) {
-        return releaseService.create(request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return releaseService.create(normalizedTeamKey, request);
     }
 
     @PostMapping("/releases/update")
     public ReleaseDto updateRelease(@PathVariable String teamKey, @RequestBody @Valid ReleaseUpdateRequest request) {
-        return releaseService.update(request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return releaseService.update(normalizedTeamKey, request);
     }
 
     @PostMapping("/releases/delete")
     public ReleaseDto deleteRelease(@PathVariable String teamKey, @RequestBody @Valid IdRequest request) {
-        return releaseService.delete(request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return releaseService.delete(normalizedTeamKey, request);
     }
 }

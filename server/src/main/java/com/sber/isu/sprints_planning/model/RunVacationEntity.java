@@ -7,11 +7,14 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.MapsId;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "run_vacation")
 public class RunVacationEntity {
+
+    private static final String DEFAULT_TEAM_KEY = "customlab";
 
     @EmbeddedId
     private RunVacationId id;
@@ -31,6 +34,9 @@ public class RunVacationEntity {
 
     @Column(name = "vacation_norm_days", nullable = false)
     private int vacationNormDays;
+
+    @Column(name = "team_key", nullable = false)
+    private String teamKey;
 
     public RunVacationId getId() {
         return id;
@@ -70,5 +76,20 @@ public class RunVacationEntity {
 
     public void setVacationNormDays(int vacationNormDays) {
         this.vacationNormDays = vacationNormDays;
+    }
+
+    public String getTeamKey() {
+        return teamKey;
+    }
+
+    public void setTeamKey(String teamKey) {
+        this.teamKey = teamKey;
+    }
+
+    @PrePersist
+    public void onCreate() {
+        if (teamKey == null) {
+            teamKey = DEFAULT_TEAM_KEY;
+        }
     }
 }

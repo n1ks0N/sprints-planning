@@ -6,6 +6,7 @@ import com.sber.isu.sprints_planning.dto.request.ParticipantCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.ParticipantReorderRequest;
 import com.sber.isu.sprints_planning.dto.request.ParticipantUpdateRequest;
 import com.sber.isu.sprints_planning.service.ParticipantService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
@@ -28,30 +29,34 @@ public class ParticipantController {
 
     @GetMapping("/participants")
     public List<ParticipantDto> getParticipants(@PathVariable String teamKey) {
-        return participantService.findAll();
+        return participantService.findAll(TeamKeyNormalizer.normalize(teamKey));
     }
 
     @PostMapping("/participants")
     public ParticipantDto createParticipant(@PathVariable String teamKey,
         @RequestBody @Valid ParticipantCreateRequest request) {
-        return participantService.create(request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return participantService.create(normalizedTeamKey, request);
     }
 
     @PostMapping("/participants/update")
     public ParticipantDto updateParticipant(@PathVariable String teamKey,
         @RequestBody @Valid ParticipantUpdateRequest request) {
-        return participantService.update(request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return participantService.update(normalizedTeamKey, request);
     }
 
     @PostMapping("/participants/delete")
     public ParticipantDto deleteParticipant(@PathVariable String teamKey, @RequestBody @Valid IdRequest request) {
-        return participantService.delete(request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return participantService.delete(normalizedTeamKey, request);
     }
 
     @PostMapping("/participants/reorder")
     public Map<String, Boolean> reorderParticipants(@PathVariable String teamKey,
         @RequestBody @Valid ParticipantReorderRequest request) {
-        participantService.reorder(request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        participantService.reorder(normalizedTeamKey, request);
         return Map.of("ok", Boolean.TRUE);
     }
 }

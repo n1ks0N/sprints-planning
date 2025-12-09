@@ -2,6 +2,7 @@ package com.sber.isu.sprints_planning.controller;
 
 import com.sber.isu.sprints_planning.dto.ApiSessionHistoryDto;
 import com.sber.isu.sprints_planning.service.ApiHistoryService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import java.util.List;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +22,6 @@ public class HistoryController {
 
     @GetMapping
     public List<ApiSessionHistoryDto> getHistory(@PathVariable String teamKey) {
-        return apiHistoryService.getHistory();
+        return apiHistoryService.getHistory(TeamKeyNormalizer.normalize(teamKey));
     }
 }
