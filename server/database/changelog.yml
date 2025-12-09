@@ -8,9 +8,3 @@ databaseChangeLog:
   - include:
       file: 1.0.0/1.0.0_3_team_support.sql
       relativeToChangelogFile: true
-  - include:
-      file: 1.0.0/1.0.0_4_seed_customlab.sql
-      relativeToChangelogFile: true
-  - include:
-      file: 1.0.0/1.0.0_5_normalize_team_keys.sql
-      relativeToChangelogFile: true

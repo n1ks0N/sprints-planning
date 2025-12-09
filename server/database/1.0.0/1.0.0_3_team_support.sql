@@ -1,6 +1,6 @@
 --liquibase formatted sql
 
---changeset sprints:1.0.0-3 validCheckSum:9:4087248f7283cf1acf07f9fa8a99402c
+--changeset sprints:1.0.0-3
 CREATE TABLE teams (
     key TEXT PRIMARY KEY,
     name TEXT NOT NULL
