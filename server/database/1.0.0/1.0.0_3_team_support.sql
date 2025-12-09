@@ -17,7 +17,7 @@ ALTER TABLE task_participants ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customl
 ALTER TABLE task_loads ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
 ALTER TABLE task_allocations ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
 ALTER TABLE releases ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
-ALTER TABLE api_call_history ADD COLUMN team_key TEXT NOT NULL DEFAULT 'customlab' REFERENCES teams(key);
+ALTER TABLE api_call_history ADD COLUMN team_key TEXT REFERENCES teams(key);
 
 -- ensure all existing data is tied to the default team and keys are lowercase
 UPDATE participants SET team_key = 'customlab' WHERE team_key IS NULL OR team_key = '';
