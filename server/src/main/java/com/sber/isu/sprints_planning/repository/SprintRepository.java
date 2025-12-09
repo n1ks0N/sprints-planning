@@ -19,4 +19,6 @@ public interface SprintRepository extends JpaRepository<SprintEntity, UUID> {
 
     @Query("select s from SprintEntity s where s.id = :id and s.teamKey = :teamKey")
     Optional<SprintEntity> findByIdAndTeamKey(@Param("id") UUID id, @Param("teamKey") String teamKey);
+
+    List<SprintEntity> findByTeamKeyAndIdIn(String teamKey, Iterable<UUID> ids);
 }

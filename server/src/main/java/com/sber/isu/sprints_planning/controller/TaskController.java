@@ -29,22 +29,22 @@ public class TaskController {
     @GetMapping("/tasks")
     public List<TaskDto> getTasks(@PathVariable String teamKey,
         @RequestParam(value = "quarterId", required = false) String quarterId) {
-        return taskService.findAll(quarterId != null ? UUID.fromString(quarterId) : null);
+        return taskService.findAll(teamKey, quarterId != null ? UUID.fromString(quarterId) : null);
     }
 
     @PostMapping("/tasks")
     public TaskDto createTask(@PathVariable String teamKey, @RequestBody @Valid TaskCreateRequest request) {
-        return taskService.create(request);
+        return taskService.create(teamKey, request);
     }
 
     @PostMapping("/tasks/update")
     public TaskDto updateTask(@PathVariable String teamKey, @RequestBody @Valid TaskUpdateRequest request) {
-        return taskService.update(request);
+        return taskService.update(teamKey, request);
     }
 
     @PostMapping("/tasks/delete")
     public TaskDto deleteTask(@PathVariable String teamKey, @RequestBody @Valid IdRequest request) {
-        return taskService.delete(request);
+        return taskService.delete(teamKey, request);
     }
 
 }
