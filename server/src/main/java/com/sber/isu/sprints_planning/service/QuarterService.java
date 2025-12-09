@@ -32,21 +32,22 @@ public class QuarterService {
         this.taskRepository = taskRepository;
     }
 
-    public List<QuarterDto> findAll() {
-        return quarterRepository.findAll().stream()
+    public List<QuarterDto> findAll(String teamKey) {
+        return quarterRepository.findByTeamKeyOrderByStartDateAsc(teamKey).stream()
             .map(DtoMapper::toQuarterDto)
             .toList();
     }
 
     @Transactional
-    public QuarterDto create(QuarterCreateRequest request) {
+    public QuarterDto create(String teamKey, QuarterCreateRequest request) {
         LocalDate start = request.startDate();
         LocalDate end = request.endDate();
         validateDates(start, end);
-        if (quarterRepository.findByNameIgnoreCase(request.name()).isPresent()) {
+        if (quarterRepository.findByNameIgnoreCaseAndTeamKey(request.name(), teamKey).isPresent()) {
             throw new DataIntegrityViolationException("Quarter name must be unique");
         }
         QuarterEntity entity = new QuarterEntity();
+        entity.setTeamKey(teamKey);
         entity.setYear(request.year());
         entity.setNumber(request.number());
         entity.setName(request.name());
@@ -57,11 +58,11 @@ public class QuarterService {
     }
 
     @Transactional
-    public QuarterDto update(QuarterUpdateRequest request) {
-        QuarterEntity entity = quarterRepository.findById(UUID.fromString(request.id()))
+    public QuarterDto update(String teamKey, QuarterUpdateRequest request) {
+        QuarterEntity entity = quarterRepository.findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Quarter not found"));
         if (request.name() != null && !request.name().equalsIgnoreCase(entity.getName())) {
-            quarterRepository.findByNameIgnoreCase(request.name())
+            quarterRepository.findByNameIgnoreCaseAndTeamKey(request.name(), teamKey)
                 .ifPresent(existing -> {
                     if (!existing.getId().equals(entity.getId())) {
                         throw new DataIntegrityViolationException("Quarter name must be unique");
@@ -84,10 +85,10 @@ public class QuarterService {
     }
 
     @Transactional
-    public QuarterDto delete(IdRequest request) {
-        QuarterEntity entity = quarterRepository.findById(UUID.fromString(request.id()))
+    public QuarterDto delete(String teamKey, IdRequest request) {
+        QuarterEntity entity = quarterRepository.findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Quarter not found"));
-        List<UUID> sprintIds = sprintRepository.findByQuarterIdOrderByOrderAsc(entity.getId())
+        List<UUID> sprintIds = sprintRepository.findByTeamKeyAndQuarterIdOrderByOrderAsc(teamKey, entity.getId())
             .stream()
             .map(SprintEntity::getId)
             .toList();

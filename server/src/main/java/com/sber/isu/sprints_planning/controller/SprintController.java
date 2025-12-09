@@ -29,21 +29,21 @@ public class SprintController {
     @GetMapping("/sprints")
     public List<SprintDto> getSprints(@PathVariable String teamKey,
         @RequestParam(value = "quarterId", required = false) String quarterId) {
-        return sprintService.findAll(quarterId != null ? UUID.fromString(quarterId) : null);
+        return sprintService.findAll(teamKey, quarterId != null ? UUID.fromString(quarterId) : null);
     }
 
     @PostMapping("/sprints")
     public SprintDto createSprint(@PathVariable String teamKey, @RequestBody @Valid SprintCreateRequest request) {
-        return sprintService.create(request);
+        return sprintService.create(teamKey, request);
     }
 
     @PostMapping("/sprints/update")
     public SprintDto updateSprint(@PathVariable String teamKey, @RequestBody @Valid SprintUpdateRequest request) {
-        return sprintService.update(request);
+        return sprintService.update(teamKey, request);
     }
 
     @PostMapping("/sprints/delete")
     public SprintDto deleteSprint(@PathVariable String teamKey, @RequestBody @Valid IdRequest request) {
-        return sprintService.delete(request);
+        return sprintService.delete(teamKey, request);
     }
 }

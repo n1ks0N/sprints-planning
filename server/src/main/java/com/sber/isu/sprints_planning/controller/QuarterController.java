@@ -26,21 +26,21 @@ public class QuarterController {
 
     @GetMapping("/quarters")
     public List<QuarterDto> getQuarters(@PathVariable String teamKey) {
-        return quarterService.findAll();
+        return quarterService.findAll(teamKey);
     }
 
     @PostMapping("/quarters")
     public QuarterDto createQuarter(@PathVariable String teamKey, @RequestBody @Valid QuarterCreateRequest request) {
-        return quarterService.create(request);
+        return quarterService.create(teamKey, request);
     }
 
     @PostMapping("/quarters/update")
     public QuarterDto updateQuarter(@PathVariable String teamKey, @RequestBody @Valid QuarterUpdateRequest request) {
-        return quarterService.update(request);
+        return quarterService.update(teamKey, request);
     }
 
     @PostMapping("/quarters/delete")
     public QuarterDto deleteQuarter(@PathVariable String teamKey, @RequestBody @Valid IdRequest request) {
-        return quarterService.delete(request);
+        return quarterService.delete(teamKey, request);
     }
 }

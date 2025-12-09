@@ -34,27 +34,26 @@ public class SprintService {
     }
 
     @Transactional(readOnly = true)
-    public List<SprintDto> findAll(UUID quarterId) {
+    public List<SprintDto> findAll(String teamKey, UUID quarterId) {
         List<SprintEntity> sprints;
         if (quarterId != null) {
-            sprints = sprintRepository.findByQuarterIdOrderByOrderAsc(quarterId);
+            sprints = sprintRepository.findByTeamKeyAndQuarterIdOrderByOrderAsc(teamKey, quarterId);
         } else {
-            sprints = sprintRepository.findAll().stream()
-                .sorted(Comparator.comparing((SprintEntity s) -> s.getQuarter().getStartDate())
-                    .thenComparing(SprintEntity::getOrder))
-                .toList();
+            sprints = sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey);
         }
         return sprints.stream().map(DtoMapper::toSprintDto).toList();
     }
 
     @Transactional
-    public SprintDto create(SprintCreateRequest request) {
-        QuarterEntity quarter = quarterRepository.findById(UUID.fromString(request.quarterId()))
+    public SprintDto create(String teamKey, SprintCreateRequest request) {
+        QuarterEntity quarter = quarterRepository
+            .findByIdAndTeamKey(UUID.fromString(request.quarterId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Quarter not found"));
         LocalDate start = request.startDate();
         LocalDate end = request.endDate();
         validateDates(start, end);
         SprintEntity entity = new SprintEntity();
+        entity.setTeamKey(teamKey);
         entity.setQuarter(quarter);
         entity.setName(request.name());
         entity.setStartDate(start);
@@ -71,15 +70,16 @@ public class SprintService {
     }
 
     @Transactional
-    public SprintDto update(SprintUpdateRequest request) {
-        SprintEntity entity = sprintRepository.findById(UUID.fromString(request.id()))
+    public SprintDto update(String teamKey, SprintUpdateRequest request) {
+        SprintEntity entity = sprintRepository.findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Sprint not found"));
         if (request.name() != null) {
             entity.setName(request.name());
         }
         QuarterEntity quarter = entity.getQuarter();
         if (request.quarterId() != null && !request.quarterId().equals(quarter.getId().toString())) {
-            quarter = quarterRepository.findById(UUID.fromString(request.quarterId()))
+            quarter = quarterRepository
+                .findByIdAndTeamKey(UUID.fromString(request.quarterId()), teamKey)
                 .orElseThrow(() -> new EntityNotFoundException("Quarter not found"));
             entity.setQuarter(quarter);
         }
@@ -98,8 +98,8 @@ public class SprintService {
     }
 
     @Transactional
-    public SprintDto delete(IdRequest request) {
-        SprintEntity entity = sprintRepository.findById(UUID.fromString(request.id()))
+    public SprintDto delete(String teamKey, IdRequest request) {
+        SprintEntity entity = sprintRepository.findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Sprint not found"));
         taskRepository.clearReleaseForSprints(List.of(entity.getId()));
         sprintRepository.delete(entity);
