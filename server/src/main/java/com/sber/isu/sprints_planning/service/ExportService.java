@@ -82,7 +82,7 @@ public class ExportService {
             writeQuartersSheet(workbook, headerStyle, quarterIndex);
             writeSprintsSheet(workbook, headerStyle, sprintIndex, quarterIndex);
             writeParticipantsSheet(workbook, headerStyle, participantIndex);
-            writeRunVacationSheet(workbook, headerStyle, quarterIndex, sprintIndex, participantIndex);
+            writeRunVacationSheet(workbook, headerStyle, quarterIndex, sprintIndex, participantIndex, teamKey);
             writeReleasesSheet(workbook, headerStyle);
             writeTasksSheet(workbook, headerStyle, sprintIndex, participantIndex, tasks);
             writeTaskLoadsSheet(workbook, headerStyle, sprintIndex, tasks);
@@ -150,7 +150,7 @@ public class ExportService {
     }
 
     private void writeRunVacationSheet(Workbook workbook, CellStyle headerStyle, Map<UUID, QuarterEntity> quarterIndex,
-        Map<UUID, SprintEntity> sprintIndex, Map<UUID, ParticipantEntity> participantIndex) {
+        Map<UUID, SprintEntity> sprintIndex, Map<UUID, ParticipantEntity> participantIndex, String teamKey) {
         Sheet sheet = workbook.createSheet("Забеги и отпуска");
         Row header = sheet.createRow(0);
         createHeaderCells(header, headerStyle, "Участник", "Спринт", "Квартал", "Забег, дни", "Отпуск, дни");
