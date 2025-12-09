@@ -83,7 +83,7 @@ public class ExportService {
             writeSprintsSheet(workbook, headerStyle, sprintIndex, quarterIndex);
             writeParticipantsSheet(workbook, headerStyle, participantIndex);
             writeRunVacationSheet(workbook, headerStyle, quarterIndex, sprintIndex, participantIndex, teamKey);
-            writeReleasesSheet(workbook, headerStyle);
+            writeReleasesSheet(workbook, headerStyle, teamKey);
             writeTasksSheet(workbook, headerStyle, sprintIndex, participantIndex, tasks);
             writeTaskLoadsSheet(workbook, headerStyle, sprintIndex, tasks);
             writeAllocationsSheet(workbook, headerStyle, sprintIndex, participantIndex, tasks);
@@ -174,14 +174,14 @@ public class ExportService {
         autosize(sheet, 5);
     }
 
-    private void writeReleasesSheet(Workbook workbook, CellStyle headerStyle) {
+    private void writeReleasesSheet(Workbook workbook, CellStyle headerStyle, String teamKey) {
         Sheet sheet = workbook.createSheet("Релизы");
         Row header = sheet.createRow(0);
         createHeaderCells(header, headerStyle, "Название", "Prom", "PSI", "OPS (старт)", "OPS (конец)",
             "Regress (старт)", "Regress (конец)", "FF", "FF внутр.", "IFT (старт)", "IFT (конец)", "Build",
             "CR", "Dev (старт)", "Dev (конец)", "ST", "Создано", "Обновлено");
         int rowIdx = 1;
-        List<ReleaseEntity> releases = releaseRepository.findAllByOrderByPromDateAsc();
+        List<ReleaseEntity> releases = releaseRepository.findAllByTeamKeyOrderByPromDateAsc(teamKey);
         for (ReleaseEntity release : releases) {
             Row row = sheet.createRow(rowIdx++);
             int col = 0;
