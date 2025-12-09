@@ -6,8 +6,16 @@ type TeamState = {
   availableTeams: TeamOption[];
 };
 
+const parseTeamFromLocation = (): string => {
+  if (typeof window === "undefined") return DEFAULT_TEAM_KEY;
+  const hash = window.location.hash || "";
+  // HashRouter keeps the path after the `#` symbol.
+  const match = hash.match(/^#\/(\w[\w-]*)/i);
+  return match?.[1]?.toLowerCase() || DEFAULT_TEAM_KEY;
+};
+
 const initialState: TeamState = {
-  currentTeam: DEFAULT_TEAM_KEY,
+  currentTeam: parseTeamFromLocation(),
   availableTeams: TEAM_OPTIONS,
 };
 
@@ -26,12 +34,6 @@ const teamSlice = createSlice({
     },
     setCurrentTeam(state, action: PayloadAction<string>) {
       state.currentTeam = (action.payload || DEFAULT_TEAM_KEY).toLowerCase();
-      if (!state.availableTeams.some((team) => team.key === state.currentTeam)) {
-        state.availableTeams = [
-          ...state.availableTeams,
-          { key: state.currentTeam, label: state.currentTeam },
-        ];
-      }
     },
   },
 });

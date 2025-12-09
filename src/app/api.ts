@@ -121,8 +121,15 @@ const getMethod = (args: unknown): string => {
   return "GET";
 };
 
+const getTeamFromLocation = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash || "";
+  const match = hash.match(/^#\/(\w[\w-]*)/i);
+  return match?.[1]?.toLowerCase() ?? null;
+};
+
 const addTeamToUrl = (url: string, teamKey: string) => {
-  const normalizedTeam = teamKey || DEFAULT_TEAM_KEY;
+  const normalizedTeam = teamKey || getTeamFromLocation() || DEFAULT_TEAM_KEY;
   const normalizedUrl = url.startsWith("/") ? url : `/${url}`;
   if (normalizedUrl.startsWith(`/${normalizedTeam}/`)) return normalizedUrl;
   return `/${normalizedTeam}${normalizedUrl}`;
@@ -153,7 +160,8 @@ const isActionMethod = (method: string) =>
 
 const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
   const hasWindow = typeof window !== "undefined";
-  const teamKey = selectCurrentTeamKey(api.getState() as any);
+  const teamKey =
+    selectCurrentTeamKey(api.getState() as any) || getTeamFromLocation();
   const shouldSkipTeam = shouldSkipTeamPrefix(args);
   const finalArgs = shouldSkipTeam
     ? removeSkipTeamFlag(args)
