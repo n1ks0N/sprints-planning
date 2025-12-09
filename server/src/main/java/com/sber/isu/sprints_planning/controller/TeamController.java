@@ -32,7 +32,16 @@ public class TeamController {
         return teamService.findAll();
     }
 
-    public record CreateTeamRequest(@NotBlank String key, @NotBlank String name) {}
+    public record CreateTeamRequest(
+        @NotBlank(message = "Ключ обязателен")
+        @jakarta.validation.constraints.Pattern(
+            regexp = "^[a-z0-9_-]+$",
+            message = "Ключ может содержать только строчные буквы, цифры, дефис и нижнее подчёркивание"
+        )
+        String key,
+
+        @NotBlank(message = "Название обязательно") String name
+    ) {}
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

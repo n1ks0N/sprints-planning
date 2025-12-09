@@ -4,6 +4,7 @@ import com.sber.isu.sprints_planning.model.TeamEntity;
 import com.sber.isu.sprints_planning.repository.TeamRepository;
 import jakarta.persistence.EntityNotFoundException;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.data.domain.Sort;
@@ -16,6 +17,7 @@ public class TeamService {
 
     private final TeamRepository teamRepository;
     private final TeamCleanupService teamCleanupService;
+    private static final Pattern KEY_PATTERN = Pattern.compile("^[a-z0-9_-]+$");
 
     public TeamService(TeamRepository teamRepository, TeamCleanupService teamCleanupService) {
         this.teamRepository = teamRepository;
@@ -33,6 +35,7 @@ public class TeamService {
 
     public TeamEntity createTeam(String key, String name) {
         String normalizedKey = normalizeKey(key);
+        validateKey(normalizedKey);
         validateName(name);
         if (teamRepository.existsById(normalizedKey)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Команда уже существует");
@@ -44,8 +47,10 @@ public class TeamService {
     }
 
     public TeamEntity updateTeam(String key, String name) {
+        String normalizedKey = normalizeKey(key);
+        validateKey(normalizedKey);
         validateName(name);
-        TeamEntity entity = getTeamOrThrow(normalizeKey(key));
+        TeamEntity entity = getTeamOrThrow(normalizedKey);
         entity.setName(name.trim());
         return teamRepository.save(entity);
     }
@@ -53,6 +58,7 @@ public class TeamService {
     @Transactional
     public void deleteTeam(String key, boolean deleteData) {
         String normalizedKey = normalizeKey(key);
+        validateKey(normalizedKey);
         if (!teamRepository.existsById(normalizedKey)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Команда не найдена");
         }
@@ -85,6 +91,15 @@ public class TeamService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ключ команды обязателен");
         }
         return raw.trim().toLowerCase();
+    }
+
+    private void validateKey(String key) {
+        if (!KEY_PATTERN.matcher(key).matches()) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Ключ может содержать только строчные буквы, цифры, дефис и нижнее подчёркивание"
+            );
+        }
     }
 
     private void validateName(String name) {

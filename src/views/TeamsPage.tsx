@@ -51,6 +51,9 @@ export default function TeamsPage() {
   const [editName, setEditName] = React.useState("");
   const [confirmKey, setConfirmKey] = React.useState<string | null>(null);
   const [deleteData, setDeleteData] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const keyPattern = /^[a-z0-9_-]+$/;
 
   React.useEffect(() => {
     if (teams) {
@@ -68,14 +71,19 @@ export default function TeamsPage() {
     const key = newKey.trim().toLowerCase();
     const name = newName.trim();
     if (!key || !name) {
-      alert("Укажите ключ и название команды");
+      setError("Укажите ключ и название команды");
+      return;
+    }
+    if (!keyPattern.test(key)) {
+      setError("Ключ может содержать только строчные буквы, цифры, дефис и нижнее подчёркивание");
       return;
     }
     try {
       await addTeam({ key, name }).unwrap();
       resetForm();
+      setError(null);
     } catch (error) {
-      alert(`Не удалось добавить команду: ${String((error as any)?.data || error)}`);
+      setError(`Не удалось добавить команду: ${String((error as any)?.data || error)}`);
     }
   };
 
@@ -88,15 +96,16 @@ export default function TeamsPage() {
     if (!editKey) return;
     const name = editName.trim();
     if (!name) {
-      alert("Название не может быть пустым");
+      setError("Название не может быть пустым");
       return;
     }
     try {
       await updateTeam({ key: editKey, name }).unwrap();
       setEditKey(null);
       setEditName("");
+      setError(null);
     } catch (error) {
-      alert(`Не удалось обновить команду: ${String((error as any)?.data || error)}`);
+      setError(`Не удалось обновить команду: ${String((error as any)?.data || error)}`);
     }
   };
 
@@ -115,8 +124,9 @@ export default function TeamsPage() {
       }
       setConfirmKey(null);
       setDeleteData(false);
+      setError(null);
     } catch (error) {
-      alert(`Не удалось удалить команду: ${String((error as any)?.data || error)}`);
+      setError(`Не удалось удалить команду: ${String((error as any)?.data || error)}`);
     }
   };
 
@@ -171,6 +181,13 @@ export default function TeamsPage() {
 
   return (
     <Box sx={{ p: 3 }}>
+      {error && (
+        <Paper sx={{ p: 2, mb: 2 }}>
+          <Typography color="error" variant="body2">
+            {error}
+          </Typography>
+        </Paper>
+      )}
       <Typography variant="h4" gutterBottom>
         Управление командами
       </Typography>
