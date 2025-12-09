@@ -15,8 +15,6 @@ import org.hibernate.annotations.UuidGenerator;
 @Table(name = "api_call_history")
 public class ApiCallHistoryEntity {
 
-    private static final String DEFAULT_TEAM_KEY = "customlab";
-
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     @UuidGenerator
@@ -40,7 +38,7 @@ public class ApiCallHistoryEntity {
     @Column(name = "status_code", nullable = false)
     private int statusCode;
 
-    @Column(name = "team_key", nullable = false)
+    @Column(name = "team_key")
     private String teamKey;
 
     @Column(name = "created_at", nullable = false)
@@ -50,9 +48,6 @@ public class ApiCallHistoryEntity {
     public void onCreate() {
         if (createdAt == null) {
             createdAt = OffsetDateTime.now();
-        }
-        if (teamKey == null) {
-            teamKey = DEFAULT_TEAM_KEY;
         }
     }
 

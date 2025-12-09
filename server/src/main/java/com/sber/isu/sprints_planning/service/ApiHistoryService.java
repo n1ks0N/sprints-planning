@@ -124,7 +124,7 @@ public class ApiHistoryService {
     private String resolveTeamKey(HttpServletRequest request) {
         String path = extractPath(request);
         if (path == null) {
-            return "customlab";
+            return null;
         }
 
         String[] segments = path.split("/");
@@ -134,19 +134,19 @@ public class ApiHistoryService {
             }
 
             // Some endpoints (e.g. "/teams" list, swagger, actuator) do not include
-            // a team slug in the URL. For those, fallback to the default team to
-            // avoid persisting history rows with a non-existent "teams" key.
+            // a team slug in the URL. For those, record history without binding to
+            // any team.
             if (isNonTeamSegment(segment)) {
-                return "customlab";
+                return null;
             }
 
             try {
                 return com.sber.isu.sprints_planning.util.TeamKeyNormalizer.normalize(segment);
             } catch (Exception ex) {
-                return "customlab";
+                return null;
             }
         }
-        return "customlab";
+        return null;
     }
 
     private boolean isNonTeamSegment(String segment) {
