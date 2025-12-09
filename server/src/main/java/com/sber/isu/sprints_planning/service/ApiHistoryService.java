@@ -126,16 +126,36 @@ public class ApiHistoryService {
         if (path == null) {
             return "customlab";
         }
+
         String[] segments = path.split("/");
         for (String segment : segments) {
-            if (segment != null && !segment.isBlank()) {
-                try {
-                    return com.sber.isu.sprints_planning.util.TeamKeyNormalizer.normalize(segment);
-                } catch (Exception ex) {
-                    return "customlab";
-                }
+            if (segment == null || segment.isBlank()) {
+                continue;
+            }
+
+            // Some endpoints (e.g. "/teams" list, swagger, actuator) do not include
+            // a team slug in the URL. For those, fallback to the default team to
+            // avoid persisting history rows with a non-existent "teams" key.
+            if (isNonTeamSegment(segment)) {
+                return "customlab";
+            }
+
+            try {
+                return com.sber.isu.sprints_planning.util.TeamKeyNormalizer.normalize(segment);
+            } catch (Exception ex) {
+                return "customlab";
             }
         }
         return "customlab";
+    }
+
+    private boolean isNonTeamSegment(String segment) {
+        String normalized = segment.toLowerCase();
+        return normalized.equals("teams")
+            || normalized.equals("swagger-ui")
+            || normalized.equals("swagger-ui.html")
+            || normalized.equals("v3")
+            || normalized.equals("api-docs")
+            || normalized.equals("actuator");
     }
 }
