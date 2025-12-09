@@ -34,9 +34,12 @@ import TeamSwitcher from "../components/TeamSwitcher";
 import {
   selectAvailableTeams,
   selectCurrentTeamKey,
+  setAvailableTeams,
   setCurrentTeam,
 } from "../app/teamSlice";
-import { findTeamByKey } from "../teams";
+import { useGetTeamsQuery } from "../app/api";
+import { DEFAULT_TEAM_KEY } from "../teams";
+import TeamsPage from "./TeamsPage";
 
 function Hotkeys() {
   const dispatch = useDispatch();
@@ -62,7 +65,10 @@ function TeamScopedApp() {
   const location = useLocation();
   const dispatch = useDispatch();
   const teams = useSelector(selectAvailableTeams);
-  const teamKey = findTeamByKey(rawTeamKey).key;
+  const normalizedParam = (rawTeamKey || DEFAULT_TEAM_KEY).toLowerCase();
+  const teamKey = teams.some((team) => team.key === normalizedParam)
+    ? normalizedParam
+    : teams[0]?.key ?? DEFAULT_TEAM_KEY;
   const currentPathSuffix = React.useMemo(
     () => location.pathname.replace(/^\/[A-Za-z0-9_-]+/, "") || "/",
     [location.pathname]
@@ -138,6 +144,9 @@ function TeamScopedApp() {
             <Button component={Link} to={buildPath("/history")}>
               История
             </Button>
+            <Button component={Link} to="/teams">
+              Команды
+            </Button>
             <Tooltip title="Экспортировать план в Excel">
               <span>
                 <Button
@@ -181,10 +190,21 @@ function TeamScopedApp() {
 
 export default function App() {
   const currentTeam = useSelector(selectCurrentTeamKey);
+  const dispatch = useDispatch();
+  const { data: teams } = useGetTeamsQuery();
+
+  React.useEffect(() => {
+    if (teams) {
+      dispatch(
+        setAvailableTeams(teams.map((team) => ({ key: team.key, label: team.name })))
+      );
+    }
+  }, [dispatch, teams]);
 
   return (
     <Routes>
       <Route path="/:teamKey/*" element={<TeamScopedApp />} />
+      <Route path="/teams" element={<TeamsPage />} />
       <Route path="*" element={<Navigate to={`/${currentTeam}/`} replace />} />
     </Routes>
   );

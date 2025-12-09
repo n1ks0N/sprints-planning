@@ -9,6 +9,7 @@ import type {
   BacklogItem,
   Release,
   ApiSessionHistory,
+  Team,
 } from "../types";
 import { DEFAULT_TEAM_KEY } from "../teams";
 import { selectCurrentTeamKey } from "./teamSlice";
@@ -127,6 +128,17 @@ const addTeamToUrl = (url: string, teamKey: string) => {
   return `/${normalizedTeam}${normalizedUrl}`;
 };
 
+const shouldSkipTeamPrefix = (args: unknown): boolean => {
+  if (typeof args !== "object" || args === null) return false;
+  return Boolean((args as any).skipTeamPrefix);
+};
+
+const removeSkipTeamFlag = (args: any) => {
+  if (!args || typeof args !== "object") return args;
+  const { skipTeamPrefix, ...rest } = args as any;
+  return rest;
+};
+
 const withTeamInArgs = (args: unknown, teamKey: string): unknown => {
   if (typeof args === "string") return addTeamToUrl(args, teamKey);
   if (typeof args === "object" && args !== null) {
@@ -142,8 +154,11 @@ const isActionMethod = (method: string) =>
 const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
   const hasWindow = typeof window !== "undefined";
   const teamKey = selectCurrentTeamKey(api.getState() as any);
-  const argsWithTeam = withTeamInArgs(args, teamKey);
-  const method = getMethod(argsWithTeam);
+  const shouldSkipTeam = shouldSkipTeamPrefix(args);
+  const finalArgs = shouldSkipTeam
+    ? removeSkipTeamFlag(args)
+    : withTeamInArgs(args, teamKey);
+  const method = getMethod(finalArgs);
 
   if (hasWindow) {
     ensureSessionId();
@@ -160,7 +175,7 @@ const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
     }
   }
 
-  const result = await rawBaseQuery(argsWithTeam, api, extraOptions);
+  const result = await rawBaseQuery(finalArgs, api, extraOptions);
 
   if (hasWindow && isActionMethod(method) && !("error" in result)) {
     refreshSessionTtl();
@@ -285,6 +300,7 @@ export const api = createApi({
     "Task",
     "Release",
     "History",
+    "Team",
   ],
   endpoints: (b) => ({
     // ---- Quarters ----
@@ -1238,6 +1254,48 @@ export const api = createApi({
         }
       },
     }),
+
+    // ---- Teams ----
+    getTeams: b.query<Team[], void>({
+      query: () => ({ url: "/teams", method: "GET", skipTeamPrefix: true }),
+      providesTags: [listTag("Team")],
+    }),
+
+    addTeam: b.mutation<Team, { key: string; name: string }>({
+      query: (body) => ({
+        url: "/teams",
+        method: "POST",
+        body,
+        skipTeamPrefix: true,
+      }),
+      invalidatesTags: [listTag("Team")],
+    }),
+
+    updateTeam: b.mutation<Team, { key: string; name: string }>({
+      query: ({ key, name }) => ({
+        url: `/teams/${key}`,
+        method: "PUT",
+        body: { name },
+        skipTeamPrefix: true,
+      }),
+      invalidatesTags: (r, e, arg) => [
+        { type: "Team", id: arg.key },
+        listTag("Team"),
+      ],
+    }),
+
+    deleteTeam: b.mutation<void, { key: string; deleteData: boolean }>({
+      query: ({ key, deleteData }) => ({
+        url: `/teams/${key}`,
+        method: "DELETE",
+        params: { deleteData },
+        skipTeamPrefix: true,
+      }),
+      invalidatesTags: (r, e, arg) => [
+        { type: "Team", id: arg.key },
+        listTag("Team"),
+      ],
+    }),
   }),
 });
 
@@ -1275,6 +1333,11 @@ export const {
   useAddReleaseMutation,
   useUpdateReleaseMutation,
   useDeleteReleaseMutation,
+
+  useGetTeamsQuery,
+  useAddTeamMutation,
+  useUpdateTeamMutation,
+  useDeleteTeamMutation,
 
   useGetHistoryQuery,
 

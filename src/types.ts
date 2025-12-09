@@ -128,3 +128,8 @@ export type ApiSessionHistory = {
   lastActionAt: string;
   actions: ApiHistoryAction[];
 };
+
+export type Team = {
+  key: string;
+  name: string;
+};
