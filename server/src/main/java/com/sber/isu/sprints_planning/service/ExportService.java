@@ -3,7 +3,6 @@ package com.sber.isu.sprints_planning.service;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
 import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.ReleaseEntity;
-import com.sber.isu.sprints_planning.model.RunVacationEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
 import com.sber.isu.sprints_planning.model.TaskEntity;
@@ -12,7 +11,6 @@ import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
 import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
-import com.sber.isu.sprints_planning.repository.RunVacationRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
 import jakarta.transaction.Transactional;
@@ -39,51 +37,47 @@ public class ExportService {
     private final QuarterRepository quarterRepository;
     private final SprintRepository sprintRepository;
     private final ParticipantRepository participantRepository;
-    private final RunVacationRepository runVacationRepository;
     private final TaskRepository taskRepository;
     private final ReleaseRepository releaseRepository;
 
     public ExportService(QuarterRepository quarterRepository,
         SprintRepository sprintRepository,
         ParticipantRepository participantRepository,
-        RunVacationRepository runVacationRepository,
         TaskRepository taskRepository,
         ReleaseRepository releaseRepository) {
         this.quarterRepository = quarterRepository;
         this.sprintRepository = sprintRepository;
         this.participantRepository = participantRepository;
-        this.runVacationRepository = runVacationRepository;
         this.taskRepository = taskRepository;
         this.releaseRepository = releaseRepository;
     }
 
     @Transactional
-    public byte[] exportToExcel() {
+    public byte[] exportToExcel(String teamKey) {
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             CellStyle headerStyle = createHeaderStyle(workbook);
 
-            Map<UUID, QuarterEntity> quarterIndex = quarterRepository.findAll().stream()
+            Map<UUID, QuarterEntity> quarterIndex = quarterRepository.findByTeamKeyOrderByStartDateAsc(teamKey).stream()
                 .sorted(Comparator.comparing(QuarterEntity::getYear).thenComparing(QuarterEntity::getNumber))
                 .collect(Collectors.toMap(QuarterEntity::getId, q -> q, (a, b) -> a, java.util.LinkedHashMap::new));
 
-            Map<UUID, SprintEntity> sprintIndex = sprintRepository.findAll().stream()
+            Map<UUID, SprintEntity> sprintIndex = sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey).stream()
                 .sorted(Comparator
                     .comparing((SprintEntity s) -> s.getQuarter().getYear())
                     .thenComparing(s -> s.getQuarter().getNumber())
                     .thenComparing(SprintEntity::getOrder))
                 .collect(Collectors.toMap(SprintEntity::getId, s -> s, (a, b) -> a, java.util.LinkedHashMap::new));
 
-            Map<UUID, ParticipantEntity> participantIndex = participantRepository.findAllByOrderByDisplayOrderAsc()
+            Map<UUID, ParticipantEntity> participantIndex = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey)
                 .stream()
                 .collect(Collectors.toMap(ParticipantEntity::getId, p -> p, (a, b) -> a, java.util.LinkedHashMap::new));
 
-            List<TaskEntity> tasks = taskRepository.findAllByOrderByDisplayOrderAsc();
+            List<TaskEntity> tasks = taskRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
 
             writeQuartersSheet(workbook, headerStyle, quarterIndex);
             writeSprintsSheet(workbook, headerStyle, sprintIndex, quarterIndex);
             writeParticipantsSheet(workbook, headerStyle, participantIndex);
-            writeRunVacationSheet(workbook, headerStyle, quarterIndex, sprintIndex, participantIndex);
-            writeReleasesSheet(workbook, headerStyle);
+            writeReleasesSheet(workbook, headerStyle, teamKey);
             writeTasksSheet(workbook, headerStyle, sprintIndex, participantIndex, tasks);
             writeTaskLoadsSheet(workbook, headerStyle, sprintIndex, tasks);
             writeAllocationsSheet(workbook, headerStyle, sprintIndex, participantIndex, tasks);
@@ -149,39 +143,14 @@ public class ExportService {
         autosize(sheet, 4);
     }
 
-    private void writeRunVacationSheet(Workbook workbook, CellStyle headerStyle, Map<UUID, QuarterEntity> quarterIndex,
-        Map<UUID, SprintEntity> sprintIndex, Map<UUID, ParticipantEntity> participantIndex) {
-        Sheet sheet = workbook.createSheet("Забеги и отпуска");
-        Row header = sheet.createRow(0);
-        createHeaderCells(header, headerStyle, "Участник", "Спринт", "Квартал", "Забег, дни", "Отпуск, дни");
-        int rowIdx = 1;
-        List<RunVacationEntity> runVacations = runVacationRepository.findAll();
-        runVacations.sort(Comparator
-            .comparing((RunVacationEntity rv) -> participantIndex.getOrDefault(rv.getParticipant().getId(), rv.getParticipant()).getDisplayOrder())
-            .thenComparing(rv -> sprintIndex.getOrDefault(rv.getSprint().getId(), rv.getSprint()).getStartDate()));
-        for (RunVacationEntity rv : runVacations) {
-            Row row = sheet.createRow(rowIdx++);
-            int col = 0;
-            ParticipantEntity participant = participantIndex.get(rv.getParticipant().getId());
-            SprintEntity sprint = sprintIndex.get(rv.getSprint().getId());
-            QuarterEntity quarter = sprint != null ? quarterIndex.get(sprint.getQuarter().getId()) : null;
-            row.createCell(col++).setCellValue(participant != null ? participant.getFullName() : "");
-            row.createCell(col++).setCellValue(sprint != null ? sprint.getName() : "");
-            row.createCell(col++).setCellValue(quarter != null ? quarter.getName() : "");
-            row.createCell(col++).setCellValue(rv.getRunDays());
-            row.createCell(col).setCellValue(rv.getVacationNormDays());
-        }
-        autosize(sheet, 5);
-    }
-
-    private void writeReleasesSheet(Workbook workbook, CellStyle headerStyle) {
+    private void writeReleasesSheet(Workbook workbook, CellStyle headerStyle, String teamKey) {
         Sheet sheet = workbook.createSheet("Релизы");
         Row header = sheet.createRow(0);
         createHeaderCells(header, headerStyle, "Название", "Prom", "PSI", "OPS (старт)", "OPS (конец)",
             "Regress (старт)", "Regress (конец)", "FF", "FF внутр.", "IFT (старт)", "IFT (конец)", "Build",
             "CR", "Dev (старт)", "Dev (конец)", "ST", "Создано", "Обновлено");
         int rowIdx = 1;
-        List<ReleaseEntity> releases = releaseRepository.findAllByOrderByPromDateAsc();
+        List<ReleaseEntity> releases = releaseRepository.findAllByTeamKeyOrderByPromDateAsc(teamKey);
         for (ReleaseEntity release : releases) {
             Row row = sheet.createRow(rowIdx++);
             int col = 0;

@@ -10,6 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
 import java.util.HashSet;
@@ -23,6 +24,8 @@ import org.hibernate.type.SqlTypes;
 @Entity
 @Table(name = "tasks")
 public class TaskEntity {
+
+    private static final String DEFAULT_TEAM_KEY = "customlab";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -67,6 +70,9 @@ public class TaskEntity {
 
     @Column(name = "updated_at", nullable = false)
     private LocalDate updatedAt;
+
+    @Column(name = "team_key", nullable = false)
+    private String teamKey;
 
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
@@ -214,5 +220,20 @@ public class TaskEntity {
 
     public void setDisplayOrder(int displayOrder) {
         this.displayOrder = displayOrder;
+    }
+
+    public String getTeamKey() {
+        return teamKey;
+    }
+
+    public void setTeamKey(String teamKey) {
+        this.teamKey = teamKey;
+    }
+
+    @PrePersist
+    public void onCreate() {
+        if (teamKey == null) {
+            teamKey = DEFAULT_TEAM_KEY;
+        }
     }
 }

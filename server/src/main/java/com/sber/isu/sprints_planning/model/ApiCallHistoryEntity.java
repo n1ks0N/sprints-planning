@@ -38,6 +38,9 @@ public class ApiCallHistoryEntity {
     @Column(name = "status_code", nullable = false)
     private int statusCode;
 
+    @Column(name = "team_key")
+    private String teamKey;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -110,5 +113,13 @@ public class ApiCallHistoryEntity {
 
     public void setCreatedAt(OffsetDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public String getTeamKey() {
+        return teamKey;
+    }
+
+    public void setTeamKey(String teamKey) {
+        this.teamKey = teamKey;
     }
 }

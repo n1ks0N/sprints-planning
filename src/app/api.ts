@@ -4,12 +4,14 @@ import type {
   Quarter,
   Sprint,
   Participant,
-  RunVacation,
   CapacityRow,
   BacklogItem,
   Release,
   ApiSessionHistory,
+  Team,
 } from "../types";
+import { DEFAULT_TEAM_KEY } from "../teams";
+import { selectCurrentTeamKey } from "./teamSlice";
 
 type AnyState = unknown;
 
@@ -118,12 +120,56 @@ const getMethod = (args: unknown): string => {
   return "GET";
 };
 
+const getTeamFromLocation = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash || "";
+  const match = hash.match(/^#\/(\w[\w-]*)/i);
+  return match?.[1]?.toLowerCase() ?? null;
+};
+
+const addTeamToUrl = (url: string, teamKey: string) => {
+  const normalizedTeam = (teamKey || getTeamFromLocation() || DEFAULT_TEAM_KEY).toLowerCase();
+  const normalizedUrl = url.startsWith("/") ? url : `/${url}`;
+  if (normalizedUrl.startsWith(`/${normalizedTeam}/`)) return normalizedUrl;
+  return `/${normalizedTeam}${normalizedUrl}`;
+};
+
+const shouldSkipTeamPrefix = (args: unknown): boolean => {
+  if (typeof args !== "object" || args === null) return false;
+  return Boolean((args as any).skipTeamPrefix);
+};
+
+const removeSkipTeamFlag = (args: any) => {
+  if (!args || typeof args !== "object") return args;
+  const { skipTeamPrefix, ...rest } = args as any;
+  return rest;
+};
+
+const withTeamInArgs = (args: unknown, teamKey: string): unknown => {
+  if (typeof args === "string") return addTeamToUrl(args, teamKey);
+  if (typeof args === "object" && args !== null) {
+    const currentUrl = typeof (args as any).url === "string" ? (args as any).url : "/";
+    return { ...(args as any), url: addTeamToUrl(currentUrl, teamKey) };
+  }
+  return { url: addTeamToUrl("/", teamKey) };
+};
+
 const isActionMethod = (method: string) =>
   ["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase());
 
 const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
   const hasWindow = typeof window !== "undefined";
-  const method = getMethod(args);
+  const teamKey: string =
+    (
+      selectCurrentTeamKey(api.getState() as any) ||
+      getTeamFromLocation() ||
+      DEFAULT_TEAM_KEY
+    ).toLowerCase();
+  const shouldSkipTeam = shouldSkipTeamPrefix(args);
+  const finalArgs = shouldSkipTeam
+    ? removeSkipTeamFlag(args)
+    : withTeamInArgs(args, teamKey);
+  const method = getMethod(finalArgs);
 
   if (hasWindow) {
     ensureSessionId();
@@ -140,7 +186,7 @@ const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
     }
   }
 
-  const result = await rawBaseQuery(args, api, extraOptions);
+  const result = await rawBaseQuery(finalArgs, api, extraOptions);
 
   if (hasWindow && isActionMethod(method) && !("error" in result)) {
     refreshSessionTtl();
@@ -260,11 +306,11 @@ export const api = createApi({
     "Quarter",
     "Sprint",
     "Participant",
-    "RunVacation",
     "Capacity",
     "Task",
     "Release",
     "History",
+    "Team",
   ],
   endpoints: (b) => ({
     // ---- Quarters ----
@@ -355,7 +401,6 @@ export const api = createApi({
         listTag("Sprint"),
         listTag("Task"),
         listTag("Capacity"),
-        listTag("RunVacation"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const patch = dispatch(
@@ -397,7 +442,6 @@ export const api = createApi({
         listTag("Quarter"),
         listTag("Task"),
         listTag("Capacity"),
-        listTag("RunVacation"),
         ...(result ? [entityTag("Sprint", result.id)] : []),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
@@ -448,7 +492,6 @@ export const api = createApi({
         entityTag("Sprint", arg.id),
         listTag("Sprint"),
         listTag("Capacity"),
-        listTag("RunVacation"),
         listTag("Task"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
@@ -484,7 +527,6 @@ export const api = createApi({
         entityTag("Sprint", arg.id),
         listTag("Sprint"),
         listTag("Capacity"),
-        listTag("RunVacation"),
         listTag("Task"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
@@ -527,7 +569,6 @@ export const api = createApi({
       invalidatesTags: (result) => [
         listTag("Participant"),
         listTag("Capacity"),
-        listTag("RunVacation"),
         ...(result ? [entityTag("Participant", result.id)] : []),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
@@ -568,7 +609,6 @@ export const api = createApi({
         entityTag("Participant", arg.id),
         listTag("Participant"),
         listTag("Capacity"),
-        listTag("RunVacation"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const patch = dispatch(
@@ -598,7 +638,6 @@ export const api = createApi({
         entityTag("Participant", arg.id),
         listTag("Participant"),
         listTag("Capacity"),
-        listTag("RunVacation"),
         listTag("Task"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
@@ -644,137 +683,7 @@ export const api = createApi({
       },
     }),
 
-    // ---- Run/Vacation & Capacity ----
-    getRunVacation: b.query<RunVacation[], { quarterId: string }>({
-      query: ({ quarterId }) =>
-        ({ url: "/runvac", method: "GET", params: { quarterId } }),
-      providesTags: (result, error, arg) => [
-        { type: "RunVacation" as const, id: "LIST" as const },
-        { type: "RunVacation" as const, id: arg.quarterId },
-      ],
-    }),
-    upsertRunVacation: b.mutation<RunVacation, Partial<RunVacation>>({
-      query: (body) => ({ url: "/runvac", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
-        { type: "RunVacation" as const, id: "LIST" as const },
-        arg?.sprintId
-          ? { type: "RunVacation" as const, id: arg.sprintId }
-          : { type: "RunVacation" as const, id: "LIST" as const },
-        { type: "Capacity" as const, id: "LIST" as const },
-      ],
-      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const quarterId = findQuarterBySprint(arg.sprintId, getState);
-        const cachedArgs = collectCachedArgs<{ quarterId: string }>(
-          getState,
-          "getRunVacation",
-          [
-            { type: "RunVacation", id: "LIST" },
-            ...(quarterId ? [{ type: "RunVacation", id: quarterId }] : []),
-          ]
-        );
-
-        const optimistic: RunVacation = {
-          participantId: arg.participantId || "",
-          sprintId: arg.sprintId || "",
-          runDays: Math.max(0, Math.round(Number(arg.runDays ?? 0))),
-          vacationNormDays: Math.max(
-            0,
-            Math.round(Number(arg.vacationNormDays ?? 0))
-          ),
-        } as RunVacation;
-
-        const patches = applyPatches(
-          dispatch,
-          "getRunVacation",
-          cachedArgs,
-          (draft: RunVacation[]) => {
-            const idx = draft.findIndex(
-              (r: RunVacation) =>
-                r.participantId === optimistic.participantId &&
-                r.sprintId === optimistic.sprintId
-            );
-            if (idx >= 0) draft[idx] = { ...draft[idx], ...optimistic };
-            else draft.push(optimistic);
-          }
-        );
-
-        try {
-          const { data } = await queryFulfilled;
-          applyPatches(dispatch, "getRunVacation", cachedArgs, (draft) => {
-            const idx = draft.findIndex(
-              (r: RunVacation) =>
-                r.participantId === data.participantId && r.sprintId === data.sprintId
-            );
-            if (idx >= 0) draft[idx] = data;
-            else draft.push(data);
-          });
-        } catch (error) {
-          patches.forEach((p) => p.undo());
-          notifyError("Не удалось сохранить нагрузку/отпуск", error);
-        }
-      },
-    }),
-    bulkRunVacation: b.mutation<
-      { ok: true },
-      {
-        quarterId: string;
-        roles?: string[];
-        daysPerSprint: number;
-        multiplyByRate: boolean;
-      }
-    >({
-      query: (body) => ({ url: "/runvac/bulk", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
-        { type: "RunVacation" as const, id: "LIST" as const },
-        arg.quarterId
-          ? { type: "RunVacation" as const, id: arg.quarterId }
-          : { type: "RunVacation" as const, id: "LIST" as const },
-        { type: "Capacity" as const, id: "LIST" as const },
-      ],
-      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const participantMap = new Map(
-          getParticipantsFromCache(getState()).map((p) => [p.id, p])
-        );
-        const sprintIds = collectSprintsFromCache(getState())
-          .filter((s) => s.quarterId === arg.quarterId)
-          .map((s) => s.id);
-        const roleSet = arg.roles?.length ? new Set(arg.roles) : null;
-
-        const cachedArgs = collectCachedArgs<{ quarterId: string }>(
-          getState,
-          "getRunVacation",
-          [
-            { type: "RunVacation", id: "LIST" },
-            { type: "RunVacation", id: arg.quarterId },
-          ]
-        );
-
-        const patches = applyPatches(
-          dispatch,
-          "getRunVacation",
-          cachedArgs,
-          (draft: RunVacation[]) => {
-            for (const rv of draft) {
-              if (!sprintIds.includes(rv.sprintId)) continue;
-              const participant = participantMap.get(rv.participantId);
-              if (roleSet && (!participant || !roleSet.has(participant.role))) continue;
-              const base = Number(arg.daysPerSprint) || 0;
-              const next = arg.multiplyByRate
-                ? Math.max(0, Math.round(base * (participant?.rate ?? 1)))
-                : Math.max(0, Math.round(base));
-              rv.runDays = next;
-            }
-          }
-        );
-
-        try {
-          await queryFulfilled;
-        } catch (error) {
-          patches.forEach((p) => p.undo());
-          notifyError("Не удалось применить массовое обновление нагрузки", error);
-        }
-      },
-    }),
+    // ---- Capacity ----
     getCapacity: b.query<CapacityRow[], { quarterId: string }>({
       query: ({ quarterId }) =>
         ({ url: "/capacity", method: "GET", params: { quarterId } }),
@@ -1192,10 +1101,11 @@ export const api = createApi({
 
     // ---- Export ----
     exportExcel: b.query<Blob, void>({
-      async queryFn() {
+      async queryFn(_arg, { getState }) {
         const baseUrl = process.env.API_URL || "/api/v1/sprints-planning";
+        const teamKey = selectCurrentTeamKey(getState() as any);
         try {
-          const response = await fetch(`${baseUrl}/export/excel`);
+          const response = await fetch(`${baseUrl}/${teamKey}/export/excel`);
           const blob = await response.blob();
           if (!response.ok) {
             const text = await blob.text();
@@ -1217,6 +1127,48 @@ export const api = createApi({
         }
       },
     }),
+
+    // ---- Teams ----
+    getTeams: b.query<Team[], void>({
+      query: () => ({ url: "/teams", method: "GET", skipTeamPrefix: true }),
+      providesTags: [listTag("Team")],
+    }),
+
+    addTeam: b.mutation<Team, { key: string; name: string }>({
+      query: (body) => ({
+        url: "/teams",
+        method: "POST",
+        body,
+        skipTeamPrefix: true,
+      }),
+      invalidatesTags: [listTag("Team")],
+    }),
+
+    updateTeam: b.mutation<Team, { key: string; name: string }>({
+      query: ({ key, name }) => ({
+        url: `/teams/${key}`,
+        method: "PUT",
+        body: { name },
+        skipTeamPrefix: true,
+      }),
+      invalidatesTags: (r, e, arg) => [
+        { type: "Team", id: arg.key },
+        listTag("Team"),
+      ],
+    }),
+
+    deleteTeam: b.mutation<void, { key: string; deleteData: boolean }>({
+      query: ({ key, deleteData }) => ({
+        url: `/teams/${key}`,
+        method: "DELETE",
+        params: { deleteData },
+        skipTeamPrefix: true,
+      }),
+      invalidatesTags: (r, e, arg) => [
+        { type: "Team", id: arg.key },
+        listTag("Team"),
+      ],
+    }),
   }),
 });
 
@@ -1237,9 +1189,6 @@ export const {
   useDeleteParticipantMutation,
   useReorderParticipantsMutation,
 
-  useGetRunVacationQuery,
-  useUpsertRunVacationMutation,
-  useBulkRunVacationMutation,
   useGetCapacityQuery,
 
   useGetTasksQuery,
@@ -1254,6 +1203,11 @@ export const {
   useAddReleaseMutation,
   useUpdateReleaseMutation,
   useDeleteReleaseMutation,
+
+  useGetTeamsQuery,
+  useAddTeamMutation,
+  useUpdateTeamMutation,
+  useDeleteTeamMutation,
 
   useGetHistoryQuery,
 

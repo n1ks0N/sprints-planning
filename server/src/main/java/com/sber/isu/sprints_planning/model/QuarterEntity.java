@@ -5,6 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
 import java.util.UUID;
@@ -13,6 +14,8 @@ import org.hibernate.annotations.UuidGenerator;
 @Entity
 @Table(name = "quarters")
 public class QuarterEntity {
+
+    private static final String DEFAULT_TEAM_KEY = "customlab";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -33,6 +36,9 @@ public class QuarterEntity {
 
     @Column(name = "end_date", nullable = false)
     private LocalDate endDate;
+
+    @Column(name = "team_key", nullable = false)
+    private String teamKey;
 
     public UUID getId() {
         return id;
@@ -80,5 +86,20 @@ public class QuarterEntity {
 
     public void setEndDate(LocalDate endDate) {
         this.endDate = endDate;
+    }
+
+    public String getTeamKey() {
+        return teamKey;
+    }
+
+    public void setTeamKey(String teamKey) {
+        this.teamKey = teamKey;
+    }
+
+    @PrePersist
+    public void onCreate() {
+        if (teamKey == null) {
+            teamKey = DEFAULT_TEAM_KEY;
+        }
     }
 }

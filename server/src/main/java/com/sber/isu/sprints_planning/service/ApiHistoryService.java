@@ -6,6 +6,7 @@ import com.sber.isu.sprints_planning.mapper.DtoMapper;
 import com.sber.isu.sprints_planning.model.ApiCallHistoryEntity;
 import com.sber.isu.sprints_planning.repository.ApiCallHistoryRepository;
 import com.sber.isu.sprints_planning.util.ApiActionDescriptionResolver;
+import com.sber.isu.sprints_planning.repository.TeamRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -24,11 +25,14 @@ public class ApiHistoryService {
 
     private final ApiCallHistoryRepository historyRepository;
     private final ApiActionDescriptionResolver actionDescriptionResolver;
+    private final TeamRepository teamRepository;
 
     public ApiHistoryService(ApiCallHistoryRepository historyRepository,
-        ApiActionDescriptionResolver actionDescriptionResolver) {
+        ApiActionDescriptionResolver actionDescriptionResolver,
+        TeamRepository teamRepository) {
         this.historyRepository = historyRepository;
         this.actionDescriptionResolver = actionDescriptionResolver;
+        this.teamRepository = teamRepository;
     }
 
     @Transactional
@@ -39,6 +43,8 @@ public class ApiHistoryService {
             return;
         }
 
+        String teamKey = resolveTeamKey(request);
+
         ApiCallHistoryEntity entity = new ApiCallHistoryEntity();
         entity.setSessionId(sessionId);
         entity.setUserName(userName == null || userName.isBlank() ? "unknown" : userName);
@@ -47,6 +53,7 @@ public class ApiHistoryService {
         entity.setAction(actionDescriptionResolver.resolve(entity.getHttpMethod(), entity.getPath()));
         entity.setStatusCode(statusCode);
         entity.setCreatedAt(OffsetDateTime.now());
+        entity.setTeamKey(teamKey);
 
         try {
             historyRepository.save(entity);
@@ -56,8 +63,8 @@ public class ApiHistoryService {
     }
 
     @Transactional(readOnly = true)
-    public List<ApiSessionHistoryDto> getHistory() {
-        List<ApiCallHistoryEntity> items = historyRepository.findAll(
+    public List<ApiSessionHistoryDto> getHistory(String teamKey) {
+        List<ApiCallHistoryEntity> items = historyRepository.findAllByTeamKey(teamKey,
             Sort.by(Sort.Direction.DESC, "createdAt"));
 
         List<ApiCallHistoryEntity> actions = items.stream()
@@ -116,5 +123,47 @@ public class ApiHistoryService {
             return uri.substring(contextPath.length());
         }
         return uri;
+    }
+
+    private String resolveTeamKey(HttpServletRequest request) {
+        String path = extractPath(request);
+        if (path == null) {
+            return null;
+        }
+
+        String[] segments = path.split("/");
+        for (String segment : segments) {
+            if (segment == null || segment.isBlank()) {
+                continue;
+            }
+
+            // Some endpoints (e.g. "/teams" list, swagger, actuator) do not include
+            // a team slug in the URL. For those, record history without binding to
+            // any team.
+            if (isNonTeamSegment(segment)) {
+                return null;
+            }
+
+            try {
+                String normalized = com.sber.isu.sprints_planning.util.TeamKeyNormalizer.normalize(segment);
+                if (teamRepository.existsById(normalized)) {
+                    return normalized;
+                }
+                return null;
+            } catch (Exception ex) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private boolean isNonTeamSegment(String segment) {
+        String normalized = segment.toLowerCase();
+        return normalized.equals("teams")
+            || normalized.equals("swagger-ui")
+            || normalized.equals("swagger-ui.html")
+            || normalized.equals("v3")
+            || normalized.equals("api-docs")
+            || normalized.equals("actuator");
     }
 }

@@ -8,10 +8,13 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.MapsId;
 import jakarta.persistence.Table;
 import jakarta.persistence.Column;
+import jakarta.persistence.PrePersist;
 
 @Entity
 @Table(name = "task_participants")
 public class TaskParticipantEntity {
+
+    private static final String DEFAULT_TEAM_KEY = "customlab";
 
     @EmbeddedId
     private TaskParticipantId id;
@@ -28,6 +31,9 @@ public class TaskParticipantEntity {
 
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
+
+    @Column(name = "team_key", nullable = false)
+    private String teamKey;
 
     public TaskParticipantId getId() {
         return id;
@@ -59,5 +65,20 @@ public class TaskParticipantEntity {
 
     public void setDisplayOrder(int displayOrder) {
         this.displayOrder = displayOrder;
+    }
+
+    public String getTeamKey() {
+        return teamKey;
+    }
+
+    public void setTeamKey(String teamKey) {
+        this.teamKey = teamKey;
+    }
+
+    @PrePersist
+    public void onCreate() {
+        if (teamKey == null) {
+            teamKey = DEFAULT_TEAM_KEY;
+        }
     }
 }

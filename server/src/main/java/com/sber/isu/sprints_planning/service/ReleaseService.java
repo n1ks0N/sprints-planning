@@ -23,27 +23,28 @@ public class ReleaseService {
         this.releaseRepository = releaseRepository;
     }
 
-    public List<ReleaseDto> findAll() {
-        return releaseRepository.findAllByOrderByPromDateAsc().stream()
+    public List<ReleaseDto> findAll(String teamKey) {
+        return releaseRepository.findAllByTeamKeyOrderByPromDateAsc(teamKey).stream()
             .map(DtoMapper::toReleaseDto)
             .toList();
     }
 
     @Transactional
-    public ReleaseDto create(ReleaseCreateRequest request) {
+    public ReleaseDto create(String teamKey, ReleaseCreateRequest request) {
         ReleaseEntity entity = new ReleaseEntity();
         entity.setName(request.name());
         entity.setPromDate(request.promDate());
         applyCalculatedDates(entity, request.promDate());
         entity.setCreatedAt(LocalDate.now());
         entity.setUpdatedAt(LocalDate.now());
+        entity.setTeamKey(teamKey);
         ReleaseEntity saved = releaseRepository.save(entity);
         return DtoMapper.toReleaseDto(saved);
     }
 
     @Transactional
-    public ReleaseDto update(ReleaseUpdateRequest request) {
-        ReleaseEntity entity = releaseRepository.findById(UUID.fromString(request.id()))
+    public ReleaseDto update(String teamKey, ReleaseUpdateRequest request) {
+        ReleaseEntity entity = releaseRepository.findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Release not found"));
         if (request.name() != null) {
             entity.setName(request.name());
@@ -90,8 +91,8 @@ public class ReleaseService {
     }
 
     @Transactional
-    public ReleaseDto delete(IdRequest request) {
-        ReleaseEntity entity = releaseRepository.findById(UUID.fromString(request.id()))
+    public ReleaseDto delete(String teamKey, IdRequest request) {
+        ReleaseEntity entity = releaseRepository.findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Release not found"));
         releaseRepository.delete(entity);
         return DtoMapper.toReleaseDto(entity);

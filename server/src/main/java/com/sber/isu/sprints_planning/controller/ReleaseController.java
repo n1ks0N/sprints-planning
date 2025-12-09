@@ -5,14 +5,18 @@ import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.ReleaseCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.ReleaseUpdateRequest;
 import com.sber.isu.sprints_planning.service.ReleaseService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@RequestMapping("/{teamKey}")
 public class ReleaseController {
 
     private final ReleaseService releaseService;
@@ -22,22 +26,25 @@ public class ReleaseController {
     }
 
     @GetMapping("/releases")
-    public List<ReleaseDto> getReleases() {
-        return releaseService.findAll();
+    public List<ReleaseDto> getReleases(@PathVariable String teamKey) {
+        return releaseService.findAll(TeamKeyNormalizer.normalize(teamKey));
     }
 
     @PostMapping("/releases")
-    public ReleaseDto createRelease(@RequestBody @Valid ReleaseCreateRequest request) {
-        return releaseService.create(request);
+    public ReleaseDto createRelease(@PathVariable String teamKey, @RequestBody @Valid ReleaseCreateRequest request) {
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return releaseService.create(normalizedTeamKey, request);
     }
 
     @PostMapping("/releases/update")
-    public ReleaseDto updateRelease(@RequestBody @Valid ReleaseUpdateRequest request) {
-        return releaseService.update(request);
+    public ReleaseDto updateRelease(@PathVariable String teamKey, @RequestBody @Valid ReleaseUpdateRequest request) {
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return releaseService.update(normalizedTeamKey, request);
     }
 
     @PostMapping("/releases/delete")
-    public ReleaseDto deleteRelease(@RequestBody @Valid IdRequest request) {
-        return releaseService.delete(request);
+    public ReleaseDto deleteRelease(@PathVariable String teamKey, @RequestBody @Valid IdRequest request) {
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return releaseService.delete(normalizedTeamKey, request);
     }
 }

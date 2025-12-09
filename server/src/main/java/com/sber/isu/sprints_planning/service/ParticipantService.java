@@ -25,30 +25,32 @@ public class ParticipantService {
         this.participantRepository = participantRepository;
     }
 
-    public List<ParticipantDto> findAll() {
-        return participantRepository.findAllByOrderByDisplayOrderAsc().stream()
+    public List<ParticipantDto> findAll(String teamKey) {
+        return participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey).stream()
             .map(DtoMapper::toParticipantDto)
             .toList();
     }
 
     @Transactional
-    public ParticipantDto create(ParticipantCreateRequest request) {
+    public ParticipantDto create(String teamKey, ParticipantCreateRequest request) {
         ParticipantEntity entity = new ParticipantEntity();
         entity.setFullName(request.fullName());
         entity.setRole(request.role());
         entity.setRate(BigDecimal.valueOf(request.rate()));
-        int nextOrder = participantRepository.findAll().stream()
+        int nextOrder = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey).stream()
             .map(ParticipantEntity::getDisplayOrder)
             .max(Comparator.naturalOrder())
             .orElse(0) + 1;
         entity.setDisplayOrder(nextOrder);
+        entity.setTeamKey(teamKey);
         ParticipantEntity saved = participantRepository.save(entity);
         return DtoMapper.toParticipantDto(saved);
     }
 
     @Transactional
-    public ParticipantDto update(ParticipantUpdateRequest request) {
-        ParticipantEntity entity = participantRepository.findById(UUID.fromString(request.id()))
+    public ParticipantDto update(String teamKey, ParticipantUpdateRequest request) {
+        ParticipantEntity entity = participantRepository
+            .findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
         if (request.fullName() != null) {
             entity.setFullName(request.fullName());
@@ -63,19 +65,19 @@ public class ParticipantService {
     }
 
     @Transactional
-    public ParticipantDto delete(IdRequest request) {
-        ParticipantEntity entity = participantRepository.findById(UUID.fromString(request.id()))
+    public ParticipantDto delete(String teamKey, IdRequest request) {
+        ParticipantEntity entity = participantRepository.findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
         participantRepository.delete(entity);
         return DtoMapper.toParticipantDto(entity);
     }
 
     @Transactional
-    public void reorder(ParticipantReorderRequest request) {
+    public void reorder(String teamKey, ParticipantReorderRequest request) {
         var orderMap = request.orders().stream()
             .collect(java.util.stream.Collectors.toMap(ParticipantReorderRequest.ParticipantOrderDto::id,
                 ParticipantReorderRequest.ParticipantOrderDto::order));
-        List<ParticipantEntity> entities = participantRepository.findAll();
+        List<ParticipantEntity> entities = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
         for (ParticipantEntity entity : entities) {
             Integer order = orderMap.get(entity.getId().toString());
             if (order != null) {
