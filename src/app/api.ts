@@ -160,8 +160,10 @@ const isActionMethod = (method: string) =>
 
 const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
   const hasWindow = typeof window !== "undefined";
-  const teamKey =
-    selectCurrentTeamKey(api.getState() as any) || getTeamFromLocation();
+  const teamKey: string =
+    selectCurrentTeamKey(api.getState() as any) ||
+    getTeamFromLocation() ||
+    DEFAULT_TEAM_KEY;
   const shouldSkipTeam = shouldSkipTeamPrefix(args);
   const finalArgs = shouldSkipTeam
     ? removeSkipTeamFlag(args)
