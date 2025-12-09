@@ -6,6 +6,7 @@ import com.sber.isu.sprints_planning.mapper.DtoMapper;
 import com.sber.isu.sprints_planning.model.ApiCallHistoryEntity;
 import com.sber.isu.sprints_planning.repository.ApiCallHistoryRepository;
 import com.sber.isu.sprints_planning.util.ApiActionDescriptionResolver;
+import com.sber.isu.sprints_planning.repository.TeamRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -24,11 +25,14 @@ public class ApiHistoryService {
 
     private final ApiCallHistoryRepository historyRepository;
     private final ApiActionDescriptionResolver actionDescriptionResolver;
+    private final TeamRepository teamRepository;
 
     public ApiHistoryService(ApiCallHistoryRepository historyRepository,
-        ApiActionDescriptionResolver actionDescriptionResolver) {
+        ApiActionDescriptionResolver actionDescriptionResolver,
+        TeamRepository teamRepository) {
         this.historyRepository = historyRepository;
         this.actionDescriptionResolver = actionDescriptionResolver;
+        this.teamRepository = teamRepository;
     }
 
     @Transactional
@@ -141,7 +145,11 @@ public class ApiHistoryService {
             }
 
             try {
-                return com.sber.isu.sprints_planning.util.TeamKeyNormalizer.normalize(segment);
+                String normalized = com.sber.isu.sprints_planning.util.TeamKeyNormalizer.normalize(segment);
+                if (teamRepository.existsById(normalized)) {
+                    return normalized;
+                }
+                return null;
             } catch (Exception ex) {
                 return null;
             }
