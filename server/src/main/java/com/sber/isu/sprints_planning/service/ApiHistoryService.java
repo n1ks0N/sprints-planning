@@ -8,6 +8,8 @@ import com.sber.isu.sprints_planning.repository.ApiCallHistoryRepository;
 import com.sber.isu.sprints_planning.util.ApiActionDescriptionResolver;
 import com.sber.isu.sprints_planning.repository.TeamRepository;
 import jakarta.servlet.http.HttpServletRequest;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -38,7 +40,7 @@ public class ApiHistoryService {
     @Transactional
     public void log(HttpServletRequest request, int statusCode) {
         String sessionId = request.getHeader("X-Session-Id");
-        String userName = request.getHeader("X-User-Name");
+        String userName = decodeUserName(request.getHeader("X-User-Name"));
         if (sessionId == null || sessionId.isBlank()) {
             return;
         }
@@ -98,6 +100,19 @@ public class ApiHistoryService {
         }
 
         return result;
+    }
+
+    private String decodeUserName(String rawHeader) {
+        if (rawHeader == null || rawHeader.isBlank()) {
+            return rawHeader;
+        }
+
+        try {
+            return URLDecoder.decode(rawHeader, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException ex) {
+            logger.warn("Failed to decode user name header", ex);
+            return rawHeader;
+        }
     }
 
     private ApiSessionHistoryDto toSessionDto(List<ApiCallHistoryEntity> entities) {
