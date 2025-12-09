@@ -1,6 +1,7 @@
 package com.sber.isu.sprints_planning.controller;
 
 import com.sber.isu.sprints_planning.service.ExportService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -22,7 +23,8 @@ public class ExportController {
 
     @GetMapping("/excel")
     public ResponseEntity<ByteArrayResource> exportExcel(@PathVariable String teamKey) {
-        byte[] bytes = exportService.exportToExcel(teamKey);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        byte[] bytes = exportService.exportToExcel(normalizedTeamKey);
         return ResponseEntity.ok()
             .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"sprints-planning.xlsx\"")
             .contentType(MediaType.parseMediaType(

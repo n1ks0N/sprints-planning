@@ -4,6 +4,7 @@ import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationBulkRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationRequest;
 import com.sber.isu.sprints_planning.service.TaskService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,12 +25,14 @@ public class TaskAllocationController {
     @PostMapping("/taskalloc")
     public TaskDto upsertAllocation(@PathVariable String teamKey,
         @RequestBody @Valid TaskAllocationRequest request) {
-        return taskService.upsertAllocation(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.upsertAllocation(normalizedTeamKey, request);
     }
 
     @PostMapping("/taskalloc/bulk")
     public TaskDto upsertAllocations(@PathVariable String teamKey,
         @RequestBody @Valid TaskAllocationBulkRequest request) {
-        return taskService.upsertAllocations(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.upsertAllocations(normalizedTeamKey, request);
     }
 }

@@ -5,6 +5,7 @@ import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.SprintCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.SprintUpdateRequest;
 import com.sber.isu.sprints_planning.service.SprintService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
@@ -29,21 +30,25 @@ public class SprintController {
     @GetMapping("/sprints")
     public List<SprintDto> getSprints(@PathVariable String teamKey,
         @RequestParam(value = "quarterId", required = false) String quarterId) {
-        return sprintService.findAll(teamKey, quarterId != null ? UUID.fromString(quarterId) : null);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return sprintService.findAll(normalizedTeamKey, quarterId != null ? UUID.fromString(quarterId) : null);
     }
 
     @PostMapping("/sprints")
     public SprintDto createSprint(@PathVariable String teamKey, @RequestBody @Valid SprintCreateRequest request) {
-        return sprintService.create(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return sprintService.create(normalizedTeamKey, request);
     }
 
     @PostMapping("/sprints/update")
     public SprintDto updateSprint(@PathVariable String teamKey, @RequestBody @Valid SprintUpdateRequest request) {
-        return sprintService.update(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return sprintService.update(normalizedTeamKey, request);
     }
 
     @PostMapping("/sprints/delete")
     public SprintDto deleteSprint(@PathVariable String teamKey, @RequestBody @Valid IdRequest request) {
-        return sprintService.delete(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return sprintService.delete(normalizedTeamKey, request);
     }
 }

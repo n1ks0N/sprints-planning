@@ -2,6 +2,7 @@ package com.sber.isu.sprints_planning.controller;
 
 import com.sber.isu.sprints_planning.dto.CapacityRowDto;
 import com.sber.isu.sprints_planning.service.CapacityService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +23,7 @@ public class CapacityController {
 
     @GetMapping("/capacity")
     public List<CapacityRowDto> getCapacity(@PathVariable String teamKey, @RequestParam("quarterId") String quarterId) {
-        return capacityService.calculate(teamKey, UUID.fromString(quarterId));
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return capacityService.calculate(normalizedTeamKey, UUID.fromString(quarterId));
     }
 }

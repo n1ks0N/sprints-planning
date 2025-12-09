@@ -5,6 +5,7 @@ import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
 import com.sber.isu.sprints_planning.service.TaskService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
@@ -29,22 +30,26 @@ public class TaskController {
     @GetMapping("/tasks")
     public List<TaskDto> getTasks(@PathVariable String teamKey,
         @RequestParam(value = "quarterId", required = false) String quarterId) {
-        return taskService.findAll(teamKey, quarterId != null ? UUID.fromString(quarterId) : null);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.findAll(normalizedTeamKey, quarterId != null ? UUID.fromString(quarterId) : null);
     }
 
     @PostMapping("/tasks")
     public TaskDto createTask(@PathVariable String teamKey, @RequestBody @Valid TaskCreateRequest request) {
-        return taskService.create(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.create(normalizedTeamKey, request);
     }
 
     @PostMapping("/tasks/update")
     public TaskDto updateTask(@PathVariable String teamKey, @RequestBody @Valid TaskUpdateRequest request) {
-        return taskService.update(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.update(normalizedTeamKey, request);
     }
 
     @PostMapping("/tasks/delete")
     public TaskDto deleteTask(@PathVariable String teamKey, @RequestBody @Valid IdRequest request) {
-        return taskService.delete(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.delete(normalizedTeamKey, request);
     }
 
 }

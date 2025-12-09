@@ -5,6 +5,7 @@ import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.QuarterCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.QuarterUpdateRequest;
 import com.sber.isu.sprints_planning.service.QuarterService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,21 +27,24 @@ public class QuarterController {
 
     @GetMapping("/quarters")
     public List<QuarterDto> getQuarters(@PathVariable String teamKey) {
-        return quarterService.findAll(teamKey);
+        return quarterService.findAll(TeamKeyNormalizer.normalize(teamKey));
     }
 
     @PostMapping("/quarters")
     public QuarterDto createQuarter(@PathVariable String teamKey, @RequestBody @Valid QuarterCreateRequest request) {
-        return quarterService.create(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return quarterService.create(normalizedTeamKey, request);
     }
 
     @PostMapping("/quarters/update")
     public QuarterDto updateQuarter(@PathVariable String teamKey, @RequestBody @Valid QuarterUpdateRequest request) {
-        return quarterService.update(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return quarterService.update(normalizedTeamKey, request);
     }
 
     @PostMapping("/quarters/delete")
     public QuarterDto deleteQuarter(@PathVariable String teamKey, @RequestBody @Valid IdRequest request) {
-        return quarterService.delete(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return quarterService.delete(normalizedTeamKey, request);
     }
 }

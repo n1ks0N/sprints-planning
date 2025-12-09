@@ -129,7 +129,7 @@ const getTeamFromLocation = (): string | null => {
 };
 
 const addTeamToUrl = (url: string, teamKey: string) => {
-  const normalizedTeam = teamKey || getTeamFromLocation() || DEFAULT_TEAM_KEY;
+  const normalizedTeam = (teamKey || getTeamFromLocation() || DEFAULT_TEAM_KEY).toLowerCase();
   const normalizedUrl = url.startsWith("/") ? url : `/${url}`;
   if (normalizedUrl.startsWith(`/${normalizedTeam}/`)) return normalizedUrl;
   return `/${normalizedTeam}${normalizedUrl}`;
@@ -161,9 +161,11 @@ const isActionMethod = (method: string) =>
 const baseQuery: BaseQueryFn = async (args, api, extraOptions) => {
   const hasWindow = typeof window !== "undefined";
   const teamKey: string =
-    selectCurrentTeamKey(api.getState() as any) ||
-    getTeamFromLocation() ||
-    DEFAULT_TEAM_KEY;
+    (
+      selectCurrentTeamKey(api.getState() as any) ||
+      getTeamFromLocation() ||
+      DEFAULT_TEAM_KEY
+    ).toLowerCase();
   const shouldSkipTeam = shouldSkipTeamPrefix(args);
   const finalArgs = shouldSkipTeam
     ? removeSkipTeamFlag(args)

@@ -4,6 +4,7 @@ import com.sber.isu.sprints_planning.dto.RunVacationDto;
 import com.sber.isu.sprints_planning.dto.request.RunVacationBulkRequest;
 import com.sber.isu.sprints_planning.dto.request.RunVacationUpsertRequest;
 import com.sber.isu.sprints_planning.service.RunVacationService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
@@ -28,19 +29,22 @@ public class RunVacationController {
 
     @GetMapping("/runvac")
     public List<RunVacationDto> getRunVacation(@PathVariable String teamKey, @RequestParam("quarterId") String quarterId) {
-        return runVacationService.findByQuarter(teamKey, UUID.fromString(quarterId));
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return runVacationService.findByQuarter(normalizedTeamKey, UUID.fromString(quarterId));
     }
 
     @PostMapping("/runvac")
     public RunVacationDto upsertRunVacation(@PathVariable String teamKey,
         @RequestBody @Valid RunVacationUpsertRequest request) {
-        return runVacationService.upsert(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return runVacationService.upsert(normalizedTeamKey, request);
     }
 
     @PostMapping("/runvac/bulk")
     public Map<String, Boolean> bulkRunVacation(@PathVariable String teamKey,
         @RequestBody @Valid RunVacationBulkRequest request) {
-        runVacationService.bulk(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        runVacationService.bulk(normalizedTeamKey, request);
         return Map.of("ok", Boolean.TRUE);
     }
 }

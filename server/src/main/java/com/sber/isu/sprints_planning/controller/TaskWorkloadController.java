@@ -3,6 +3,7 @@ package com.sber.isu.sprints_planning.controller;
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.request.TaskLoadRequest;
 import com.sber.isu.sprints_planning.service.TaskService;
+import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,6 +23,7 @@ public class TaskWorkloadController {
 
     @PostMapping("/taskload")
     public TaskDto upsertLoad(@PathVariable String teamKey, @RequestBody @Valid TaskLoadRequest request) {
-        return taskService.upsertLoad(teamKey, request);
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.upsertLoad(normalizedTeamKey, request);
     }
 }
