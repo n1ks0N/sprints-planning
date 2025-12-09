@@ -108,7 +108,7 @@ const rawBaseQuery: BaseQueryFn = fetchBaseQuery({
     const sessionId = ensureSessionId();
     const userName = getStoredUserName();
     if (sessionId) headers.set("X-Session-Id", sessionId);
-    if (userName) headers.set("X-User-Name", userName);
+    if (userName) headers.set("X-User-Name", encodeURIComponent(userName));
     return headers;
   },
 }) as BaseQueryFn;
