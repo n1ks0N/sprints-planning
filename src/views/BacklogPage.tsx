@@ -1847,11 +1847,6 @@ export default function BacklogPage() {
       delete copy[t.id];
       return copy;
     });
-    setStatusMap((prev) => {
-      const copy = { ...prev };
-      delete copy[t.id];
-      return copy;
-    });
   };
 
   const commitCell = async (
