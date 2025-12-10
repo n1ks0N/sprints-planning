@@ -28,14 +28,14 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -59,16 +59,16 @@ public class TaskService {
         this.sprintRepository = sprintRepository;
     }
 
-    public List<TaskDto> findAll(String teamKey, UUID quarterId) {
-        List<TaskEntity> tasks;
-        if (quarterId != null) {
-            tasks = taskRepository.findByQuarterWithLoad(quarterId, teamKey);
-        } else {
-            tasks = taskRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
-        }
+    public List<TaskDto> findAll(String teamKey, TaskFilter filter) {
+        TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
+        List<TaskEntity> tasks = taskRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
+        Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
         tasks.forEach(task -> ensureLoadsForSprints(task, sprints));
-        return tasks.stream().map(DtoMapper::toTaskDto).toList();
+        return tasks.stream()
+            .filter(task -> matchesFilters(task, effectiveFilter, sprintIndex))
+            .map(DtoMapper::toTaskDto)
+            .toList();
     }
 
     @Transactional
@@ -397,6 +397,58 @@ public class TaskService {
                 existing.add(sprint.getId());
             }
         }
+    }
+
+    private boolean matchesFilters(TaskEntity task, TaskFilter filter, Map<UUID, SprintEntity> sprintIndex) {
+        if (!filter.priorities().isEmpty() && !filter.priorities().contains(task.getPriority())) {
+            return false;
+        }
+
+        if (filter.releaseDate() != null) {
+            LocalDate releaseDate = task.getReleaseDate();
+            if (releaseDate == null || !filter.releaseDate().equals(releaseDate)) {
+                return false;
+            }
+        }
+
+        if (filter.stream() != null) {
+            String taskStream = task.getStream() == null ? "" : task.getStream().toLowerCase();
+            if (!taskStream.contains(filter.stream())) {
+                return false;
+            }
+        }
+
+        if (!filter.quarterIds().isEmpty()) {
+            Set<UUID> quarters = deriveTaskQuarters(task, sprintIndex);
+            if (!quarters.isEmpty() && quarters.stream().noneMatch(filter.quarterIds()::contains)) {
+                return false;
+            }
+        }
+
+        if (!filter.statuses().isEmpty()) {
+            // Статусы хранятся только на клиенте, поэтому фильтр применяется на клиентской стороне
+            return true;
+        }
+
+        return true;
+    }
+
+    private Set<UUID> deriveTaskQuarters(TaskEntity task, Map<UUID, SprintEntity> sprintIndex) {
+        Set<UUID> quarters = new LinkedHashSet<>();
+
+        for (TaskAllocationEntity allocation : task.getAllocations()) {
+            SprintEntity sprint = resolveSprint(sprintIndex, allocation.getSprint().getId());
+            quarters.add(sprint.getQuarter().getId());
+        }
+
+        for (TaskLoadEntity load : task.getLoads()) {
+            if (load.getDays() != null && load.getDays().compareTo(BigDecimal.ZERO) > 0) {
+                SprintEntity sprint = resolveSprint(sprintIndex, load.getSprint().getId());
+                quarters.add(sprint.getQuarter().getId());
+            }
+        }
+
+        return quarters;
     }
 
     private void recalcLoad(TaskEntity task, SprintEntity sprint) {

@@ -694,13 +694,46 @@ export const api = createApi({
     }),
 
     // ---- Backlog ----
-    getTasks: b.query<BacklogItem[], { quarterId?: string } | void>({
-      query: (arg) =>
-        ({
+    getTasks: b.query<
+      BacklogItem[],
+      | void
+      | {
+          quarterIds?: string[];
+          priority?: number[];
+          statuses?: string[];
+          releaseDate?: string;
+          stream?: string;
+        }
+    >({
+      query: (arg) => {
+        const params: Record<string, string> = {};
+
+        const joinOrUndefined = (values?: string[] | number[]) => {
+          if (!values || values.length === 0) return undefined;
+          return values.join(",");
+        };
+
+        const quarters = joinOrUndefined(arg?.quarterIds);
+        if (quarters) params.quarterId = quarters;
+
+        const priorities = joinOrUndefined(arg?.priority);
+        if (priorities) params.priority = priorities;
+
+        const statuses = joinOrUndefined(arg?.statuses);
+        if (statuses) params.status = statuses;
+
+        const releaseDate = (arg?.releaseDate || "").trim();
+        if (releaseDate) params.releaseDate = releaseDate;
+
+        const stream = (arg?.stream || "").trim();
+        if (stream) params.stream = stream;
+
+        return {
           url: "/tasks",
           method: "GET",
-          params: arg?.quarterId ? { quarterId: arg.quarterId } : undefined,
-        }),
+          params: Object.keys(params).length ? params : undefined,
+        };
+      },
       providesTags: (result) =>
         result
           ? [
