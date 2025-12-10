@@ -144,9 +144,6 @@ function TeamScopedApp() {
             <Button component={Link} to={buildPath("/history")}>
               История
             </Button>
-            <Button component={Link} to="/teams">
-              Команды
-            </Button>
             <Tooltip title="Экспортировать план в Excel">
               <span>
                 <Button
@@ -163,13 +160,6 @@ function TeamScopedApp() {
               </span>
             </Tooltip>
           </Stack>
-          <Box sx={{ ml: { xs: 0, sm: 2 }, mt: { xs: 1, sm: 0 } }}>
-            <TeamSwitcher
-              teams={teams}
-              value={teamKey}
-              onChange={navigateToTeam}
-            />
-          </Box>
         </Toolbar>
       </AppBar>
 
@@ -179,7 +169,10 @@ function TeamScopedApp() {
           <Route path="team" element={<TeamPage />} />
           <Route path="capacity" element={<CapacityPage />} />
           <Route path="/" element={<BacklogPage />} />
-          <Route path="participant-work" element={<ParticipantWorkloadPage />} />
+          <Route
+            path="participant-work"
+            element={<ParticipantWorkloadPage />}
+          />
           <Route path="releases" element={<ReleasesPage />} />
           <Route path="history" element={<HistoryPage />} />
         </Routes>
@@ -196,7 +189,9 @@ export default function App() {
   React.useEffect(() => {
     if (teams) {
       dispatch(
-        setAvailableTeams(teams.map((team) => ({ key: team.key, label: team.name })))
+        setAvailableTeams(
+          teams.map((team) => ({ key: team.key, label: team.name }))
+        )
       );
     }
   }, [dispatch, teams]);
