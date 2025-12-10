@@ -34,12 +34,14 @@ export type CapacityCell = {
   runDays: number;
   vacationNormDays: number;
   availableDays: number;
+  workloadDays: number;
 };
 
 export type CapacityRow = {
   participant: Participant;
   cells: CapacityCell[];
   totalQuarterAvailable: number;
+  totalQuarterWorkload: number;
 };
 
 export type TaskPriority = 1 | 2 | 3;

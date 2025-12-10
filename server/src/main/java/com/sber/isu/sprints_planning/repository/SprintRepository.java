@@ -17,6 +17,17 @@ public interface SprintRepository extends JpaRepository<SprintEntity, UUID> {
     @Query("select s from SprintEntity s join s.quarter q where s.teamKey = :teamKey order by q.startDate asc, s.order asc")
     List<SprintEntity> findByTeamKeyOrderByQuarterAndOrder(@Param("teamKey") String teamKey);
 
+    @Query("""
+        select s from SprintEntity s
+        join s.quarter q
+        where s.teamKey = :teamKey and q.id in :quarterIds
+        order by q.startDate asc, s.order asc
+        """)
+    List<SprintEntity> findByTeamKeyAndQuarterIdsOrderByQuarterAndOrder(
+        @Param("teamKey") String teamKey,
+        @Param("quarterIds") Iterable<UUID> quarterIds
+    );
+
     @Query("select s from SprintEntity s where s.id = :id and s.teamKey = :teamKey")
     Optional<SprintEntity> findByIdAndTeamKey(@Param("id") UUID id, @Param("teamKey") String teamKey);
 

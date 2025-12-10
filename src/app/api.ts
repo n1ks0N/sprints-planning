@@ -684,13 +684,18 @@ export const api = createApi({
     }),
 
     // ---- Capacity ----
-    getCapacity: b.query<CapacityRow[], { quarterId: string }>({
-      query: ({ quarterId }) =>
-        ({ url: "/capacity", method: "GET", params: { quarterId } }),
-      providesTags: (result, error, arg) => [
-        { type: "Capacity" as const, id: "LIST" as const },
-        { type: "Capacity" as const, id: arg.quarterId },
-      ],
+    getCapacity: b.query<CapacityRow[], { quarterIds?: string[] } | void>({
+      query: (arg) => {
+        const quarterIds = arg?.quarterIds?.length ? arg.quarterIds.join(",") : undefined;
+        return { url: "/capacity", method: "GET", params: { quarterId: quarterIds } };
+      },
+      providesTags: (result, error, arg) => {
+        const ids = arg?.quarterIds?.length ? arg.quarterIds.slice().sort().join(",") : "all";
+        return [
+          { type: "Capacity" as const, id: "LIST" as const },
+          { type: "Capacity" as const, id: ids },
+        ];
+      },
     }),
 
     // ---- Backlog ----

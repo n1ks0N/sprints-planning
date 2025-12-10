@@ -18,17 +18,14 @@ import "moment/locale/ru";
 import {
   useGetQuartersQuery,
   useGetSprintsQuery,
-  useGetParticipantsQuery,
-  useGetTasksQuery,
+  useGetCapacityQuery,
 } from "../app/api";
-import type { Participant, Quarter, Sprint, BacklogItem } from "../types";
+import type { Participant, Quarter, Sprint, CapacityCell } from "../types";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import { setCapacitySelectedQuarterIds } from "../app/uiSlice";
 
 moment.locale("ru");
-
-const NORM = 0.75;
 
 const ruDate = (iso: string) =>
   moment(iso, "YYYY-MM-DD", true).format("DD.MM.YYYY");
@@ -53,29 +50,6 @@ function collectSprintIds(
   return allSprints
     .filter((s) => idSet.has(s.quarterId))
     .sort((a, b) => a.endDate.localeCompare(b.endDate));
-}
-
-function buildWorkloadByParticipantSprint(
-  tasks: BacklogItem[],
-  sprintIds: string[]
-) {
-  const sset = new Set(sprintIds);
-  const map = new Map<string, number>(); // key = participantId|sprintId
-  for (const t of tasks) {
-    if (t.allocations) {
-      for (const [pid, perSprint] of Object.entries(t.allocations)) {
-        for (const [sid, days] of Object.entries(perSprint)) {
-          if (!sset.has(sid)) continue;
-          const key = `${pid}|${sid}`;
-          map.set(key, (map.get(key) || 0) + (Number(days) || 0));
-        }
-      }
-    } else if (t.loads) {
-      // Если нет распределения по участникам — не учитываем при раскраске
-      continue;
-    }
-  }
-  return map;
 }
 
 /**
@@ -107,12 +81,18 @@ function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
 export default function CapacityPage() {
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: sprints = [] } = useGetSprintsQuery(undefined);
-  const { data: participants = [] } = useGetParticipantsQuery();
-  const { data: tasks = [] } = useGetTasksQuery(undefined);
-
   const dispatch = useAppDispatch();
   const selectedQuarterIds = useAppSelector(
     (state) => state.ui.capacity.selectedQuarterIds
+  );
+
+  const { data: capacityRows = [] } = useGetCapacityQuery({
+    quarterIds: selectedQuarterIds.length ? selectedQuarterIds : undefined,
+  });
+
+  const participants = React.useMemo(
+    () => capacityRows.map((row) => row.participant),
+    [capacityRows]
   );
 
   React.useEffect(() => {
@@ -137,16 +117,16 @@ export default function CapacityPage() {
     return collectSprintIds(selectedQuarterIds, sprints);
   }, [selectedQuarterIds, sprints]);
 
-  const workloadMap = React.useMemo(() => {
-    const sprintIds = displaySprints.map((s) => s.id);
-    return buildWorkloadByParticipantSprint(tasks, sprintIds);
-  }, [tasks, displaySprints]);
-
-  const sprintIndex = React.useMemo(() => {
-    const m = new Map<string, number>();
-    displaySprints.forEach((s, idx) => m.set(s.id, idx));
-    return m;
-  }, [displaySprints]);
+  const cellMap = React.useMemo(() => {
+    const map = new Map<string, CapacityCell>();
+    capacityRows.forEach((row) => {
+      row.cells.forEach((cell) => {
+        const key = `${row.participant.id}|${cell.sprintId}`;
+        map.set(key, cell);
+      });
+    });
+    return map;
+  }, [capacityRows]);
 
   const quarterFilterOptions = React.useMemo(() => {
     return quarters
@@ -170,23 +150,24 @@ export default function CapacityPage() {
     [quarters, dispatch, selectedQuarterIds]
   );
 
-  const getAvailable = (p: Participant, s: Sprint) =>
-    s.workingDays * p.rate * NORM;
-
-  const getWorkload = (pid: string, sid: string) =>
-    workloadMap.get(`${pid}|${sid}`) || 0;
+  const getCell = React.useCallback(
+    (pid: string, sid: string) => cellMap.get(`${pid}|${sid}`),
+    [cellMap]
+  );
 
   const rowTotals = React.useCallback(
     (p: Participant) => {
       let sumWork = 0;
       let sumAvail = 0;
       for (const s of displaySprints) {
-        sumWork += getWorkload(p.id, s.id);
-        sumAvail += getAvailable(p, s);
+        const cell = getCell(p.id, s.id);
+        if (!cell) continue;
+        sumWork += cell.workloadDays || 0;
+        sumAvail += cell.availableDays || 0;
       }
       return { sumWork: round1(sumWork), sumAvail: round1(sumAvail) };
     },
-    [displaySprints, getWorkload]
+    [displaySprints, getCell]
   );
 
   return (
@@ -269,19 +250,20 @@ export default function CapacityPage() {
                         {p.fullName}
                       </Typography>
                     </Box>
-                  </TableCell>
+                </TableCell>
 
-                  {displaySprints.map((s) => {
-                    const availRaw = getAvailable(p, s);
-                    const workRaw = getWorkload(p.id, s.id);
-                    const avail = round1(availRaw);
-                    const work = round1(workRaw);
-                    const bg = cellColor(workRaw, availRaw);
+                {displaySprints.map((s) => {
+                  const cell = getCell(p.id, s.id);
+                  const availRaw = cell?.availableDays ?? 0;
+                  const workRaw = cell?.workloadDays ?? 0;
+                  const avail = round1(availRaw);
+                  const work = round1(workRaw);
+                  const bg = cellColor(workRaw, availRaw);
 
-                    return (
-                      <TableCell
-                        key={`${p.id}-${s.id}`}
-                        align="center"
+                  return (
+                    <TableCell
+                      key={`${p.id}-${s.id}`}
+                      align="center"
                         sx={{ backgroundColor: bg }}
                         title={`Нагрузка: ${work.toFixed(1)} дн • Доступно: ${o(
                           avail

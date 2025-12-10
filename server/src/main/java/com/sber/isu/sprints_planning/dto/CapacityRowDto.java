@@ -5,6 +5,7 @@ import java.util.List;
 public record CapacityRowDto(
     ParticipantDto participant,
     List<CapacityCellDto> cells,
-    int totalQuarterAvailable
+    int totalQuarterAvailable,
+    double totalQuarterWorkload
 ) {
 }
