@@ -47,10 +47,12 @@ public class CapacityService {
         Map<String, Map<String, Double>> workloadByParticipantAndSprint = aggregateWorkload(teamKey, sprints);
 
         double normFactor = capacityProperties.normFactor();
+        double roundedNormFactor = roundToOneDecimal(normFactor);
         List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
         List<CapacityRowDto> rows = new ArrayList<>();
         for (ParticipantEntity participant : participants) {
             double participantRate = participant.getRate() != null ? participant.getRate().doubleValue() : 0.0;
+            double roundedParticipantRate = roundToOneDecimal(participantRate);
             List<CapacityCellDto> cells = new ArrayList<>();
             int total = 0;
             double totalWorkload = 0.0;
@@ -62,34 +64,39 @@ public class CapacityService {
                 double workload = workloadByParticipantAndSprint
                     .getOrDefault(participant.getId().toString(), Collections.emptyMap())
                     .getOrDefault(sprint.getId().toString(), 0.0);
+                double roundedWorkload = roundToOneDecimal(workload);
                 cells.add(new CapacityCellDto(
                     participant.getId().toString(),
                     sprint.getId().toString(),
                     sprint.getWorkingDays(),
-                    participantRate,
-                    normFactor,
+                    roundedParticipantRate,
+                    roundedNormFactor,
                     baseCapacity,
                     runDays,
                     vacationDays,
                     available,
-                    workload
+                    roundedWorkload
                 ));
                 total += available;
-                totalWorkload += workload;
+                totalWorkload += roundedWorkload;
             }
             rows.add(new CapacityRowDto(
                 new ParticipantDto(
                     participant.getId().toString(),
                     participant.getFullName(),
                     participant.getRole(),
-                    participantRate
+                    roundedParticipantRate
                 ),
                 cells,
                 total,
-                totalWorkload
+                roundToOneDecimal(totalWorkload)
             ));
         }
         return rows;
+    }
+
+    private double roundToOneDecimal(double value) {
+        return Math.round(value * 10.0) / 10.0;
     }
 
     private Map<String, Map<String, Double>> aggregateWorkload(String teamKey, List<SprintEntity> sprints) {
