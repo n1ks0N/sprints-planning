@@ -64,7 +64,10 @@ public class TaskService {
         List<TaskEntity> tasks = taskRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
-        tasks.forEach(task -> ensureLoadsForSprints(task, sprints));
+        tasks.forEach(task -> {
+            task.setStatus(normalizeStatus(task.getStatus()));
+            ensureLoadsForSprints(task, sprints);
+        });
         return tasks.stream()
             .filter(task -> matchesFilters(task, effectiveFilter, sprintIndex))
             .map(DtoMapper::toTaskDto)
@@ -79,6 +82,7 @@ public class TaskService {
         entity.setDescription(request.description() != null ? request.description() : "");
         entity.setDod(request.dod() != null ? request.dod() : "");
         entity.setPriority(request.priority() != null ? request.priority() : (short) 2);
+        entity.setStatus(normalizeStatus(request.status()));
         entity.setCustomer(request.customer() != null ? request.customer() : "");
         entity.setStream(request.stream() != null ? request.stream() : "");
         entity.setCreatedAt(LocalDate.now());
@@ -122,6 +126,9 @@ public class TaskService {
         }
         if (request.priority() != null) {
             entity.setPriority(request.priority());
+        }
+        if (request.status() != null) {
+            entity.setStatus(normalizeStatus(request.status()));
         }
         if (request.customer() != null) {
             entity.setCustomer(request.customer());
@@ -426,11 +433,20 @@ public class TaskService {
         }
 
         if (!filter.statuses().isEmpty()) {
-            // Статусы хранятся только на клиенте, поэтому фильтр применяется на клиентской стороне
-            return true;
+            String taskStatus = normalizeStatus(task.getStatus());
+            if (!filter.statuses().contains(taskStatus)) {
+                return false;
+            }
         }
 
         return true;
+    }
+
+    private String normalizeStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return "inprogress";
+        }
+        return status.trim().toLowerCase();
     }
 
     private Set<UUID> deriveTaskQuarters(TaskEntity task, Map<UUID, SprintEntity> sprintIndex) {

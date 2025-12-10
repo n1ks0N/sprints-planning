@@ -10,6 +10,7 @@ public record TaskCreateRequest(
     String description,
     String dod,
     Short priority,
+    String status,
     String customer,
     String stream,
     List<String> participantIds,

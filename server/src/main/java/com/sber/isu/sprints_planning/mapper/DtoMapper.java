@@ -87,6 +87,7 @@ public final class DtoMapper {
             entity.getDescription(),
             entity.getDod(),
             entity.getPriority(),
+            entity.getStatus(),
             entity.getCustomer(),
             entity.getStream(),
             participantIds,

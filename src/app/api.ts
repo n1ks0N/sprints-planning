@@ -684,13 +684,18 @@ export const api = createApi({
     }),
 
     // ---- Capacity ----
-    getCapacity: b.query<CapacityRow[], { quarterId: string }>({
-      query: ({ quarterId }) =>
-        ({ url: "/capacity", method: "GET", params: { quarterId } }),
-      providesTags: (result, error, arg) => [
-        { type: "Capacity" as const, id: "LIST" as const },
-        { type: "Capacity" as const, id: arg.quarterId },
-      ],
+    getCapacity: b.query<CapacityRow[], { quarterIds?: string[] } | void>({
+      query: (arg) => {
+        const quarterIds = arg?.quarterIds?.length ? arg.quarterIds.join(",") : undefined;
+        return { url: "/capacity", method: "GET", params: { quarterId: quarterIds } };
+      },
+      providesTags: (result, error, arg) => {
+        const ids = arg?.quarterIds?.length ? arg.quarterIds.slice().sort().join(",") : "all";
+        return [
+          { type: "Capacity" as const, id: "LIST" as const },
+          { type: "Capacity" as const, id: ids },
+        ];
+      },
     }),
 
     // ---- Backlog ----
@@ -747,6 +752,7 @@ export const api = createApi({
       invalidatesTags: (result) => [
         listTag("Task"),
         ...(result ? [entityTag("Task", result.id)] : []),
+        listTag("Capacity"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         const now = new Date().toISOString().slice(0, 10);
@@ -756,6 +762,7 @@ export const api = createApi({
           description: arg.description ?? "",
           dod: arg.dod ?? "",
           priority: (arg.priority as BacklogItem["priority"]) ?? 2,
+          status: (arg.status as BacklogItem["status"]) ?? "inprogress",
           customer: arg.customer ?? "",
           stream: arg.stream ?? "",
           participantIds: Array.isArray(arg.participantIds)
@@ -806,6 +813,7 @@ export const api = createApi({
         invalidatesTags: (result, error, arg) => [
           { type: "Task" as const, id: arg.id },
           { type: "Task" as const, id: "LIST" as const },
+          { type: "Capacity" as const, id: "LIST" as const },
         ],
         async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
           const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
@@ -845,6 +853,7 @@ export const api = createApi({
       invalidatesTags: (result, error, arg) => [
         { type: "Task" as const, id: arg.id },
         { type: "Task" as const, id: "LIST" as const },
+        { type: "Capacity" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
@@ -884,6 +893,7 @@ export const api = createApi({
       invalidatesTags: (result, error, arg) => [
         { type: "Task" as const, id: arg.taskId },
         { type: "Task" as const, id: "LIST" as const },
+        { type: "Capacity" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
@@ -932,6 +942,7 @@ export const api = createApi({
       invalidatesTags: (result, error, arg) => [
         { type: "Task" as const, id: arg.taskId },
         { type: "Task" as const, id: "LIST" as const },
+        { type: "Capacity" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
@@ -975,6 +986,7 @@ export const api = createApi({
       invalidatesTags: (result, error, arg) => [
         { type: "Task" as const, id: arg.taskId },
         { type: "Task" as const, id: "LIST" as const },
+        { type: "Capacity" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(

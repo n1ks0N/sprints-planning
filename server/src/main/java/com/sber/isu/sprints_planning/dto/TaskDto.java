@@ -10,6 +10,7 @@ public record TaskDto(
     String description,
     String dod,
     short priority,
+    String status,
     String customer,
     String stream,
     List<String> participantIds,
