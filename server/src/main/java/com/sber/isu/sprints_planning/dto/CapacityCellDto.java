@@ -6,10 +6,10 @@ public record CapacityCellDto(
     int workingDays,
     double rate,
     double normFactor,
-    int baseCapacity,
+    double baseCapacity,
     int runDays,
     int vacationNormDays,
-    int availableDays,
+    double availableDays,
     double workloadDays
 ) {
 }

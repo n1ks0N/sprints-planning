@@ -54,13 +54,13 @@ public class CapacityService {
             double participantRate = participant.getRate() != null ? participant.getRate().doubleValue() : 0.0;
             double roundedParticipantRate = roundToOneDecimal(participantRate);
             List<CapacityCellDto> cells = new ArrayList<>();
-            int total = 0;
+            double totalAvailable = 0.0;
             double totalWorkload = 0.0;
             for (SprintEntity sprint : sprints) {
                 int runDays = 0;
                 int vacationDays = 0;
-                int baseCapacity = (int) Math.round(sprint.getWorkingDays() * participantRate * normFactor);
-                int available = Math.max(0, baseCapacity - runDays - vacationDays);
+                double baseCapacity = roundToOneDecimal(sprint.getWorkingDays() * participantRate * normFactor);
+                double available = roundToOneDecimal(Math.max(0, baseCapacity - runDays - vacationDays));
                 double workload = workloadByParticipantAndSprint
                     .getOrDefault(participant.getId().toString(), Collections.emptyMap())
                     .getOrDefault(sprint.getId().toString(), 0.0);
@@ -77,7 +77,7 @@ public class CapacityService {
                     available,
                     roundedWorkload
                 ));
-                total += available;
+                totalAvailable += available;
                 totalWorkload += roundedWorkload;
             }
             rows.add(new CapacityRowDto(
@@ -88,7 +88,7 @@ public class CapacityService {
                     roundedParticipantRate
                 ),
                 cells,
-                total,
+                roundToOneDecimal(totalAvailable),
                 roundToOneDecimal(totalWorkload)
             ));
         }
