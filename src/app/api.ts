@@ -756,6 +756,7 @@ export const api = createApi({
           description: arg.description ?? "",
           dod: arg.dod ?? "",
           priority: (arg.priority as BacklogItem["priority"]) ?? 2,
+          status: (arg.status as BacklogItem["status"]) ?? "inprogress",
           customer: arg.customer ?? "",
           stream: arg.stream ?? "",
           participantIds: Array.isArray(arg.participantIds)

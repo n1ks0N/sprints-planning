@@ -26,6 +26,7 @@ import org.hibernate.type.SqlTypes;
 public class TaskEntity {
 
     private static final String DEFAULT_TEAM_KEY = "customlab";
+    private static final String DEFAULT_STATUS = "inprogress";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -43,6 +44,9 @@ public class TaskEntity {
 
     @Column(nullable = false)
     private short priority;
+
+    @Column(nullable = false)
+    private String status;
 
     @Column(nullable = false)
     private String customer;
@@ -124,6 +128,14 @@ public class TaskEntity {
 
     public void setPriority(short priority) {
         this.priority = priority;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
     }
 
     public String getCustomer() {
@@ -234,6 +246,9 @@ public class TaskEntity {
     public void onCreate() {
         if (teamKey == null) {
             teamKey = DEFAULT_TEAM_KEY;
+        }
+        if (status == null) {
+            status = DEFAULT_STATUS;
         }
     }
 }

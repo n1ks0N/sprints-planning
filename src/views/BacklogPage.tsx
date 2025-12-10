@@ -327,7 +327,6 @@ function EditableNumberCell({
 
 // ---------- LocalStorage ----------
 
-const LS_STATUS = "backlog.statusMap";
 const LS_TASK_QUARTERS = "backlog.quartersMap";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
@@ -350,8 +349,6 @@ const STATUS_COLOR: Record<
 };
 
 const PRIORITY_VALUES: readonly number[] = [1, 2, 3];
-
-type StatusMap = Record<string, TaskStatus>;
 
 type DragHandleProps = {
   listeners: any;
@@ -431,9 +428,8 @@ type TaskCardProps = {
   customerOptions: string[];
   streamOptions: string[];
   releaseOptions: { value: string; label: string }[];
-  status: TaskStatus;
   participantSensors: any;
-  onStatusChange: (taskId: string, status: TaskStatus) => void;
+  onStatusChange: (task: BacklogItem, status: TaskStatus) => void;
   onPriorityChange: (task: BacklogItem, priority: TaskPriority) => void;
   onUpdateTaskPatch: (task: BacklogItem, patch: Partial<BacklogItem>) => void;
   onDuplicateTask: (task: BacklogItem) => void;
@@ -511,7 +507,6 @@ const TaskCard = React.memo(function TaskCard({
   customerOptions,
   streamOptions,
   releaseOptions,
-  status,
   participantSensors,
   onStatusChange,
   onPriorityChange,
@@ -531,6 +526,7 @@ const TaskCard = React.memo(function TaskCard({
   dragHandle,
 }: TaskCardProps) {
   const rows = allocationsByParticipant || {};
+  const taskStatus = task.status ?? "inprogress";
   const taskQuarterIds = getTaskQuarters(task);
 
   const allowedSprints = React.useMemo(
@@ -747,9 +743,9 @@ const TaskCard = React.memo(function TaskCard({
             select
             size="small"
             label="Статус"
-            value={status}
+            value={taskStatus}
             onChange={(e) =>
-              onStatusChange(task.id, e.target.value as TaskStatus)
+              onStatusChange(task, e.target.value as TaskStatus)
             }
             sx={{ minWidth: 180 }}
             SelectProps={{
@@ -1380,10 +1376,15 @@ export default function BacklogPage() {
     ]
   );
 
-  const { data: allTasks = [], isFetching } = useGetTasksQuery(tasksQueryArgs);
+  const { data: fetchedTasks = [], isFetching } = useGetTasksQuery(tasksQueryArgs);
 
-  const [statusMap, setStatusMap] = React.useState<StatusMap>(() =>
-    readLS<StatusMap>(LS_STATUS, {})
+  const allTasks = React.useMemo(
+    () =>
+      fetchedTasks.map((task) => ({
+        ...task,
+        status: (task.status as TaskStatus | undefined) ?? "inprogress",
+      })),
+    [fetchedTasks]
   );
   const [taskQuartersMap, setTaskQuartersMap] = React.useState<
     Record<string, string[]>
@@ -1505,7 +1506,6 @@ export default function BacklogPage() {
     });
   }, [allTasks]);
 
-  React.useEffect(() => writeLS(LS_STATUS, statusMap), [statusMap]);
   React.useEffect(
     () => writeLS(LS_TASK_QUARTERS, taskQuartersMap),
     [taskQuartersMap]
@@ -1641,15 +1641,12 @@ export default function BacklogPage() {
     [dispatch, releaseSprintFilter]
   );
 
-  const getStatusForTask = (taskId: string): TaskStatus =>
-    statusMap[taskId] || "inprogress";
-
   const filteredTasks = React.useMemo(() => {
     const byStatus =
       statusFilter.length === 0
         ? allTasks
         : allTasks.filter((t) => {
-            const st = getStatusForTask(t.id);
+            const st = t.status ?? "inprogress";
             return statusFilter.includes(st);
           });
 
@@ -1661,7 +1658,7 @@ export default function BacklogPage() {
     });
 
     return withOrder;
-  }, [allTasks, statusFilter, getStatusForTask]);
+  }, [allTasks, statusFilter]);
 
   const isUiPending = isQuarterPending;
 
@@ -1672,13 +1669,15 @@ export default function BacklogPage() {
   const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
 
   const handleStatusChange = React.useCallback(
-    (taskId: string, st: TaskStatus) => {
-      setStatusMap((prev) => {
-        if (prev[taskId] === st) return prev;
-        return { ...prev, [taskId]: st };
-      });
+    (task: BacklogItem, st: TaskStatus) => {
+      if ((task.status ?? "inprogress") === st) return;
+      updateTask({ id: task.id, status: st })
+        .unwrap()
+        .catch((e) => {
+          console.error("Failed to update status", e);
+        });
     },
-    []
+    [updateTask]
   );
 
   const handlePriorityChange = React.useCallback(
@@ -1755,6 +1754,7 @@ export default function BacklogPage() {
       description: "",
       dod: "",
       priority: 1 as TaskPriority,
+      status: "inprogress" as TaskStatus,
       customer: "",
       stream: "",
       participantIds: [],
@@ -1789,6 +1789,7 @@ export default function BacklogPage() {
       description: (task as any).description,
       dod: task.dod,
       priority: task.priority,
+      status: task.status ?? "inprogress",
       customer: task.customer,
       stream: task.stream,
       participantIds: task.participantIds.slice(),
@@ -2300,7 +2301,6 @@ export default function BacklogPage() {
                         customerOptions={customerOptions}
                         streamOptions={streamOptions}
                         releaseOptions={releaseFilterOptions}
-                        status={getStatusForTask(t.id)}
                         participantSensors={participantSensors}
                         onStatusChange={handleStatusChange}
                         onPriorityChange={handlePriorityChange}

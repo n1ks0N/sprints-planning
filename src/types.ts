@@ -57,6 +57,7 @@ export type BacklogItem = {
   description: string;
   dod: string;
   priority: TaskPriority;
+  status: TaskStatus;
   customer: string;
   stream: string;
   participantIds: string[];
