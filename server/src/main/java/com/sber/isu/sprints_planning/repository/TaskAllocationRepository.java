@@ -17,7 +17,8 @@ public interface TaskAllocationRepository extends JpaRepository<TaskAllocationEn
     @Query("""
         select ta.participant.id as participantId, ta.sprint.id as sprintId, sum(ta.days) as totalDays
         from TaskAllocationEntity ta
-        where ta.teamKey = :teamKey and ta.sprint.id in :sprintIds
+        join ta.task t
+        where ta.teamKey = :teamKey and ta.sprint.id in :sprintIds and t.priority in (1, 2)
         group by ta.participant.id, ta.sprint.id
         """)
     List<WorkloadAggregation> aggregateWorkloadByParticipantAndSprint(
