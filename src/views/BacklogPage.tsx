@@ -1362,7 +1362,25 @@ export default function BacklogPage() {
     [dispatch]
   );
 
-  const { data: allTasks = [], isFetching } = useGetTasksQuery(undefined);
+  const tasksQueryArgs = React.useMemo(
+    () => ({
+      quarterIds: selectedQuarterIds,
+      priority: priorityFilter,
+      statuses: statusFilter,
+      releaseDate:
+        releaseSprintFilter === "all" ? undefined : releaseSprintFilter.trim(),
+      stream: streamFilter.trim(),
+    }),
+    [
+      selectedQuarterIds,
+      priorityFilter,
+      statusFilter,
+      releaseSprintFilter,
+      streamFilter,
+    ]
+  );
+
+  const { data: allTasks = [], isFetching } = useGetTasksQuery(tasksQueryArgs);
 
   const [statusMap, setStatusMap] = React.useState<StatusMap>(() =>
     readLS<StatusMap>(LS_STATUS, {})
@@ -1627,38 +1645,10 @@ export default function BacklogPage() {
     statusMap[taskId] || "inprogress";
 
   const filteredTasks = React.useMemo(() => {
-    const passesQuarterFilter = (task: BacklogItem): boolean => {
-      const taskQuarterIds = getTaskQuarters(task);
-      if (selectedQuarterIds.length === 0) return true;
-      if (!taskQuarterIds.length) return true;
-      return taskQuarterIds.some((q) => selectedQuarterIds.includes(q));
-    };
-
-    const byQuarters = allTasks.filter(passesQuarterFilter);
-
-    const byPriority =
-      priorityFilter.length === 0
-        ? byQuarters
-        : byQuarters.filter((t) => priorityFilter.includes(Number(t.priority)));
-
-    const byStream = streamFilter.trim()
-      ? byPriority.filter((t) =>
-          (t.stream || "").toLowerCase().includes(streamFilter.toLowerCase())
-        )
-      : byPriority;
-
-    const byRelease =
-      releaseSprintFilter === "all" || releaseSprintFilter.trim() === ""
-        ? byStream
-        : byStream.filter((t) => {
-            const rel = (t.releaseDate || "").trim();
-            return rel === releaseSprintFilter.trim();
-          });
-
     const byStatus =
       statusFilter.length === 0
-        ? byRelease
-        : byRelease.filter((t) => {
+        ? allTasks
+        : allTasks.filter((t) => {
             const st = getStatusForTask(t.id);
             return statusFilter.includes(st);
           });
@@ -1671,15 +1661,7 @@ export default function BacklogPage() {
     });
 
     return withOrder;
-  }, [
-    allTasks,
-    selectedQuarterIds,
-    priorityFilter,
-    streamFilter,
-    releaseSprintFilter,
-    statusFilter,
-    getTaskQuarters,
-  ]);
+  }, [allTasks, statusFilter, getStatusForTask]);
 
   const isUiPending = isQuarterPending;
 
