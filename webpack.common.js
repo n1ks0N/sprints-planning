@@ -1,6 +1,6 @@
 const webpack = require('webpack');
 
-const API_URL = process.env.API_URL || '/api/v1/sprints-planning';
+const API_URL = process.env.API_URL || '/isu/isu_backend_common/sprints-planning';
 
 module.exports = {
   entry: './src/index.ts',

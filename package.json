@@ -5,7 +5,7 @@
   "scripts": {
     "dev:local": "cross-env API_URL=/api/v1/sprints-planning webpack serve --mode development --open",
     "dev:remote": "webpack serve --mode development --open",
-    "build:remote": "webpack --config webpack.build.js --mode production",
+    "build": "webpack --config webpack.build.js --mode production",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
