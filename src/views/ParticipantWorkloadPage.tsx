@@ -328,6 +328,25 @@ export default function ParticipantWorkloadPage() {
                             </TableRow>
                           );
                         })}
+                        {rows.length > 0 && (
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 700 }}>
+                              Итого по спринтам
+                            </TableCell>
+                            {totalsBySprint.map((v, i) => (
+                              <TableCell
+                                key={i}
+                                align="center"
+                                sx={{ fontWeight: 700 }}
+                              >
+                                {v}
+                              </TableCell>
+                            ))}
+                            <TableCell align="center" sx={{ fontWeight: 700 }}>
+                              {totalsBySprint.reduce((a, b) => a + b, 0)}
+                            </TableCell>
+                          </TableRow>
+                        )}
                         {rows.length === 0 && (
                           <TableRow>
                             <TableCell
@@ -342,22 +361,6 @@ export default function ParticipantWorkloadPage() {
                       </TableBody>
                     </Table>
                   </TableContainer>
-
-                  <Stack
-                    direction="row"
-                    spacing={1}
-                    justifyContent="flex-end"
-                    sx={{ mt: 1 }}
-                  >
-                    {totalsBySprint.map((sum, idx) => (
-                      <Chip
-                        key={`${p.id}-total-${idx}`}
-                        label={`${sum} дн в ${sprintsInScope[idx]?.name ?? ""}`}
-                        size="small"
-                        variant="outlined"
-                      />
-                    ))}
-                  </Stack>
                 </Paper>
               );
             })}

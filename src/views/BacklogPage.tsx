@@ -28,7 +28,7 @@ import {
 import {
   Add,
   Delete,
-  ContentCopy,
+  CopyAll,
   ArrowBack,
   ArrowForward,
   Star,
@@ -932,13 +932,10 @@ const TaskCard = React.memo(function TaskCard({
                 )}
               </IconButton>
             </Tooltip>
-            {hiddenParticipants && (
-              <Chip label="Участники скрыты" size="small" variant="outlined" />
-            )}
 
             <Tooltip title="Дублировать">
               <IconButton size="small" onClick={() => onDuplicateTask(task)}>
-                <ContentCopy fontSize="small" />
+                <CopyAll fontSize="small" />
               </IconButton>
             </Tooltip>
 
@@ -1171,7 +1168,7 @@ const TaskCard = React.memo(function TaskCard({
                                     onCopyRowToNextQuarter(task.id, p.id)
                                   }
                                 >
-                                  <ContentCopy fontSize="small" />
+                                  <CopyAll fontSize="small" />
                                 </IconButton>
                               </Tooltip>
 
