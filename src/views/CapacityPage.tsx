@@ -11,6 +11,7 @@ import {
   TableRow,
   TableCell,
   TableBody,
+  CircularProgress,
 } from "@mui/material";
 import moment from "moment";
 import "moment/locale/ru";
@@ -79,21 +80,30 @@ function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
 }
 
 export default function CapacityPage() {
-  const { data: quarters = [] } = useGetQuartersQuery();
-  const { data: sprints = [] } = useGetSprintsQuery(undefined);
+  const { data: quarters = [], isLoading: isQuartersLoading } =
+    useGetQuartersQuery();
+  const { data: sprints = [], isLoading: isSprintsLoading } =
+    useGetSprintsQuery(undefined);
   const dispatch = useAppDispatch();
   const selectedQuarterIds = useAppSelector(
     (state) => state.ui.capacity.selectedQuarterIds
   );
 
-  const { data: capacityRows = [] } = useGetCapacityQuery({
-    quarterIds: selectedQuarterIds.length ? selectedQuarterIds : undefined,
-  });
+  const { data: capacityRows = [], isLoading: isCapacityLoading } =
+    useGetCapacityQuery({
+      quarterIds: selectedQuarterIds.length ? selectedQuarterIds : undefined,
+    });
 
   const participants = React.useMemo(
     () => capacityRows.map((row) => row.participant),
     [capacityRows]
   );
+
+  const isInitialLoading =
+    (isCapacityLoading || isQuartersLoading || isSprintsLoading) &&
+    !capacityRows.length &&
+    !quarters.length &&
+    !sprints.length;
 
   React.useEffect(() => {
     if (!quarters.length) return;
@@ -127,6 +137,23 @@ export default function CapacityPage() {
     });
     return map;
   }, [capacityRows]);
+
+  if (isInitialLoading) {
+    return (
+      <Paper elevation={0} sx={{ p: 2 }}>
+        <Box
+          sx={{
+            minHeight: 240,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <CircularProgress />
+        </Box>
+      </Paper>
+    );
+  }
 
   const quarterFilterOptions = React.useMemo(() => {
     return quarters

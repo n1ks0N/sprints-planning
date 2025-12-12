@@ -36,6 +36,8 @@ import {
   ArrowUpward,
   ArrowDownward,
   DragIndicator,
+  Visibility,
+  VisibilityOff,
 } from "@mui/icons-material";
 import moment from "moment";
 import "moment/locale/ru";
@@ -328,6 +330,7 @@ function EditableNumberCell({
 // ---------- LocalStorage ----------
 
 const LS_TASK_QUARTERS = "backlog.quartersMap";
+const LS_HIDDEN_PARTICIPANTS = "backlog.hiddenParticipants";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   inprogress: "В работе",
@@ -457,6 +460,8 @@ type TaskCardProps = {
   onAddParticipant: (task: BacklogItem, participantId: string) => void;
   onRemoveParticipant: (task: BacklogItem, participantId: string) => void;
   onParticipantOrderChange: (taskId: string, nextOrder: string[]) => void;
+  hiddenParticipants: boolean;
+  onToggleParticipantsVisibility: (taskId: string, hidden: boolean) => void;
   dragHandle?: DragHandleProps;
 };
 
@@ -523,11 +528,15 @@ const TaskCard = React.memo(function TaskCard({
   onAddParticipant,
   onRemoveParticipant,
   onParticipantOrderChange,
+  hiddenParticipants,
+  onToggleParticipantsVisibility,
   dragHandle,
 }: TaskCardProps) {
   const rows = allocationsByParticipant || {};
   const taskStatus = task.status ?? "inprogress";
   const taskQuarterIds = getTaskQuarters(task);
+  const [selectedParticipantToAdd, setSelectedParticipantToAdd] =
+    React.useState<Participant | null>(null);
 
   const allowedSprints = React.useMemo(
     () =>
@@ -619,6 +628,15 @@ const TaskCard = React.memo(function TaskCard({
     (p) => !assignedParticipantIds.includes(p.id)
   );
 
+  React.useEffect(() => {
+    if (
+      selectedParticipantToAdd &&
+      !availableParticipants.some((p) => p.id === selectedParticipantToAdd.id)
+    ) {
+      setSelectedParticipantToAdd(null);
+    }
+  }, [availableParticipants, selectedParticipantToAdd]);
+
   const allowedReleaseValues = React.useMemo(
     () => new Set(releaseOptions.map((opt) => opt.value)),
     [releaseOptions]
@@ -653,6 +671,14 @@ const TaskCard = React.memo(function TaskCard({
     ),
     []
   );
+
+  const handleToggleParticipants = React.useCallback(() => {
+    onToggleParticipantsVisibility(task.id, !hiddenParticipants);
+  }, [hiddenParticipants, onToggleParticipantsVisibility, task.id]);
+
+  const participantsToggleLabel = hiddenParticipants
+    ? "Показать участников"
+    : "Скрыть участников";
 
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
@@ -897,6 +923,19 @@ const TaskCard = React.memo(function TaskCard({
               </Tooltip>
             )}
 
+            <Tooltip title={participantsToggleLabel}>
+              <IconButton size="small" onClick={handleToggleParticipants}>
+                {hiddenParticipants ? (
+                  <Visibility fontSize="small" />
+                ) : (
+                  <VisibilityOff fontSize="small" />
+                )}
+              </IconButton>
+            </Tooltip>
+            {hiddenParticipants && (
+              <Chip label="Участники скрыты" size="small" variant="outlined" />
+            )}
+
             <Tooltip title="Дублировать">
               <IconButton size="small" onClick={() => onDuplicateTask(task)}>
                 <ContentCopy fontSize="small" />
@@ -931,11 +970,12 @@ const TaskCard = React.memo(function TaskCard({
       </Stack>
 
       {/* Таблица нагрузок по участникам */}
-      <DndContext
-        sensors={participantSensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleParticipantDragEnd}
-      >
+      {!hiddenParticipants && (
+        <DndContext
+          sensors={participantSensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleParticipantDragEnd}
+        >
         <TableContainer
           component={Paper}
           variant="outlined"
@@ -1131,7 +1171,7 @@ const TaskCard = React.memo(function TaskCard({
                                     onCopyRowToNextQuarter(task.id, p.id)
                                   }
                                 >
-                                  <Add fontSize="small" />
+                                  <ContentCopy fontSize="small" />
                                 </IconButton>
                               </Tooltip>
 
@@ -1154,36 +1194,41 @@ const TaskCard = React.memo(function TaskCard({
                 })}
               </SortableContext>
 
-              <TableRow>
-                <TableCell />
-                <TableCell sx={{ py: 1 }}>
-                  <Autocomplete
-                    size="small"
-                    options={availableParticipants}
-                    getOptionLabel={(p) =>
-                      p ? `${p.fullName} (${p.role})` : ""
-                    }
-                    onChange={(_, value) => {
-                      if (value) onAddParticipant(task, value.id);
-                    }}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        size="small"
-                        label="Добавить участника"
-                        placeholder="Выберите участника"
-                      />
-                    )}
-                    noOptionsText="Свободных участников нет"
-                    disabled={availableParticipants.length === 0}
-                  />
-                </TableCell>
-                {effectiveSprints.map((s) => (
-                  <TableCell key={s.id} />
-                ))}
-                <TableCell />
-                <TableCell />
-              </TableRow>
+              {availableParticipants.length > 0 && (
+                <TableRow>
+                  <TableCell />
+                  <TableCell sx={{ py: 1 }}>
+                    <Autocomplete
+                      size="small"
+                      options={availableParticipants}
+                      getOptionLabel={(p) =>
+                        p ? `${p.fullName} (${p.role})` : ""
+                      }
+                      onChange={(_, value) => {
+                        setSelectedParticipantToAdd(value);
+                        if (value) onAddParticipant(task, value.id);
+                        setSelectedParticipantToAdd(null);
+                      }}
+                      value={selectedParticipantToAdd}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          size="small"
+                          label="Добавить участника"
+                          placeholder="Выберите участника"
+                        />
+                      )}
+                      noOptionsText="Свободных участников нет"
+                      disabled={availableParticipants.length === 0}
+                    />
+                  </TableCell>
+                  {effectiveSprints.map((s) => (
+                    <TableCell key={s.id} />
+                  ))}
+                  <TableCell />
+                  <TableCell />
+                </TableRow>
+              )}
 
               <TableRow>
                 <TableCell />
@@ -1203,7 +1248,8 @@ const TaskCard = React.memo(function TaskCard({
             </TableBody>
           </Table>
         </TableContainer>
-      </DndContext>
+        </DndContext>
+      )}
     </Paper>
   );
 });
@@ -1244,10 +1290,18 @@ function SortableTaskCard({
 // ---------- BacklogPage ----------
 
 export default function BacklogPage() {
-  const { data: quarters = [] } = useGetQuartersQuery();
-  const { data: participants = [] } = useGetParticipantsQuery();
-  const allSprints = useGetSprintsQuery(undefined).data ?? [];
-  const { data: releases = [] } = useGetReleasesQuery();
+  const { data: quarters = [], isLoading: isQuartersLoading } =
+    useGetQuartersQuery();
+  const { data: participants = [], isLoading: isParticipantsLoading } =
+    useGetParticipantsQuery();
+  const {
+    data: sprintsData = [],
+    isLoading: isSprintsLoading,
+    isFetching: isSprintsFetching,
+  } = useGetSprintsQuery(undefined);
+  const allSprints = sprintsData;
+  const { data: releases = [], isLoading: isReleasesLoading } =
+    useGetReleasesQuery();
   const quarterIdSet = React.useMemo(
     () => new Set(quarters.map((q) => q.id)),
     [quarters]
@@ -1376,7 +1430,8 @@ export default function BacklogPage() {
     ]
   );
 
-  const { data: fetchedTasks = [], isFetching } = useGetTasksQuery(tasksQueryArgs);
+  const { data: fetchedTasks = [], isFetching, isLoading: isTasksLoading } =
+    useGetTasksQuery(tasksQueryArgs);
 
   const allTasks = React.useMemo(
     () =>
@@ -1394,6 +1449,10 @@ export default function BacklogPage() {
   const [participantOrders, setParticipantOrders] = React.useState<
     Record<string, string[]>
   >({});
+  const [hiddenParticipantsTaskIds, setHiddenParticipantsTaskIds] =
+    React.useState<Set<string>>(
+      () => new Set(readLS<string[]>(LS_HIDDEN_PARTICIPANTS, []))
+    );
   const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
   const [newTaskQuarterId, setNewTaskQuarterId] = React.useState<string>("");
   const [addTaskQuarterError, setAddTaskQuarterError] = React.useState(false);
@@ -1661,6 +1720,16 @@ export default function BacklogPage() {
   }, [allTasks, statusFilter]);
 
   const isUiPending = isQuarterPending;
+  const isInitialLoading =
+    (isTasksLoading ||
+      isQuartersLoading ||
+      isParticipantsLoading ||
+      isSprintsLoading ||
+      isReleasesLoading) &&
+    !fetchedTasks.length &&
+    !participants.length &&
+    !quarters.length &&
+    !allSprints.length;
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
@@ -2077,6 +2146,22 @@ export default function BacklogPage() {
     void persistTaskOrder(reordered, id);
   };
 
+  const toggleParticipantsVisibility = React.useCallback(
+    (taskId: string, hidden: boolean) => {
+      setHiddenParticipantsTaskIds((prev) => {
+        const next = new Set(prev);
+        if (hidden) {
+          next.add(taskId);
+        } else {
+          next.delete(taskId);
+        }
+        writeLS(LS_HIDDEN_PARTICIPANTS, Array.from(next));
+        return next;
+      });
+    },
+    []
+  );
+
   const taskSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 8 },
@@ -2117,6 +2202,23 @@ export default function BacklogPage() {
     },
     [filteredTasks, persistTaskOrder]
   );
+
+  if (isInitialLoading) {
+    return (
+      <Paper elevation={0} sx={{ p: 2 }}>
+        <Box
+          sx={{
+            minHeight: 240,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <CircularProgress />
+        </Box>
+      </Paper>
+    );
+  }
 
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
@@ -2318,6 +2420,10 @@ export default function BacklogPage() {
                           }));
                           applyParticipantOrderOptimistic(taskId, order);
                         }}
+                        hiddenParticipants={hiddenParticipantsTaskIds.has(t.id)}
+                        onToggleParticipantsVisibility={
+                          toggleParticipantsVisibility
+                        }
                         dragHandle={dragProps}
                       />
                     )}

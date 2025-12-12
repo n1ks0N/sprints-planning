@@ -11,6 +11,7 @@ import {
   TableCell,
   TableContainer,
   Tooltip,
+  CircularProgress,
 } from "@mui/material";
 import {
   useGetParticipantsQuery,
@@ -41,10 +42,26 @@ export default function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
   const ui = useAppSelector((s) => s.ui.participantWorkload);
 
-  const { data: quarters = [] } = useGetQuartersQuery();
-  const { data: participants = [] } = useGetParticipantsQuery();
-  const allSprints = useGetSprintsQuery(undefined).data ?? [];
-  const { data: tasks = [] } = useGetTasksQuery(undefined);
+  const { data: quarters = [], isLoading: isQuartersLoading } =
+    useGetQuartersQuery();
+  const { data: participants = [], isLoading: isParticipantsLoading } =
+    useGetParticipantsQuery();
+  const { data: sprintsData = [], isLoading: isSprintsLoading } =
+    useGetSprintsQuery(undefined);
+  const allSprints = sprintsData;
+  const { data: tasks = [], isLoading: isTasksLoading } = useGetTasksQuery(
+    undefined
+  );
+
+  const isInitialLoading =
+    (isQuartersLoading ||
+      isParticipantsLoading ||
+      isSprintsLoading ||
+      isTasksLoading) &&
+    !quarters.length &&
+    !participants.length &&
+    !allSprints.length &&
+    !tasks.length;
 
   const sprintsInScope = React.useMemo(() => {
     const selected = new Set(ui.selectedQuarterIds);
@@ -54,6 +71,16 @@ export default function ParticipantWorkloadPage() {
         : allSprints.filter((s) => selected.has(s.quarterId));
     return list.sort(byStart);
   }, [allSprints, ui.selectedQuarterIds]);
+
+  if (isInitialLoading) {
+    return (
+      <Paper elevation={0} sx={{ p: 2 }}>
+        <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 240 }}>
+          <CircularProgress />
+        </Stack>
+      </Paper>
+    );
+  }
 
   const participantOptions = React.useMemo(
     () =>

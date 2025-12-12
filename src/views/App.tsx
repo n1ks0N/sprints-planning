@@ -114,7 +114,12 @@ function TeamScopedApp() {
   return (
     <>
       <Hotkeys />
-      <AppBar position="static" color="default" elevation={0}>
+      <AppBar
+        position="sticky"
+        color="default"
+        elevation={0}
+        sx={{ top: 0, zIndex: (theme) => theme.zIndex.appBar }}
+      >
         <Toolbar>
           <Stack
             direction="row"
