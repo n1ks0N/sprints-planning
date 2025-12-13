@@ -49,9 +49,11 @@ export default function ParticipantWorkloadPage() {
   const { data: sprintsData = [], isLoading: isSprintsLoading } =
     useGetSprintsQuery(undefined);
   const allSprints = sprintsData;
-  const { data: tasks = [], isLoading: isTasksLoading } = useGetTasksQuery(
-    undefined
-  );
+  const { data: tasksPage, isLoading: isTasksLoading } = useGetTasksQuery({
+    page: 0,
+    size: 1000,
+  });
+  const tasks: BacklogItem[] = tasksPage?.content ?? [];
 
   const isInitialLoading =
     (isQuartersLoading ||
@@ -160,7 +162,7 @@ export default function ParticipantWorkloadPage() {
           toInt(t.allocations?.[pid]?.[s.id] ?? 0)
         ),
       }));
-    return rows;
+    return rows as { task: BacklogItem; perSprint: number[] }[];
   };
 
   return (
