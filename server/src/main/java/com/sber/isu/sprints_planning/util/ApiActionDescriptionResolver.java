@@ -27,6 +27,7 @@ public class ApiActionDescriptionResolver {
         actions.put("POST /sprints/delete", "Удален спринт");
 
         actions.put("GET /tasks", "Получен список задач");
+        actions.put("GET /tasks/{id}", "Получена задача");
         actions.put("POST /tasks", "Добавлена задача");
         actions.put("POST /tasks/update", "Изменена задача");
         actions.put("POST /tasks/delete", "Удалена задача");

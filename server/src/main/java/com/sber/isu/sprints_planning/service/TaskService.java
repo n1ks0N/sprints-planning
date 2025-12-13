@@ -24,6 +24,9 @@ import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -60,6 +63,35 @@ public class TaskService {
     }
 
     public List<TaskDto> findAll(String teamKey, TaskFilter filter) {
+        return findFilteredTasks(teamKey, filter);
+    }
+
+    public Page<TaskDto> findPage(String teamKey, TaskFilter filter, Integer page, Integer size) {
+        TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
+        List<TaskDto> filtered = findFilteredTasks(teamKey, effectiveFilter);
+        if (page == null || size == null) {
+            return new PageImpl<>(filtered);
+        }
+        int safePage = Math.max(page, 0);
+        int safeSize = Math.max(size, 1);
+        int fromIndex = Math.min((int) ((long) safePage * safeSize), filtered.size());
+        int toIndex = Math.min(fromIndex + safeSize, filtered.size());
+        List<TaskDto> content = filtered.subList(fromIndex, toIndex);
+        return new PageImpl<>(content, Pageable.ofSize(safeSize).withPage(safePage), filtered.size());
+    }
+
+    public TaskDto findById(String teamKey, UUID id) {
+        TaskEntity entity = taskRepository.findWithDetailsById(id, teamKey);
+        if (entity == null) {
+            throw new EntityNotFoundException("Task not found");
+        }
+        entity.setStatus(normalizeStatus(entity.getStatus()));
+        List<SprintEntity> sprints = fetchAllSprints(teamKey);
+        ensureLoadsForSprints(entity, sprints);
+        return DtoMapper.toTaskDto(entity);
+    }
+
+    private List<TaskDto> findFilteredTasks(String teamKey, TaskFilter filter) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
         List<TaskEntity> tasks = taskRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
         List<SprintEntity> sprints = fetchAllSprints(teamKey);

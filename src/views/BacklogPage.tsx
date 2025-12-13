@@ -1368,11 +1368,46 @@ export default function BacklogPage() {
     return m;
   }, [participants]);
 
+  const TASKS_PAGE_SIZE = 20;
+  const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
+
+  const tasksQueryArgs = React.useMemo(
+    () => ({
+      quarterIds: selectedQuarterIds,
+      priority: priorityFilter,
+      statuses: statusFilter,
+      releaseDate:
+        releaseSprintFilter === "all" ? undefined : releaseSprintFilter.trim(),
+      stream: streamFilter.trim(),
+      page: tasksPageNumber,
+      size: TASKS_PAGE_SIZE,
+    }),
+    [
+      selectedQuarterIds,
+      priorityFilter,
+      statusFilter,
+      releaseSprintFilter,
+      streamFilter,
+      tasksPageNumber,
+    ]
+  );
+
+  React.useEffect(() => {
+    setTasksPageNumber(0);
+  }, [
+    selectedQuarterIds,
+    priorityFilter,
+    statusFilter,
+    releaseSprintFilter,
+    streamFilter,
+  ]);
+
   const applyTaskOrderOptimistic = React.useCallback(
     (orderedIds: string[]) =>
       dispatch(
-        api.util.updateQueryData("getTasks", undefined, (draft) => {
-          const byId = new Map(draft.map((t) => [t.id, t]));
+        api.util.updateQueryData("getTasks", tasksQueryArgs, (draft) => {
+          if (!draft) return;
+          const byId = new Map(draft.content.map((t) => [t.id, t]));
           const seen = new Set<string>();
 
           const reordered = orderedIds
@@ -1383,52 +1418,65 @@ export default function BacklogPage() {
             })
             .filter(Boolean) as BacklogItem[];
 
-          const untouched = draft.filter((t) => !seen.has(t.id));
+          const untouched = draft.content.filter((t) => !seen.has(t.id));
           const fullList = [...reordered, ...untouched];
 
           fullList.forEach((task, index) => {
             (task as any).order = index;
           });
 
-          draft.splice(0, draft.length, ...fullList);
+          draft.content.splice(0, draft.content.length, ...fullList);
+          draft.numberOfElements = draft.content.length;
+          draft.totalElements = Math.max(draft.totalElements, draft.content.length);
         })
       ),
-    [dispatch]
+    [dispatch, tasksQueryArgs]
   );
 
   const applyParticipantOrderOptimistic = React.useCallback(
     (taskId: string, participantIds: string[]) =>
       dispatch(
-        api.util.updateQueryData("getTasks", undefined, (draft) => {
-          const task = draft.find((t) => t.id === taskId);
+        api.util.updateQueryData("getTasks", tasksQueryArgs, (draft) => {
+          if (!draft) return;
+          const task = draft.content.find((t) => t.id === taskId);
           if (task) {
             task.participantIds = participantIds.slice();
           }
         })
       ),
-    [dispatch]
+    [dispatch, tasksQueryArgs]
   );
 
-  const tasksQueryArgs = React.useMemo(
-    () => ({
-      quarterIds: selectedQuarterIds,
-      priority: priorityFilter,
-      statuses: statusFilter,
-      releaseDate:
-        releaseSprintFilter === "all" ? undefined : releaseSprintFilter.trim(),
-      stream: streamFilter.trim(),
-    }),
-    [
-      selectedQuarterIds,
-      priorityFilter,
-      statusFilter,
-      releaseSprintFilter,
-      streamFilter,
-    ]
+  const {
+    data: fetchedTasksPage,
+    isFetching,
+    isLoading: isTasksLoading,
+  } = useGetTasksQuery(tasksQueryArgs);
+
+  const fetchedTasks = React.useMemo(
+    () => fetchedTasksPage?.content ?? [],
+    [fetchedTasksPage]
   );
 
-  const { data: fetchedTasks = [], isFetching, isLoading: isTasksLoading } =
-    useGetTasksQuery(tasksQueryArgs);
+  const hasMoreTasks = React.useMemo(
+    () => (fetchedTasksPage ? !fetchedTasksPage.last : true),
+    [fetchedTasksPage]
+  );
+
+  React.useEffect(() => {
+    const handleScroll = () => {
+      const { scrollTop, clientHeight, scrollHeight } =
+        document.documentElement;
+      const distanceToBottom = scrollHeight - (scrollTop + clientHeight);
+
+      if (distanceToBottom < 400 && hasMoreTasks && !isFetching) {
+        setTasksPageNumber((prev) => prev + 1);
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [hasMoreTasks, isFetching]);
 
   const allTasks = React.useMemo(
     () =>
