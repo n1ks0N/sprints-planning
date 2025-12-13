@@ -11,6 +11,7 @@ import {
   TableCell,
   TableContainer,
   Tooltip,
+  CircularProgress,
 } from "@mui/material";
 import {
   useGetParticipantsQuery,
@@ -41,10 +42,26 @@ export default function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
   const ui = useAppSelector((s) => s.ui.participantWorkload);
 
-  const { data: quarters = [] } = useGetQuartersQuery();
-  const { data: participants = [] } = useGetParticipantsQuery();
-  const allSprints = useGetSprintsQuery(undefined).data ?? [];
-  const { data: tasks = [] } = useGetTasksQuery(undefined);
+  const { data: quarters = [], isLoading: isQuartersLoading } =
+    useGetQuartersQuery();
+  const { data: participants = [], isLoading: isParticipantsLoading } =
+    useGetParticipantsQuery();
+  const { data: sprintsData = [], isLoading: isSprintsLoading } =
+    useGetSprintsQuery(undefined);
+  const allSprints = sprintsData;
+  const { data: tasks = [], isLoading: isTasksLoading } = useGetTasksQuery(
+    undefined
+  );
+
+  const isInitialLoading =
+    (isQuartersLoading ||
+      isParticipantsLoading ||
+      isSprintsLoading ||
+      isTasksLoading) &&
+    !quarters.length &&
+    !participants.length &&
+    !allSprints.length &&
+    !tasks.length;
 
   const sprintsInScope = React.useMemo(() => {
     const selected = new Set(ui.selectedQuarterIds);
@@ -148,196 +165,214 @@ export default function ParticipantWorkloadPage() {
 
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
-      <Typography variant="h6" sx={{ mb: 2 }}>
-        Нагрузка по участникам
-      </Typography>
+      {isInitialLoading ? (
+        <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 240 }}>
+          <CircularProgress />
+        </Stack>
+      ) : (
+        <>
+          <Typography variant="h6" sx={{ mb: 2 }}>
+            Нагрузка по участникам
+          </Typography>
 
-      <Stack
-        direction="row"
-        spacing={2}
-        alignItems="center"
-        sx={{ mb: 2, flexWrap: { xs: "wrap", md: "nowrap" } }}
-      >
-        <FilterAutocomplete
-          multiple
-          allowCustom={false}
-          label="Фильтр по кварталам"
-          options={quarterOptions}
-          value={ui.selectedQuarterIds}
-          onChange={(ids) =>
-            dispatch(
-              setParticipantWorkloadFilters({
-                selectedQuarterIds: Array.from(new Set(ids)),
-              })
-            )
-          }
-          sx={{ minWidth: 240 }}
-        />
+          <Stack
+            direction="row"
+            spacing={2}
+            alignItems="center"
+            sx={{ mb: 2, flexWrap: { xs: "wrap", md: "nowrap" } }}
+          >
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Фильтр по кварталам"
+              options={quarterOptions}
+              value={ui.selectedQuarterIds}
+              onChange={(ids) =>
+                dispatch(
+                  setParticipantWorkloadFilters({
+                    selectedQuarterIds: Array.from(new Set(ids)),
+                  })
+                )
+              }
+              sx={{ minWidth: 240 }}
+            />
 
-        <FilterAutocomplete
-          multiple
-          allowCustom={false}
-          label="Фильтр по ФИО"
-          options={participantOptions}
-          value={ui.selectedParticipantIds}
-          onChange={(ids) =>
-            dispatch(
-              setParticipantWorkloadFilters({
-                selectedParticipantIds: ids,
-              })
-            )
-          }
-          sx={{ minWidth: 320 }}
-        />
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Фильтр по ФИО"
+              options={participantOptions}
+              value={ui.selectedParticipantIds}
+              onChange={(ids) =>
+                dispatch(
+                  setParticipantWorkloadFilters({
+                    selectedParticipantIds: ids,
+                  })
+                )
+              }
+              sx={{ minWidth: 320 }}
+            />
 
-        <FilterAutocomplete
-          multiple
-          allowCustom={false}
-          label="Роли"
-          options={roleOptions}
-          value={ui.rolesFilter}
-          onChange={handleRolesFilterChange}
-          sx={{ minWidth: 240 }}
-        />
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Роли"
+              options={roleOptions}
+              value={ui.rolesFilter}
+              onChange={handleRolesFilterChange}
+              sx={{ minWidth: 240 }}
+            />
 
-        <FilterAutocomplete
-          multiple
-          allowCustom={false}
-          label="Приоритет"
-          options={priorityOptions}
-          value={ui.priorityFilter.map(String)}
-          onChange={handlePriorityFilterChange}
-          sx={{ minWidth: 180 }}
-        />
-      </Stack>
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Приоритет"
+              options={priorityOptions}
+              value={ui.priorityFilter.map(String)}
+              onChange={handlePriorityFilterChange}
+              sx={{ minWidth: 180 }}
+            />
+          </Stack>
 
-      <Stack spacing={2}>
-        {participantsInScope.map((p) => {
-          const rows = getRowsForParticipant(p.id);
-          const totalsBySprint = sprintsInScope.map((_, idx) =>
-            rows.reduce((sum, r) => sum + r.perSprint[idx], 0)
-          );
+          <Stack spacing={2}>
+            {participantsInScope.map((p) => {
+              const rows = getRowsForParticipant(p.id);
+              const totalsBySprint = sprintsInScope.map((_, idx) =>
+                rows.reduce((sum, r) => sum + r.perSprint[idx], 0)
+              );
 
-          return (
-            <Paper key={p.id} variant="outlined" sx={{ p: 2 }}>
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={1}
-                sx={{ mb: 1 }}
-              >
-                <Chip label={p.role} size="small" />
-                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                  {p.fullName}
-                </Typography>
-              </Stack>
+              return (
+                <Paper key={p.id} variant="outlined" sx={{ p: 2 }}>
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={1}
+                    sx={{ mb: 1 }}
+                  >
+                    <Chip label={p.role} size="small" />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                      {p.fullName}
+                    </Typography>
+                  </Stack>
 
-              <TableContainer component={Paper} variant="outlined">
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell sx={{ minWidth: 260, maxWidth: 360, width: 360 }}>
-                        Задача
-                      </TableCell>
-                      {sprintsInScope.map((s) => (
-                        <TableCell key={s.id} align="center">
-                          <Typography
-                            variant="caption"
-                            sx={{ fontWeight: 700 }}
-                          >
-                            {s.startDate} → {s.endDate}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {s.name}
-                          </Typography>
-                        </TableCell>
-                      ))}
-                      <TableCell align="center" sx={{ fontWeight: 700 }}>
-                        Итого
-                      </TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {rows.map((r) => {
-                      const total = r.perSprint.reduce((a, b) => a + b, 0);
-                      return (
-                        <TableRow key={`${p.id}-${r.task.id}`}>
-                          <TableCell>
-                            <Stack
-                              direction="row"
-                              spacing={1}
-                              alignItems="center"
-                            >
-                              <Chip
-                                size="small"
-                                label={r.task.priority}
-                                color="default"
-                                sx={{
-                                  bgcolor: "grey.200",
-                                  color: "text.primary",
-                                  borderColor: "grey.300",
-                                }}
-                              />
-                              <Tooltip title={r.task.title} placement="top" arrow>
-                                <Typography
-                                  sx={{
-                                    display: "-webkit-box",
-                                    WebkitLineClamp: 2,
-                                    WebkitBoxOrient: "vertical",
-                                    overflow: "hidden",
-                                    wordBreak: "break-word",
-                                    maxWidth: 300,
-                                  }}
-                                >
-                                  {r.task.title}
-                                </Typography>
-                              </Tooltip>
-                            </Stack>
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={{ minWidth: 260, maxWidth: 360, width: 360 }}>
+                            Задача
                           </TableCell>
-                          {r.perSprint.map((v, i) => (
-                            <TableCell key={i} align="center">
-                              {v}
+                          {sprintsInScope.map((s) => (
+                            <TableCell key={s.id} align="center">
+                              <Typography
+                                variant="caption"
+                                sx={{ fontWeight: 700 }}
+                              >
+                                {s.startDate} → {s.endDate}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {s.name}
+                              </Typography>
                             </TableCell>
                           ))}
                           <TableCell align="center" sx={{ fontWeight: 700 }}>
-                            {total}
+                            Итого
                           </TableCell>
                         </TableRow>
-                      );
-                    })}
+                      </TableHead>
+                      <TableBody>
+                        {rows.map((r) => {
+                          const total = r.perSprint.reduce((a, b) => a + b, 0);
+                          return (
+                            <TableRow key={`${p.id}-${r.task.id}`}>
+                              <TableCell>
+                                <Stack
+                                  direction="row"
+                                  spacing={1}
+                                  alignItems="center"
+                                >
+                                  <Chip
+                                    size="small"
+                                    label={r.task.priority}
+                                    color="default"
+                                    sx={{
+                                      bgcolor: "grey.200",
+                                      color: "text.primary",
+                                      borderColor: "grey.300",
+                                    }}
+                                  />
+                                  <Tooltip title={r.task.title} placement="top" arrow>
+                                    <Typography
+                                      sx={{
+                                        display: "-webkit-box",
+                                        WebkitLineClamp: 2,
+                                        WebkitBoxOrient: "vertical",
+                                        overflow: "hidden",
+                                        wordBreak: "break-word",
+                                        maxWidth: 300,
+                                      }}
+                                    >
+                                      {r.task.title}
+                                    </Typography>
+                                  </Tooltip>
+                                </Stack>
+                              </TableCell>
+                              {r.perSprint.map((v, i) => (
+                                <TableCell key={`${p.id}-${r.task.id}-${i}`} align="center">
+                                  {v}
+                                </TableCell>
+                              ))}
+                              <TableCell align="center" sx={{ fontWeight: 700 }}>
+                                {total}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        {rows.length > 0 && (
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 700 }}>
+                              Итого по спринтам
+                            </TableCell>
+                            {totalsBySprint.map((v, i) => (
+                              <TableCell
+                                key={i}
+                                align="center"
+                                sx={{ fontWeight: 700 }}
+                              >
+                                {v}
+                              </TableCell>
+                            ))}
+                            <TableCell align="center" sx={{ fontWeight: 700 }}>
+                              {totalsBySprint.reduce((a, b) => a + b, 0)}
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        {rows.length === 0 && (
+                          <TableRow>
+                            <TableCell
+                              colSpan={sprintsInScope.length + 2}
+                              align="center"
+                              sx={{ color: "text.secondary" }}
+                            >
+                              Нет задач по выбранным фильтрам
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Paper>
+              );
+            })}
 
-                    <TableRow>
-                      <TableCell sx={{ fontWeight: 700 }}>
-                        Итого по спринтам
-                      </TableCell>
-                      {totalsBySprint.map((v, i) => (
-                        <TableCell
-                          key={i}
-                          align="center"
-                          sx={{ fontWeight: 700 }}
-                        >
-                          {v}
-                        </TableCell>
-                      ))}
-                      <TableCell align="center" sx={{ fontWeight: 700 }}>
-                        {totalsBySprint.reduce((a, b) => a + b, 0)}
-                      </TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Paper>
-          );
-        })}
-
-        {!participantsInScope.length && (
-          <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
-            <Typography color="text.secondary">
-              Нет участников под выбранные фильтры
-            </Typography>
-          </Paper>
-        )}
-      </Stack>
+            {!participantsInScope.length && (
+              <Typography sx={{ color: "text.secondary" }}>
+                Нет участников по выбранным фильтрам
+              </Typography>
+            )}
+          </Stack>
+        </>
+      )}
     </Paper>
   );
 }

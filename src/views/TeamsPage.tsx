@@ -53,6 +53,14 @@ export default function TeamsPage() {
   const [deleteData, setDeleteData] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  if (isLoading && !teams) {
+    return (
+      <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 240 }}>
+        <CircularProgress />
+      </Stack>
+    );
+  }
+
   const keyPattern = /^[a-z0-9_-]+$/;
 
   React.useEffect(() => {

@@ -11,6 +11,7 @@ import {
   TableRow,
   TableCell,
   TableBody,
+  CircularProgress,
 } from "@mui/material";
 import moment from "moment";
 import "moment/locale/ru";
@@ -79,21 +80,30 @@ function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
 }
 
 export default function CapacityPage() {
-  const { data: quarters = [] } = useGetQuartersQuery();
-  const { data: sprints = [] } = useGetSprintsQuery(undefined);
+  const { data: quarters = [], isLoading: isQuartersLoading } =
+    useGetQuartersQuery();
+  const { data: sprints = [], isLoading: isSprintsLoading } =
+    useGetSprintsQuery(undefined);
   const dispatch = useAppDispatch();
   const selectedQuarterIds = useAppSelector(
     (state) => state.ui.capacity.selectedQuarterIds
   );
 
-  const { data: capacityRows = [] } = useGetCapacityQuery({
-    quarterIds: selectedQuarterIds.length ? selectedQuarterIds : undefined,
-  });
+  const { data: capacityRows = [], isLoading: isCapacityLoading } =
+    useGetCapacityQuery({
+      quarterIds: selectedQuarterIds.length ? selectedQuarterIds : undefined,
+    });
 
   const participants = React.useMemo(
     () => capacityRows.map((row) => row.participant),
     [capacityRows]
   );
+
+  const isInitialLoading =
+    (isCapacityLoading || isQuartersLoading || isSprintsLoading) &&
+    !capacityRows.length &&
+    !quarters.length &&
+    !sprints.length;
 
   React.useEffect(() => {
     if (!quarters.length) return;
@@ -175,126 +185,141 @@ export default function CapacityPage() {
       elevation={0}
       sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
     >
-      <Typography variant="h6">Нагрузка по спринтам</Typography>
+      {isInitialLoading ? (
+        <Box
+          sx={{
+            minHeight: 240,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <CircularProgress />
+        </Box>
+      ) : (
+        <>
+          <Typography variant="h6">Нагрузка по спринтам</Typography>
 
-      <Stack
-        direction="row"
-        spacing={2}
-        alignItems="center"
-        sx={{ flexWrap: { xs: "wrap", md: "nowrap" } }}
-      >
-        <FilterAutocomplete
-          multiple
-          allowCustom={false}
-          label="Фильтр по кварталам"
-          options={quarterFilterOptions}
-          value={selectedQuarterIds}
-          onChange={handleQuarterFilterChange}
-          sx={{ minWidth: 280, flex: 1 }}
-        />
-      </Stack>
+          <Stack
+            direction="row"
+            spacing={2}
+            alignItems="center"
+            sx={{ flexWrap: { xs: "wrap", md: "nowrap" } }}
+          >
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Фильтр по кварталам"
+              options={quarterFilterOptions}
+              value={selectedQuarterIds}
+              onChange={handleQuarterFilterChange}
+              sx={{ minWidth: 280, flex: 1 }}
+            />
+          </Stack>
 
-      <Box sx={{ overflowX: "auto" }}>
-        <Table stickyHeader size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell
-                sx={{
-                  whiteSpace: "nowrap",
-                  fontWeight: 700,
-                  position: "sticky",
-                  left: 0,
-                  zIndex: (theme) => theme.zIndex.appBar, // выше остальных ячеек
-                  backgroundColor: "background.paper",
-                  minWidth: 260,
-                }}
-              >
-                Участник
-              </TableCell>
-              {displaySprints.map((s) => (
-                <TableCell
-                  key={s.id}
-                  align="center"
-                  sx={{ minWidth: 140, whiteSpace: "nowrap" }}
-                >
-                  <Box sx={{ fontWeight: 700 }}>
-                    {ruDate(s.startDate)} — {ruDate(s.endDate)}
-                  </Box>
-                  <Box sx={{ color: "text.secondary" }}>{s.name}</Box>
-                </TableCell>
-              ))}
-              <TableCell align="center" sx={{ minWidth: 140, fontWeight: 700 }}>
-                Итого
-              </TableCell>
-            </TableRow>
-          </TableHead>
-
-          <TableBody>
-            {participants.map((p) => {
-              const totals = rowTotals(p);
-              return (
-                <TableRow key={p.id} hover>
+          <Box sx={{ overflowX: "auto" }}>
+            <Table stickyHeader size="small">
+              <TableHead>
+                <TableRow>
                   <TableCell
                     sx={{
                       whiteSpace: "nowrap",
+                      fontWeight: 700,
                       position: "sticky",
                       left: 0,
-                      zIndex: (theme) => theme.zIndex.appBar - 1,
+                      zIndex: (theme) => theme.zIndex.appBar, // выше остальных ячеек
                       backgroundColor: "background.paper",
                       minWidth: 260,
                     }}
                   >
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                      <Chip size="small" label={p.role || "—"} />
-                      <Typography sx={{ fontWeight: 500 }}>
-                        {p.fullName}
-                      </Typography>
-                    </Box>
-                </TableCell>
-
-                {displaySprints.map((s) => {
-                  const cell = getCell(p.id, s.id);
-                  const availRaw = cell?.availableDays ?? 0;
-                  const workRaw = cell?.workloadDays ?? 0;
-                  const avail = round1(availRaw);
-                  const work = round1(workRaw);
-                  const bg = cellColor(workRaw, availRaw);
-
-                  return (
+                    Участник
+                  </TableCell>
+                  {displaySprints.map((s) => (
                     <TableCell
-                      key={`${p.id}-${s.id}`}
+                      key={s.id}
                       align="center"
-                        sx={{ backgroundColor: bg }}
-                        title={`Нагрузка: ${work.toFixed(1)} дн • Доступно: ${o(
-                          avail
-                        )} дн`}
-                      >
-                        {work.toFixed(1)} / {o(avail)}
-                      </TableCell>
-                    );
-                  })}
-
-                  <TableCell align="center" sx={{ fontWeight: 600 }}>
-                    {totals.sumWork.toFixed(1)} / {totals.sumAvail.toFixed(1)}
+                      sx={{ minWidth: 140, whiteSpace: "nowrap" }}
+                    >
+                      <Box sx={{ fontWeight: 700 }}>
+                        {ruDate(s.startDate)} — {ruDate(s.endDate)}
+                      </Box>
+                      <Box sx={{ color: "text.secondary" }}>{s.name}</Box>
+                    </TableCell>
+                  ))}
+                  <TableCell align="center" sx={{ minWidth: 140, fontWeight: 700 }}>
+                    Итого
                   </TableCell>
                 </TableRow>
-              );
-            })}
+              </TableHead>
 
-            {!participants.length && (
-              <TableRow>
-                <TableCell
-                  colSpan={displaySprints.length + 2}
-                  align="center"
-                  sx={{ color: "text.secondary" }}
-                >
-                  Нет участников для отображения
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </Box>
+              <TableBody>
+                {participants.map((p) => {
+                  const totals = rowTotals(p);
+                  return (
+                    <TableRow key={p.id} hover>
+                      <TableCell
+                        sx={{
+                          whiteSpace: "nowrap",
+                          position: "sticky",
+                          left: 0,
+                          zIndex: (theme) => theme.zIndex.appBar - 1,
+                          backgroundColor: "background.paper",
+                          minWidth: 260,
+                        }}
+                      >
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <Chip size="small" label={p.role || "—"} />
+                          <Typography sx={{ fontWeight: 500 }}>
+                            {p.fullName}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+
+                      {displaySprints.map((s) => {
+                        const cell = getCell(p.id, s.id);
+                        const availRaw = cell?.availableDays ?? 0;
+                        const workRaw = cell?.workloadDays ?? 0;
+                        const avail = round1(availRaw);
+                        const work = round1(workRaw);
+                        const bg = cellColor(workRaw, availRaw);
+
+                        return (
+                          <TableCell
+                            key={`${p.id}-${s.id}`}
+                            align="center"
+                            sx={{ backgroundColor: bg }}
+                            title={`Нагрузка: ${work.toFixed(1)} дн • Доступно: ${o(
+                              avail
+                            )} дн`}
+                          >
+                            {work.toFixed(1)} / {o(avail)}
+                          </TableCell>
+                        );
+                      })}
+
+                      <TableCell align="center" sx={{ fontWeight: 600 }}>
+                        {totals.sumWork.toFixed(1)} / {totals.sumAvail.toFixed(1)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+
+                {!participants.length && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={displaySprints.length + 2}
+                      align="center"
+                      sx={{ color: "text.secondary" }}
+                    >
+                      Нет участников для отображения
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </Box>
+        </>
+      )}
     </Paper>
   );
 }

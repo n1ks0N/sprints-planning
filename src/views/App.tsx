@@ -114,7 +114,12 @@ function TeamScopedApp() {
   return (
     <>
       <Hotkeys />
-      <AppBar position="static" color="default" elevation={0}>
+      <AppBar
+        position="fixed"
+        color="default"
+        elevation={0}
+        sx={{ top: 0, zIndex: (theme) => theme.zIndex.appBar }}
+      >
         <Toolbar>
           <Stack
             direction="row"
@@ -162,6 +167,8 @@ function TeamScopedApp() {
           </Stack>
         </Toolbar>
       </AppBar>
+
+      <Toolbar />
 
       <Container maxWidth="xl" sx={{ py: 2 }}>
         <Routes>

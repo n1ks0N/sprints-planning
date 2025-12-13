@@ -9,6 +9,7 @@ import {
   Stack,
   Box,
   Alert,
+  CircularProgress,
   IconButton,
   Tooltip,
   Checkbox,
@@ -126,8 +127,15 @@ const openDatePickerOnMouseDown: React.MouseEventHandler<HTMLInputElement> = (
 };
 
 export default function TimeSetupPage() {
-  const { data: quarters = [] } = useGetQuartersQuery();
-  const { data: allSprints = [] } = useGetSprintsQuery(undefined);
+  const { data: quarters = [], isLoading: isQuartersLoading } =
+    useGetQuartersQuery();
+  const { data: allSprints = [], isLoading: isSprintsLoading } =
+    useGetSprintsQuery(undefined);
+
+  const isInitialLoading =
+    (isQuartersLoading || isSprintsLoading) &&
+    !quarters.length &&
+    !allSprints.length;
 
   const [addQuarter, { isLoading: addingQuarter }] = useAddQuarterMutation();
   const [updateQuarter] = useUpdateQuarterMutation();
@@ -974,6 +982,16 @@ export default function TimeSetupPage() {
       </Paper>
     );
   };
+
+  if (isInitialLoading) {
+    return (
+      <Paper elevation={0} sx={{ p: 2 }}>
+        <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 240 }}>
+          <CircularProgress />
+        </Stack>
+      </Paper>
+    );
+  }
 
   return (
     <Paper elevation={0} sx={{ p: 2 }}>

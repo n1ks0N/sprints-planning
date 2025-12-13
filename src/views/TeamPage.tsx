@@ -17,6 +17,7 @@ import {
   Chip,
   Autocomplete,
   Divider,
+  CircularProgress,
 } from "@mui/material";
 import { Delete, Edit, Save, Close, DragIndicator } from "@mui/icons-material";
 
@@ -106,7 +107,10 @@ function SortableRow({
 }
 
 export default function TeamPage() {
-  const { data: participants = [] } = useGetParticipantsQuery();
+  const { data: participants = [], isLoading: isParticipantsLoading } =
+    useGetParticipantsQuery();
+
+  const isInitialLoading = isParticipantsLoading && participants.length === 0;
   const [addParticipant] = useAddParticipantMutation();
   const [updateParticipant] = useUpdateParticipantMutation();
   const [deleteParticipant] = useDeleteParticipantMutation();
@@ -399,6 +403,16 @@ export default function TeamPage() {
       </SortableRow>
     );
   };
+
+  if (isInitialLoading) {
+    return (
+      <Paper elevation={0} sx={{ p: 2 }}>
+        <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 240 }}>
+          <CircularProgress />
+        </Stack>
+      </Paper>
+    );
+  }
 
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
