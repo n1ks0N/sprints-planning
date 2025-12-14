@@ -50,8 +50,10 @@ export default function ParticipantWorkloadPage() {
     useGetSprintsQuery(undefined);
   const allSprints = sprintsData;
   const { data: tasksPage, isLoading: isTasksLoading } = useGetTasksQuery({
-    page: 0,
-    size: 1000,
+    quarterIds: ui.selectedQuarterIds,
+    participantIds: ui.selectedParticipantIds,
+    roles: ui.rolesFilter,
+    priority: ui.priorityFilter,
   });
   const tasks: BacklogItem[] = tasksPage?.content ?? [];
 

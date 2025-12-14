@@ -439,6 +439,32 @@ public class TaskService {
     }
 
     private boolean matchesFilters(TaskEntity task, TaskFilter filter, Map<UUID, SprintEntity> sprintIndex) {
+        if (!filter.participantIds().isEmpty()) {
+            boolean hasSelectedParticipant = task.getParticipants().stream()
+                .map(TaskParticipantEntity::getParticipant)
+                .filter(Objects::nonNull)
+                .map(ParticipantEntity::getId)
+                .anyMatch(filter.participantIds()::contains);
+
+            if (!hasSelectedParticipant) {
+                return false;
+            }
+        }
+
+        if (!filter.roles().isEmpty()) {
+            boolean hasRole = task.getParticipants().stream()
+                .map(TaskParticipantEntity::getParticipant)
+                .filter(Objects::nonNull)
+                .map(ParticipantEntity::getRole)
+                .filter(Objects::nonNull)
+                .map(role -> role.trim().toLowerCase())
+                .anyMatch(filter.roles()::contains);
+
+            if (!hasRole) {
+                return false;
+            }
+        }
+
         if (!filter.priorities().isEmpty() && !filter.priorities().contains(task.getPriority())) {
             return false;
         }

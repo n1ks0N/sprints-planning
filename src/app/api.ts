@@ -722,6 +722,8 @@ export const api = createApi({
           statuses?: string[];
           releaseDate?: string;
           stream?: string;
+          participantIds?: string[];
+          roles?: string[];
           page?: number;
           size?: number;
         }
@@ -748,6 +750,12 @@ export const api = createApi({
 
         const stream = (arg?.stream || "").trim();
         if (stream) params.stream = stream;
+
+        const participantIds = joinOrUndefined(arg?.participantIds);
+        if (participantIds) params.participantId = participantIds;
+
+        const roles = joinOrUndefined(arg?.roles);
+        if (roles) params.role = roles;
 
         if (typeof arg?.page === "number") params.page = String(arg.page);
         if (typeof arg?.size === "number") params.size = String(arg.size);

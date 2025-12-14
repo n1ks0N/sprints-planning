@@ -35,10 +35,20 @@ public class TaskController {
         @RequestParam(value = "status", required = false) String status,
         @RequestParam(value = "releaseDate", required = false) String releaseDate,
         @RequestParam(value = "stream", required = false) String stream,
+        @RequestParam(value = "participantId", required = false) String participantId,
+        @RequestParam(value = "role", required = false) String role,
         @RequestParam(value = "page", required = false) Integer page,
         @RequestParam(value = "size", required = false) Integer size) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
-        TaskFilter filter = TaskFilter.from(quarterId, priority, status, releaseDate, stream);
+        TaskFilter filter = TaskFilter.from(
+            quarterId,
+            priority,
+            status,
+            releaseDate,
+            stream,
+            participantId,
+            role
+        );
         return taskService.findPage(normalizedTeamKey, filter, page, size);
     }
 

@@ -12,11 +12,21 @@ public record TaskFilter(
     Set<Short> priorities,
     Set<String> statuses,
     LocalDate releaseDate,
-    String stream
+    String stream,
+    Set<UUID> participantIds,
+    Set<String> roles
 ) {
 
     public static TaskFilter empty() {
-        return new TaskFilter(Collections.emptySet(), Collections.emptySet(), Collections.emptySet(), null, null);
+        return new TaskFilter(
+            Collections.emptySet(),
+            Collections.emptySet(),
+            Collections.emptySet(),
+            null,
+            null,
+            Collections.emptySet(),
+            Collections.emptySet()
+        );
     }
 
     public static TaskFilter from(
@@ -24,14 +34,18 @@ public record TaskFilter(
         String priorities,
         String statuses,
         String releaseDate,
-        String stream
+        String stream,
+        String participantIds,
+        String roles
     ) {
         return new TaskFilter(
             parseUuidSet(quarterIds),
             parseShortSet(priorities),
             parseStringSet(statuses),
             parseDate(releaseDate),
-            normalize(stream)
+            normalize(stream),
+            parseUuidSet(participantIds),
+            parseStringSet(roles)
         );
     }
 
