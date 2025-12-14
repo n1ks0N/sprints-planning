@@ -1320,12 +1320,14 @@ export default function BacklogPage() {
 
   const [isQuarterPending, startQuarterTransition] = React.useTransition();
 
+  const currentQuarterId = currentQ?.id;
+
   React.useEffect(() => {
-    if (!quarters.length) return;
-    if (selectedQuarterIds.length === 0 && currentQ) {
-      dispatch(setBacklogFilters({ selectedQuarterIds: [currentQ.id] }));
+    if (!quarters.length || !currentQuarterId) return;
+    if (selectedQuarterIds.length === 0) {
+      dispatch(setBacklogFilters({ selectedQuarterIds: [currentQuarterId] }));
     }
-  }, [quarters, currentQ, selectedQuarterIds.length, dispatch]);
+  }, [quarters.length, currentQuarterId, selectedQuarterIds.length, dispatch]);
 
   const sprintById = React.useMemo(() => {
     const m = new Map<string, Sprint>();
