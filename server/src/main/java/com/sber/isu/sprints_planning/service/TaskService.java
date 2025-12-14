@@ -96,13 +96,50 @@ public class TaskService {
 
     private List<TaskDto> findFilteredTasks(String teamKey, TaskFilter filter) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
-        List<TaskEntity> tasks = taskRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
+        Set<UUID> quarterIds = effectiveFilter.quarterIds().isEmpty()
+            ? Set.of(UUID.fromString("00000000-0000-0000-0000-000000000000"))
+            : effectiveFilter.quarterIds();
+        Set<Short> priorities = effectiveFilter.priorities().isEmpty()
+            ? Set.of((short) -1)
+            : effectiveFilter.priorities();
+        Set<String> statuses = effectiveFilter.statuses().isEmpty()
+            ? Set.of("__none__")
+            : effectiveFilter.statuses();
+        Set<UUID> participantIds = effectiveFilter.participantIds().isEmpty()
+            ? Set.of(UUID.fromString("00000000-0000-0000-0000-000000000000"))
+            : effectiveFilter.participantIds();
+        Set<String> roles = effectiveFilter.roles().isEmpty()
+            ? Set.of("__none__")
+            : effectiveFilter.roles();
+        Set<String> userStreams = effectiveFilter.userStreams().isEmpty()
+            ? Set.of("__none__")
+            : effectiveFilter.userStreams();
+
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
+        List<TaskEntity> tasks = taskRepository.findAllByTeamKeyWithFilters(
+            teamKey,
+            quarterIds,
+            effectiveFilter.quarterIds().isEmpty(),
+            priorities,
+            effectiveFilter.priorities().isEmpty(),
+            statuses,
+            effectiveFilter.statuses().isEmpty(),
+            effectiveFilter.releaseDate(),
+            effectiveFilter.stream(),
+            participantIds,
+            effectiveFilter.participantIds().isEmpty(),
+            roles,
+            effectiveFilter.roles().isEmpty(),
+            userStreams,
+            effectiveFilter.userStreams().isEmpty()
+        );
+
         tasks.forEach(task -> {
             task.setStatus(normalizeStatus(task.getStatus()));
             ensureLoadsForSprints(task, sprints);
         });
+
         return tasks.stream()
             .filter(task -> matchesFilters(task, effectiveFilter, sprintIndex))
             .map(DtoMapper::toTaskDto)
