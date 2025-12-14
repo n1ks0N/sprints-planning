@@ -1335,6 +1335,7 @@ export default function BacklogPage() {
   } = useAppSelector((s) => s.ui.backlog);
 
   const [isQuarterPending, startQuarterTransition] = React.useTransition();
+  const [isTaskUpdatePending, startTaskTransition] = React.useTransition();
 
   const currentQuarterId = currentQ?.id;
 
@@ -1832,37 +1833,43 @@ export default function BacklogPage() {
   const handleStatusChange = React.useCallback(
     (task: BacklogItem, st: TaskStatus) => {
       if ((task.status ?? "inprogress") === st) return;
-      updateTask({ id: task.id, status: st })
-        .unwrap()
-        .catch((e) => {
-          console.error("Failed to update status", e);
-        });
+      startTaskTransition(() => {
+        updateTask({ id: task.id, status: st })
+          .unwrap()
+          .catch((e) => {
+            console.error("Failed to update status", e);
+          });
+      });
     },
-    [updateTask]
+    [startTaskTransition, updateTask]
   );
 
   const handlePriorityChange = React.useCallback(
     (task: BacklogItem, priority: TaskPriority) => {
       if (task.priority === priority) return;
-      updateTask({ id: task.id, priority })
-        .unwrap()
-        .catch((e) => {
-          console.error("Failed to update priority", e);
-        });
+      startTaskTransition(() => {
+        updateTask({ id: task.id, priority })
+          .unwrap()
+          .catch((e) => {
+            console.error("Failed to update priority", e);
+          });
+      });
     },
-    [updateTask]
+    [startTaskTransition, updateTask]
   );
 
   const updateField = React.useCallback(
-    async (t: BacklogItem, patch: Partial<BacklogItem>) => {
+    (t: BacklogItem, patch: Partial<BacklogItem>) => {
       if (!patch || !Object.keys(patch).length) return;
-      try {
-        await updateTask({ id: t.id, ...patch }).unwrap();
-      } catch (e) {
-        console.error("Failed to update task", e);
-      }
+      startTaskTransition(() => {
+        updateTask({ id: t.id, ...patch })
+          .unwrap()
+          .catch((e) => {
+            console.error("Failed to update task", e);
+          });
+      });
     },
-    [updateTask]
+    [startTaskTransition, updateTask]
   );
 
   const handleUpdateTaskPatch = React.useCallback(
@@ -2010,22 +2017,24 @@ export default function BacklogPage() {
     });
   };
 
-  const commitCell = async (
+  const commitCell = (
     taskId: string,
     participantId: string,
     sprintId: string,
     value: number
   ) => {
-    try {
-      await upsertTaskAllocation({
+    startTaskTransition(() => {
+      upsertTaskAllocation({
         taskId,
         participantId,
         sprintId,
         days: toInt(Number(value) || 0),
-      }).unwrap();
-    } catch (e) {
-      console.error("Failed to save allocation", e);
-    }
+      })
+        .unwrap()
+        .catch((e) => {
+          console.error("Failed to save allocation", e);
+        });
+    });
   };
 
   const handleAllocChange = React.useCallback(
