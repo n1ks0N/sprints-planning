@@ -205,8 +205,8 @@ export default function ParticipantWorkloadPage() {
           <Stack
             direction="row"
             spacing={2}
-            alignItems="center"
-            sx={{ mb: 2, flexWrap: { xs: "wrap", md: "nowrap" } }}
+            alignItems="flex-start"
+            sx={{ mb: 2, flexWrap: "wrap", rowGap: 2 }}
           >
             <FilterAutocomplete
               multiple
