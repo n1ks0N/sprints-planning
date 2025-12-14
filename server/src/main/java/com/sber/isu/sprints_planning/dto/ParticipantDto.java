@@ -4,6 +4,7 @@ public record ParticipantDto(
     String id,
     String fullName,
     String role,
-    double rate
+    double rate,
+    java.util.List<String> userStreams
 ) {
 }

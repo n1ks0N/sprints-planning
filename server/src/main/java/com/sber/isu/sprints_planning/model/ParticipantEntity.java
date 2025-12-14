@@ -1,13 +1,19 @@
 package com.sber.isu.sprints_planning.model;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.CollectionTable;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.UUID;
 import org.hibernate.annotations.UuidGenerator;
 
@@ -33,6 +39,11 @@ public class ParticipantEntity {
 
     @Column(name = "display_order", nullable = false)
     private int displayOrder;
+
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "participant_user_streams", joinColumns = @JoinColumn(name = "participant_id"))
+    @Column(name = "user_stream", nullable = false)
+    private Set<String> userStreams = new LinkedHashSet<>();
 
     @Column(name = "team_key", nullable = false)
     private String teamKey;
@@ -83,6 +94,14 @@ public class ParticipantEntity {
 
     public void setTeamKey(String teamKey) {
         this.teamKey = teamKey;
+    }
+
+    public Set<String> getUserStreams() {
+        return userStreams;
+    }
+
+    public void setUserStreams(Set<String> userStreams) {
+        this.userStreams = userStreams;
     }
 
     @PrePersist

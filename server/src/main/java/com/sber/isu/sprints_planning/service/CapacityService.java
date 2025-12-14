@@ -85,7 +85,10 @@ public class CapacityService {
                     participant.getId().toString(),
                     participant.getFullName(),
                     participant.getRole(),
-                    roundedParticipantRate
+                    roundedParticipantRate,
+                    participant.getUserStreams() == null
+                        ? java.util.List.of()
+                        : participant.getUserStreams().stream().toList()
                 ),
                 cells,
                 roundToOneDecimal(totalAvailable),

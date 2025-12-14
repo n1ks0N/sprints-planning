@@ -1299,6 +1299,10 @@ export default function BacklogPage() {
   const allSprints = sprintsData;
   const { data: releases = [], isLoading: isReleasesLoading } =
     useGetReleasesQuery();
+  const quarterIdsKey = React.useMemo(
+    () => quarters.map((q) => q.id).join("|"),
+    [quarters]
+  );
   const quarterIdSet = React.useMemo(
     () => new Set(quarters.map((q) => q.id)),
     [quarters]
@@ -1320,12 +1324,20 @@ export default function BacklogPage() {
 
   const [isQuarterPending, startQuarterTransition] = React.useTransition();
 
+  const currentQuarterId = currentQ?.id;
+
+  const hasInitializedQuarterFilter = React.useRef(false);
+
   React.useEffect(() => {
-    if (!quarters.length) return;
-    if (selectedQuarterIds.length === 0 && currentQ) {
-      dispatch(setBacklogFilters({ selectedQuarterIds: [currentQ.id] }));
+    if (hasInitializedQuarterFilter.current) return;
+    if (!quarters.length || !currentQuarterId) return;
+
+    hasInitializedQuarterFilter.current = true;
+
+    if (selectedQuarterIds.length === 0) {
+      dispatch(setBacklogFilters({ selectedQuarterIds: [currentQuarterId] }));
     }
-  }, [quarters, currentQ, selectedQuarterIds.length, dispatch]);
+  }, [quarters.length, currentQuarterId, selectedQuarterIds.length, dispatch]);
 
   const sprintById = React.useMemo(() => {
     const m = new Map<string, Sprint>();
@@ -1503,20 +1515,21 @@ export default function BacklogPage() {
   const [addTaskQuarterError, setAddTaskQuarterError] = React.useState(false);
 
   React.useEffect(() => {
+    if (selectedQuarterIds.length === 0) return;
+
     const validSelected = selectedQuarterIds.filter((id) =>
       quarterIdSet.has(id)
     );
-    if (
-      selectedQuarterIds.length > 0 &&
-      validSelected.length !== selectedQuarterIds.length
-    ) {
-      dispatch(setBacklogFilters({ selectedQuarterIds: validSelected }));
-    }
+    if (shallowArrayEqual(validSelected, selectedQuarterIds)) return;
+
+    dispatch(setBacklogFilters({ selectedQuarterIds: validSelected }));
   }, [selectedQuarterIds, quarterIdSet, dispatch]);
 
   React.useEffect(() => {
-    setNewTaskQuarterId((prev) => {
-      const prevValid = prev && quarterIdSet.has(prev) ? prev : "";
+    const nextQuarterId = (() => {
+      const prevValid = newTaskQuarterId && quarterIdSet.has(newTaskQuarterId)
+        ? newTaskQuarterId
+        : "";
       if (prevValid) return prevValid;
       const fromSelected = selectedQuarterIds.find((id) =>
         quarterIdSet.has(id)
@@ -1526,8 +1539,17 @@ export default function BacklogPage() {
         return defaultQuarterId;
       }
       return "";
-    });
-  }, [quarterIdSet, selectedQuarterIds, defaultQuarterId]);
+    })();
+
+    if (nextQuarterId === newTaskQuarterId) return;
+    setNewTaskQuarterId(nextQuarterId);
+  }, [
+    quarterIdSet,
+    selectedQuarterIds,
+    defaultQuarterId,
+    newTaskQuarterId,
+    quarterIdsKey,
+  ]);
 
   React.useEffect(() => {
     if (!allTasks.length) return;
@@ -1567,6 +1589,7 @@ export default function BacklogPage() {
   React.useEffect(() => {
     setAllocations((prev) => {
       const next: Allocations = { ...prev };
+      let changed = false;
       for (const t of allTasks) {
         const taskAllocations: Record<string, Record<string, number>> = next[
           t.id
@@ -1574,7 +1597,10 @@ export default function BacklogPage() {
         const pids = t.participantIds || [];
 
         Object.keys(taskAllocations).forEach((pid) => {
-          if (!pids.includes(pid)) delete taskAllocations[pid];
+          if (!pids.includes(pid)) {
+            delete taskAllocations[pid];
+            changed = true;
+          }
         });
 
         for (const pid of pids) {
@@ -1584,29 +1610,38 @@ export default function BacklogPage() {
             const existing = participantAllocations[s.id];
             const incoming = t.allocations?.[pid]?.[s.id];
             const value = Number(incoming ?? existing ?? 0) || 0;
-            participantAllocations[s.id] = value;
+            if (participantAllocations[s.id] !== value) {
+              participantAllocations[s.id] = value;
+              changed = true;
+            }
           }
         }
       }
-      return next;
+      return changed ? next : prev;
     });
   }, [allTasks, allSprints]);
 
   React.useEffect(() => {
     setParticipantOrders((prev) => {
       const next = { ...prev } as Record<string, string[]>;
+      let changed = false;
       for (const task of allTasks) {
         const ids = task.participantIds || [];
         const existing = next[task.id];
         if (!existing) {
           next[task.id] = ids.slice();
+          changed = true;
           continue;
         }
         const kept = existing.filter((id) => ids.includes(id));
         const added = ids.filter((id) => !kept.includes(id));
-        next[task.id] = [...kept, ...added];
+        const updated = [...kept, ...added];
+        if (!shallowArrayEqual(updated, existing)) {
+          next[task.id] = updated;
+          changed = true;
+        }
       }
-      return next;
+      return changed ? next : prev;
     });
   }, [allTasks]);
 

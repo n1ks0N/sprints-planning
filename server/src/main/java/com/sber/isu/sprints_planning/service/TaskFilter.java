@@ -14,7 +14,8 @@ public record TaskFilter(
     LocalDate releaseDate,
     String stream,
     Set<UUID> participantIds,
-    Set<String> roles
+    Set<String> roles,
+    Set<String> userStreams
 ) {
 
     public static TaskFilter empty() {
@@ -24,6 +25,7 @@ public record TaskFilter(
             Collections.emptySet(),
             null,
             null,
+            Collections.emptySet(),
             Collections.emptySet(),
             Collections.emptySet()
         );
@@ -36,7 +38,8 @@ public record TaskFilter(
         String releaseDate,
         String stream,
         String participantIds,
-        String roles
+        String roles,
+        String userStreams
     ) {
         return new TaskFilter(
             parseUuidSet(quarterIds),
@@ -45,7 +48,8 @@ public record TaskFilter(
             parseDate(releaseDate),
             normalize(stream),
             parseUuidSet(participantIds),
-            parseStringSet(roles)
+            parseStringSet(roles),
+            parseStringSet(userStreams)
         );
     }
 

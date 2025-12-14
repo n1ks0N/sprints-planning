@@ -22,6 +22,7 @@ export type Participant = {
   fullName: string;
   role: string;
   rate: number;
+  userStreams: string[];
 };
 
 export type CapacityCell = {
