@@ -1322,8 +1322,14 @@ export default function BacklogPage() {
 
   const currentQuarterId = currentQ?.id;
 
+  const hasInitializedQuarterFilter = React.useRef(false);
+
   React.useEffect(() => {
+    if (hasInitializedQuarterFilter.current) return;
     if (!quarters.length || !currentQuarterId) return;
+
+    hasInitializedQuarterFilter.current = true;
+
     if (selectedQuarterIds.length === 0) {
       dispatch(setBacklogFilters({ selectedQuarterIds: [currentQuarterId] }));
     }
