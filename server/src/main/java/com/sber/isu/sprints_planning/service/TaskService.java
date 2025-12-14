@@ -63,10 +63,12 @@ public class TaskService {
         this.sprintRepository = sprintRepository;
     }
 
+    @Transactional
     public List<TaskDto> findAll(String teamKey, TaskFilter filter) {
         return findFilteredTasks(teamKey, filter);
     }
 
+    @Transactional
     public Page<TaskDto> findPage(String teamKey, TaskFilter filter, Integer page, Integer size) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
         List<TaskDto> filtered = findFilteredTasks(teamKey, effectiveFilter);

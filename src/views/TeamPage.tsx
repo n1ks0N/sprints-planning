@@ -429,9 +429,7 @@ export default function TeamPage() {
               inputValue={editUserStreamInput}
               onChange={(_, val) => setEditUserStreams(val as string[])}
               onInputChange={(_, val) => setEditUserStreamInput(val)}
-              renderInput={(params) => (
-                <TextField {...params} label="Стрим (участника)" />
-              )}
+              renderInput={(params) => <TextField {...params} label="Стрим" />}
             />
           )}
         </TableCell>
@@ -534,9 +532,7 @@ export default function TeamPage() {
           inputValue={newUserStreamInput}
           onChange={(_, val) => setNewUserStreams(val as string[])}
           onInputChange={(_, val) => setNewUserStreamInput(val)}
-          renderInput={(params) => (
-            <TextField {...params} label="Стрим (участника)" />
-          )}
+          renderInput={(params) => <TextField {...params} label="Стрим" />}
           sx={{ minWidth: 240 }}
         />
         <Autocomplete
@@ -581,7 +577,7 @@ export default function TeamPage() {
           <FilterAutocomplete
             multiple
             allowCustom={false}
-            label="Фильтр: Стрим (участника)"
+            label="Фильтр: Стрим"
             options={allUserStreamOptions}
             value={filterUserStreams}
             onChange={handleUserStreamFilterChange}
@@ -616,7 +612,7 @@ export default function TeamPage() {
                   <TableCell width={44} />
                   <TableCell>ФИО</TableCell>
                   <TableCell>Роль</TableCell>
-                  <TableCell>Стрим (участника)</TableCell>
+                  <TableCell>Стрим</TableCell>
                   <TableCell>Ставка</TableCell>
                   <TableCell align="right" width={160}>
                     Действия

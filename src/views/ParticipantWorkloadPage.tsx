@@ -253,7 +253,7 @@ export default function ParticipantWorkloadPage() {
             <FilterAutocomplete
               multiple
               allowCustom={false}
-              label="Стрим (участника)"
+              label="Стрим"
               options={userStreamOptions}
               value={ui.userStreamsFilter}
               onChange={handleUserStreamsFilterChange}
