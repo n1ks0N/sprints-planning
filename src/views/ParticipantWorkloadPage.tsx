@@ -12,6 +12,7 @@ import {
   TableContainer,
   Tooltip,
   CircularProgress,
+  Box,
 } from "@mui/material";
 import {
   useGetParticipantsQuery,
@@ -202,11 +203,18 @@ export default function ParticipantWorkloadPage() {
             Нагрузка по участникам
           </Typography>
 
-          <Stack
-            direction="row"
-            spacing={2}
-            alignItems="flex-start"
-            sx={{ mb: 2, flexWrap: "wrap", rowGap: 2 }}
+          <Box
+            sx={{
+              mb: 2,
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "repeat(auto-fit, minmax(220px, 1fr))",
+                md: "repeat(auto-fit, minmax(240px, 1fr))",
+              },
+              gridAutoFlow: "row dense",
+              gap: 2,
+              alignItems: "flex-start",
+            }}
           >
             <FilterAutocomplete
               multiple
@@ -269,7 +277,7 @@ export default function ParticipantWorkloadPage() {
               onChange={handlePriorityFilterChange}
               sx={{ minWidth: 180 }}
             />
-          </Stack>
+          </Box>
 
           <Stack spacing={2}>
             {participantsInScope.map((p) => {
