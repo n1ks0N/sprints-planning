@@ -284,8 +284,8 @@ function EditableNumberCell({
     const next = Number.isFinite(draft) ? draft : 0;
     if (next !== value) {
       onChange(next);
+      onCommit?.(next);
     }
-    onCommit?.(next);
   }, [draft, editing, onChange, onCommit, value]);
 
   if (!editing) {
@@ -1335,7 +1335,7 @@ export default function BacklogPage() {
   } = useAppSelector((s) => s.ui.backlog);
 
   const [isQuarterPending, startQuarterTransition] = React.useTransition();
-  const [isTaskUpdatePending, startTaskTransition] = React.useTransition();
+  const [, startTaskTransition] = React.useTransition();
 
   const currentQuarterId = currentQ?.id;
 
@@ -1830,46 +1830,37 @@ export default function BacklogPage() {
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
 
+  const updateField = React.useCallback(
+    (t: BacklogItem, patch: Partial<BacklogItem>) => {
+      if (!patch || !Object.keys(patch).length) return Promise.resolve();
+      const promise = updateTask({ id: t.id, ...patch })
+        .unwrap()
+        .catch((e) => {
+          console.error("Failed to update task", e);
+          throw e;
+        });
+      startTaskTransition(() => {
+        void promise;
+      });
+      return promise;
+    },
+    [startTaskTransition, updateTask]
+  );
+
   const handleStatusChange = React.useCallback(
     (task: BacklogItem, st: TaskStatus) => {
       if ((task.status ?? "inprogress") === st) return;
-      startTaskTransition(() => {
-        updateTask({ id: task.id, status: st })
-          .unwrap()
-          .catch((e) => {
-            console.error("Failed to update status", e);
-          });
-      });
+      void updateField(task, { status: st });
     },
-    [startTaskTransition, updateTask]
+    [updateField]
   );
 
   const handlePriorityChange = React.useCallback(
     (task: BacklogItem, priority: TaskPriority) => {
       if (task.priority === priority) return;
-      startTaskTransition(() => {
-        updateTask({ id: task.id, priority })
-          .unwrap()
-          .catch((e) => {
-            console.error("Failed to update priority", e);
-          });
-      });
+      void updateField(task, { priority });
     },
-    [startTaskTransition, updateTask]
-  );
-
-  const updateField = React.useCallback(
-    (t: BacklogItem, patch: Partial<BacklogItem>) => {
-      if (!patch || !Object.keys(patch).length) return;
-      startTaskTransition(() => {
-        updateTask({ id: t.id, ...patch })
-          .unwrap()
-          .catch((e) => {
-            console.error("Failed to update task", e);
-          });
-      });
-    },
-    [startTaskTransition, updateTask]
+    [updateField]
   );
 
   const handleUpdateTaskPatch = React.useCallback(
