@@ -8,7 +8,7 @@ import com.sber.isu.sprints_planning.service.TaskFilter;
 import com.sber.isu.sprints_planning.service.TaskService;
 import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
-import java.util.List;
+import org.springframework.data.domain.Page;
 import java.util.UUID;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,15 +29,33 @@ public class TaskController {
     }
 
     @GetMapping("/tasks")
-    public List<TaskDto> getTasks(@PathVariable String teamKey,
+    public Page<TaskDto> getTasks(@PathVariable String teamKey,
         @RequestParam(value = "quarterId", required = false) String quarterId,
         @RequestParam(value = "priority", required = false) String priority,
         @RequestParam(value = "status", required = false) String status,
         @RequestParam(value = "releaseDate", required = false) String releaseDate,
-        @RequestParam(value = "stream", required = false) String stream) {
+        @RequestParam(value = "stream", required = false) String stream,
+        @RequestParam(value = "participantId", required = false) String participantId,
+        @RequestParam(value = "role", required = false) String role,
+        @RequestParam(value = "page", required = false) Integer page,
+        @RequestParam(value = "size", required = false) Integer size) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
-        TaskFilter filter = TaskFilter.from(quarterId, priority, status, releaseDate, stream);
-        return taskService.findAll(normalizedTeamKey, filter);
+        TaskFilter filter = TaskFilter.from(
+            quarterId,
+            priority,
+            status,
+            releaseDate,
+            stream,
+            participantId,
+            role
+        );
+        return taskService.findPage(normalizedTeamKey, filter, page, size);
+    }
+
+    @GetMapping("/tasks/{id}")
+    public TaskDto getTask(@PathVariable String teamKey, @PathVariable UUID id) {
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.findById(normalizedTeamKey, id);
     }
 
     @PostMapping("/tasks")

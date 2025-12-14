@@ -6,6 +6,7 @@ import type {
   Participant,
   CapacityRow,
   BacklogItem,
+  Page,
   Release,
   ApiSessionHistory,
   Team,
@@ -234,6 +235,19 @@ const applyPatches = <Args>(
       api.util.updateQueryData(endpointName as any, args as any, updater)
     )
   );
+
+type TasksPage = Page<BacklogItem>;
+
+const updateTasksDraft = (
+  draft: TasksPage | undefined,
+  updater: (tasks: BacklogItem[]) => void
+) => {
+  if (!draft) return;
+  updater(draft.content);
+  draft.numberOfElements = draft.content.length;
+  draft.totalElements = Math.max(draft.totalElements, draft.content.length);
+  draft.empty = draft.content.length === 0;
+};
 
 const collectSprintsFromCache = (state: AnyState): Sprint[] => {
   const queries = api.util
@@ -700,7 +714,7 @@ export const api = createApi({
 
     // ---- Backlog ----
     getTasks: b.query<
-      BacklogItem[],
+      TasksPage,
       | void
       | {
           quarterIds?: string[];
@@ -708,6 +722,10 @@ export const api = createApi({
           statuses?: string[];
           releaseDate?: string;
           stream?: string;
+          participantIds?: string[];
+          roles?: string[];
+          page?: number;
+          size?: number;
         }
     >({
       query: (arg) => {
@@ -733,19 +751,80 @@ export const api = createApi({
         const stream = (arg?.stream || "").trim();
         if (stream) params.stream = stream;
 
+        const participantIds = joinOrUndefined(arg?.participantIds);
+        if (participantIds) params.participantId = participantIds;
+
+        const roles = joinOrUndefined(arg?.roles);
+        if (roles) params.role = roles;
+
+        if (typeof arg?.page === "number") params.page = String(arg.page);
+        if (typeof arg?.size === "number") params.size = String(arg.size);
+
         return {
           url: "/tasks",
           method: "GET",
           params: Object.keys(params).length ? params : undefined,
         };
       },
+      serializeQueryArgs: ({ queryArgs, endpointName }) => {
+        if (!queryArgs || typeof queryArgs !== "object") return endpointName;
+        const { page, size, ...rest } = queryArgs as Record<string, unknown>;
+        return `${endpointName}-${JSON.stringify(rest)}`;
+      },
+      merge: (currentCache, newData, { arg }) => {
+        if (!newData) return;
+        if (!currentCache) {
+          return newData;
+        }
+        const shouldReset = !arg || typeof arg !== "object" || !("page" in arg) || (arg as any).page === 0;
+        if (shouldReset) {
+          Object.assign(currentCache, newData);
+          return;
+        }
+
+        const existingIndex = new Map(currentCache.content.map((t, idx) => [t.id, idx] as const));
+        newData.content.forEach((item) => {
+          const idx = existingIndex.get(item.id);
+          if (idx === undefined) {
+            currentCache.content.push(item);
+          } else {
+            currentCache.content[idx] = item;
+          }
+        });
+
+        currentCache.number = newData.number;
+        currentCache.size = newData.size;
+        currentCache.totalPages = newData.totalPages;
+        currentCache.totalElements = newData.totalElements;
+        currentCache.last = newData.last;
+        currentCache.first = newData.first && ((arg as any).page ?? 0) === 0;
+        currentCache.numberOfElements = currentCache.content.length;
+        currentCache.empty = currentCache.content.length === 0;
+      },
+      forceRefetch({ currentArg, previousArg }) {
+        if (!currentArg || !previousArg) return true;
+        const { page: currentPage, size: currentSize, ...currentFilters } =
+          (currentArg as Record<string, unknown>) || {};
+        const { page: prevPage, size: prevSize, ...prevFilters } =
+          (previousArg as Record<string, unknown>) || {};
+
+        if (currentPage !== prevPage || currentSize !== prevSize) return true;
+        return JSON.stringify(currentFilters) !== JSON.stringify(prevFilters);
+      },
       providesTags: (result) =>
         result
           ? [
               { type: "Task" as const, id: "LIST" as const },
-              ...result.map((t) => ({ type: "Task" as const, id: t.id })),
+              ...result.content.map((t) => ({ type: "Task" as const, id: t.id })),
             ]
           : [{ type: "Task" as const, id: "LIST" as const }],
+    }),
+    getTask: b.query<BacklogItem, string>({
+      query: (id) => ({ url: `/tasks/${id}`, method: "GET" }),
+      providesTags: (result, error, id) => [
+        { type: "Task" as const, id },
+        { type: "Task" as const, id: "LIST" as const },
+      ],
     }),
     addTask: b.mutation<BacklogItem, Partial<BacklogItem>>({
       query: (body) => ({ url: "/tasks", method: "POST", body }),
@@ -779,7 +858,7 @@ export const api = createApi({
           updatedAt: now,
         } as BacklogItem;
 
-        const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
           getState,
           "getTasks",
           [{ type: "Task", id: "LIST" }]
@@ -789,17 +868,21 @@ export const api = createApi({
           dispatch,
           "getTasks",
           cachedArgs,
-          (draft: BacklogItem[]) => {
-            draft.push(optimistic);
+          (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              tasks.push(optimistic);
+            });
           }
         );
 
         try {
           const { data } = await queryFulfilled;
-          applyPatches(dispatch, "getTasks", cachedArgs, (draft: BacklogItem[]) => {
-            const idx = draft.findIndex((t: BacklogItem) => t.id === optimistic.id);
-            if (idx >= 0) draft[idx] = data;
-            else draft.push(data);
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const idx = tasks.findIndex((t: BacklogItem) => t.id === optimistic.id);
+              if (idx >= 0) tasks[idx] = data;
+              else tasks.push(data);
+            });
           });
         } catch (error) {
           patches.forEach((p) => p.undo());
@@ -816,7 +899,7 @@ export const api = createApi({
           { type: "Capacity" as const, id: "LIST" as const },
         ],
         async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-          const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+          const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
             getState,
             "getTasks",
             [
@@ -829,17 +912,22 @@ export const api = createApi({
             dispatch,
             "getTasks",
             cachedArgs,
-            (draft: BacklogItem[]) => {
-              const idx = draft.findIndex((t: BacklogItem) => t.id === arg.id);
-              if (idx >= 0) draft[idx] = { ...draft[idx], ...arg } as BacklogItem;
+            (draft: TasksPage) => {
+              updateTasksDraft(draft, (tasks) => {
+                const idx = tasks.findIndex((t: BacklogItem) => t.id === arg.id);
+                if (idx >= 0)
+                  tasks[idx] = { ...tasks[idx], ...arg } as BacklogItem;
+              });
             }
           );
 
           try {
             const { data } = await queryFulfilled;
-            applyPatches(dispatch, "getTasks", cachedArgs, (draft: BacklogItem[]) => {
-              const idx = draft.findIndex((t: BacklogItem) => t.id === data.id);
-              if (idx >= 0) draft[idx] = data;
+            applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
+              updateTasksDraft(draft, (tasks) => {
+                const idx = tasks.findIndex((t: BacklogItem) => t.id === data.id);
+                if (idx >= 0) tasks[idx] = data;
+              });
             });
           } catch (error) {
             patches.forEach((p) => p.undo());
@@ -856,7 +944,7 @@ export const api = createApi({
         { type: "Capacity" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
           getState,
           "getTasks",
           [
@@ -869,9 +957,11 @@ export const api = createApi({
           dispatch,
           "getTasks",
           cachedArgs,
-          (draft: BacklogItem[]) => {
-            const idx = draft.findIndex((t: BacklogItem) => t.id === arg.id);
-            if (idx >= 0) draft.splice(idx, 1);
+          (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const idx = tasks.findIndex((t: BacklogItem) => t.id === arg.id);
+              if (idx >= 0) tasks.splice(idx, 1);
+            });
           }
         );
 
@@ -896,7 +986,7 @@ export const api = createApi({
         { type: "Capacity" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
           getState,
           "getTasks",
           [
@@ -909,23 +999,27 @@ export const api = createApi({
           dispatch,
           "getTasks",
           cachedArgs,
-          (draft: BacklogItem[]) => {
-            const task = draft.find((t: BacklogItem) => t.id === arg.taskId);
-            if (task)
-              applyAllocation(
-                task,
-                arg.participantId,
-                arg.sprintId,
-                arg.days
-              );
+          (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const task = tasks.find((t: BacklogItem) => t.id === arg.taskId);
+              if (task)
+                applyAllocation(
+                  task,
+                  arg.participantId,
+                  arg.sprintId,
+                  arg.days
+                );
+            });
           }
         );
 
         try {
           const { data } = await queryFulfilled;
-          applyPatches(dispatch, "getTasks", cachedArgs, (draft: BacklogItem[]) => {
-            const idx = draft.findIndex((t: BacklogItem) => t.id === data.id);
-            if (idx >= 0) draft[idx] = data;
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const idx = tasks.findIndex((t: BacklogItem) => t.id === data.id);
+              if (idx >= 0) tasks[idx] = data;
+            });
           });
         } catch (error) {
           patches.forEach((p) => p.undo());
@@ -945,7 +1039,7 @@ export const api = createApi({
         { type: "Capacity" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
           getState,
           "getTasks",
           [
@@ -958,17 +1052,21 @@ export const api = createApi({
           dispatch,
           "getTasks",
           cachedArgs,
-          (draft: BacklogItem[]) => {
-            const task = draft.find((t: BacklogItem) => t.id === arg.taskId);
-            if (task) applyBulkAllocation(task, arg.participantId, arg.allocations);
+          (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const task = tasks.find((t: BacklogItem) => t.id === arg.taskId);
+              if (task) applyBulkAllocation(task, arg.participantId, arg.allocations);
+            });
           }
         );
 
         try {
           const { data } = await queryFulfilled;
-          applyPatches(dispatch, "getTasks", cachedArgs, (draft: BacklogItem[]) => {
-            const idx = draft.findIndex((t: BacklogItem) => t.id === data.id);
-            if (idx >= 0) draft[idx] = data;
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const idx = tasks.findIndex((t: BacklogItem) => t.id === data.id);
+              if (idx >= 0) tasks[idx] = data;
+            });
           });
         } catch (error) {
           patches.forEach((p) => p.undo());
@@ -989,7 +1087,7 @@ export const api = createApi({
         { type: "Capacity" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const cachedArgs = collectCachedArgs<{ quarterId?: string } | void>(
+        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
           getState,
           "getTasks",
           [
@@ -1002,17 +1100,21 @@ export const api = createApi({
           dispatch,
           "getTasks",
           cachedArgs,
-          (draft: BacklogItem[]) => {
-            const task = draft.find((t: BacklogItem) => t.id === arg.taskId);
-            if (task) applySprintLoad(task, arg.sprintId, arg.days);
+          (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const task = tasks.find((t: BacklogItem) => t.id === arg.taskId);
+              if (task) applySprintLoad(task, arg.sprintId, arg.days);
+            });
           }
         );
 
         try {
           const { data } = await queryFulfilled;
-          applyPatches(dispatch, "getTasks", cachedArgs, (draft: BacklogItem[]) => {
-            const idx = draft.findIndex((t: BacklogItem) => t.id === data.id);
-            if (idx >= 0) draft[idx] = data;
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const idx = tasks.findIndex((t: BacklogItem) => t.id === data.id);
+              if (idx >= 0) tasks[idx] = data;
+            });
           });
         } catch (error) {
           patches.forEach((p) => p.undo());
@@ -1236,6 +1338,7 @@ export const {
 
   useGetCapacityQuery,
 
+  useGetTaskQuery,
   useGetTasksQuery,
   useAddTaskMutation,
   useUpdateTaskMutation,
