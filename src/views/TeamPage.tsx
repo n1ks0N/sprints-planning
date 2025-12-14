@@ -56,6 +56,16 @@ const PRESET_RATES = [1, 0.75, 0.5, 0.25];
 const uniqueRolesFrom = (participants: Participant[]) =>
   Array.from(new Set(participants.map((p) => p.role).filter(Boolean)));
 
+const uniqueUserStreamsFrom = (participants: Participant[]) =>
+  Array.from(
+    new Set(
+      participants.flatMap((p) => p.userStreams || []).map((v) => v.trim()).filter(Boolean)
+    )
+  );
+
+const normalizeUserStreams = (values: string[]) =>
+  Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
+
 function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
@@ -116,7 +126,9 @@ export default function TeamPage() {
   const [deleteParticipant] = useDeleteParticipantMutation();
   const [reorderParticipants] = useReorderParticipantsMutation();
   const dispatch = useAppDispatch();
-  const { filterRoles, filterRates } = useAppSelector((s) => s.ui.team);
+  const { filterRoles, filterRates, filterUserStreams } = useAppSelector(
+    (s) => s.ui.team
+  );
 
   // Добавление
   const [newName, setNewName] = React.useState("");
@@ -125,6 +137,8 @@ export default function TeamPage() {
   // Ставка при добавлении — как у роли: Autocomplete freeSolo
   const [newRate, setNewRate] = React.useState<string>("1");
   const [newRateInput, setNewRateInput] = React.useState<string>("");
+  const [newUserStreams, setNewUserStreams] = React.useState<string[]>([]);
+  const [newUserStreamInput, setNewUserStreamInput] = React.useState<string>("");
 
   // Редактирование
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -134,6 +148,8 @@ export default function TeamPage() {
   // Ставка при редактировании — через Autocomplete freeSolo
   const [editRate, setEditRate] = React.useState<string>("1");
   const [editRateInput, setEditRateInput] = React.useState<string>("");
+  const [editUserStreams, setEditUserStreams] = React.useState<string[]>([]);
+  const [editUserStreamInput, setEditUserStreamInput] = React.useState<string>("");
 
   const allRoleOptions = React.useMemo(
     () =>
@@ -151,6 +167,11 @@ export default function TeamPage() {
       .sort((a, b) => b - a)
       .map((v) => String(Number(v.toFixed(2)))); // "1", "0.75", "0.5", ...
   }, [participants]);
+
+  const allUserStreamOptions = React.useMemo(
+    () => uniqueUserStreamsFrom(participants),
+    [participants]
+  );
 
   const handleRoleFilterChange = React.useCallback(
     (values: string[]) => {
@@ -177,6 +198,15 @@ export default function TeamPage() {
     [dispatch, filterRates]
   );
 
+  const handleUserStreamFilterChange = React.useCallback(
+    (values: string[]) => {
+      const next = normalizeUserStreams(values);
+      if (shallowArrayEqual(next, filterUserStreams)) return;
+      dispatch(setTeamFilters({ filterUserStreams: next }));
+    },
+    [dispatch, filterUserStreams]
+  );
+
   const filtered = React.useMemo(() => {
     let list = participants.slice();
 
@@ -190,8 +220,15 @@ export default function TeamPage() {
       list = list.filter((p) => rateSet.has(String(Number(p.rate.toFixed(2)))));
     }
 
+    if (filterUserStreams.length) {
+      const userStreamSet = new Set(filterUserStreams.map((s) => s.trim()));
+      list = list.filter((p) =>
+        (p.userStreams || []).some((stream) => userStreamSet.has(stream.trim()))
+      );
+    }
+
     return list;
-  }, [participants, filterRoles, filterRates]);
+  }, [participants, filterRoles, filterRates, filterUserStreams]);
 
   // DnD
   const sensors = useSensors(
@@ -255,16 +292,24 @@ export default function TeamPage() {
     if (!newName.trim() || !roleValue || isNaN(rate)) return;
     if (rate < 0 || rate > 1) return;
 
+    const userStreams = normalizeUserStreams([
+      ...newUserStreams,
+      newUserStreamInput,
+    ]);
+
     await addParticipant({
       fullName: newName.trim(),
       role: roleValue,
       rate,
+      userStreams,
     }).unwrap();
     setNewName("");
     setNewRole("");
     setNewRoleInput("");
     setNewRate("1");
     setNewRateInput("");
+    setNewUserStreams([]);
+    setNewUserStreamInput("");
   };
 
   const startEdit = (p: Participant) => {
@@ -274,6 +319,8 @@ export default function TeamPage() {
     setEditRoleInput(p.role);
     setEditRate(String(Number(p.rate.toFixed(2))));
     setEditRateInput(String(Number(p.rate.toFixed(2))));
+    setEditUserStreams(p.userStreams || []);
+    setEditUserStreamInput("");
   };
 
   const cancelEdit = () => {
@@ -283,6 +330,8 @@ export default function TeamPage() {
     setEditRoleInput("");
     setEditRate("1");
     setEditRateInput("");
+    setEditUserStreams([]);
+    setEditUserStreamInput("");
   };
 
   const saveEdit = async () => {
@@ -296,11 +345,17 @@ export default function TeamPage() {
     if (!editName.trim() || !roleValue || isNaN(rate)) return;
     if (rate < 0 || rate > 1) return;
 
+    const userStreams = normalizeUserStreams([
+      ...editUserStreams,
+      editUserStreamInput,
+    ]);
+
     await updateParticipant({
       id: editingId,
       fullName: editName.trim(),
       role: roleValue,
       rate,
+      userStreams,
     }).unwrap();
     cancelEdit();
   };
@@ -316,6 +371,7 @@ export default function TeamPage() {
 
   const renderRow = (p: Participant) => {
     const isEditing = editingId === p.id;
+    const userStreams = p.userStreams || [];
     return (
       <SortableRow key={p.id} participant={p}>
         {/* ФИО */}
@@ -347,6 +403,35 @@ export default function TeamPage() {
               onChange={(_, val) => setEditRole((val as string) ?? "")}
               onInputChange={(_, val) => setEditRoleInput(val)}
               renderInput={(params) => <TextField {...params} label="Роль" />}
+            />
+          )}
+        </TableCell>
+
+        {/* Стрим пользователя */}
+        <TableCell sx={{ minWidth: 240 }}>
+          {!isEditing ? (
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              {userStreams.length ? (
+                userStreams.map((stream) => (
+                  <Chip key={stream} label={stream} size="small" />
+                ))
+              ) : (
+                <Typography color="text.secondary">—</Typography>
+              )}
+            </Stack>
+          ) : (
+            <Autocomplete
+              multiple
+              freeSolo
+              size="small"
+              options={allUserStreamOptions}
+              value={editUserStreams}
+              inputValue={editUserStreamInput}
+              onChange={(_, val) => setEditUserStreams(val as string[])}
+              onInputChange={(_, val) => setEditUserStreamInput(val)}
+              renderInput={(params) => (
+                <TextField {...params} label="Стрим (участника)" />
+              )}
             />
           )}
         </TableCell>
@@ -441,6 +526,20 @@ export default function TeamPage() {
           sx={{ minWidth: 220 }}
         />
         <Autocomplete
+          multiple
+          size="small"
+          freeSolo
+          options={allUserStreamOptions}
+          value={newUserStreams}
+          inputValue={newUserStreamInput}
+          onChange={(_, val) => setNewUserStreams(val as string[])}
+          onInputChange={(_, val) => setNewUserStreamInput(val)}
+          renderInput={(params) => (
+            <TextField {...params} label="Стрим (участника)" />
+          )}
+          sx={{ minWidth: 240 }}
+        />
+        <Autocomplete
           size="small"
           freeSolo
           options={rateOptions}
@@ -481,6 +580,16 @@ export default function TeamPage() {
 
           <FilterAutocomplete
             multiple
+            allowCustom={false}
+            label="Фильтр: Стрим (участника)"
+            options={allUserStreamOptions}
+            value={filterUserStreams}
+            onChange={handleUserStreamFilterChange}
+            sx={{ minWidth: 260, flex: 1 }}
+          />
+
+          <FilterAutocomplete
+            multiple
             label="Фильтр: Ставка (0..1)"
             options={rateOptions}
             value={filterRates}
@@ -507,6 +616,7 @@ export default function TeamPage() {
                   <TableCell width={44} />
                   <TableCell>ФИО</TableCell>
                   <TableCell>Роль</TableCell>
+                  <TableCell>Стрим (участника)</TableCell>
                   <TableCell>Ставка</TableCell>
                   <TableCell align="right" width={160}>
                     Действия
@@ -517,7 +627,7 @@ export default function TeamPage() {
                 {filtered.map((p) => renderRow(p))}
                 {!filtered.length && (
                   <TableRow>
-                    <TableCell colSpan={5}>
+                    <TableCell colSpan={6}>
                       <Box
                         sx={{
                           py: 2,

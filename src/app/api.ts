@@ -31,6 +31,9 @@ const notifyError = (message: string, error: any) => {
 
 const tempId = () => `temp-${Math.random().toString(36).slice(2)}`;
 
+const normalizeUserStreams = (values?: string[]) =>
+  Array.from(new Set((values || []).map((v) => v?.trim()).filter(Boolean))) as string[];
+
 const SESSION_COOKIE_KEY = "sprints-planning-session-id";
 const USER_NAME_KEY = "sprints-planning-user-name";
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -570,6 +573,11 @@ export const api = createApi({
     // ---- Participants ----
     getParticipants: b.query<Participant[], void>({
       query: () => ({ url: "/participants", method: "GET" }),
+      transformResponse: (response: Participant[]) =>
+        response.map((p) => ({
+          ...p,
+          userStreams: normalizeUserStreams(p.userStreams),
+        })),
       providesTags: (result) =>
         result
           ? [
@@ -591,6 +599,7 @@ export const api = createApi({
           fullName: arg.fullName ?? "Новый участник",
           role: arg.role ?? "",
           rate: arg.rate ?? 1,
+          userStreams: normalizeUserStreams(arg.userStreams),
         } as Participant;
 
         const patch = dispatch(
@@ -601,11 +610,15 @@ export const api = createApi({
 
         try {
           const { data } = await queryFulfilled;
+          const normalized = {
+            ...data,
+            userStreams: normalizeUserStreams(data.userStreams),
+          };
           dispatch(
             api.util.updateQueryData("getParticipants", undefined, (draft) => {
               const idx = draft.findIndex((p) => p.id === optimistic.id);
-              if (idx >= 0) draft[idx] = data;
-              else draft.push(data);
+              if (idx >= 0) draft[idx] = normalized;
+              else draft.push(normalized);
             })
           );
         } catch (error) {
@@ -628,16 +641,31 @@ export const api = createApi({
         const patch = dispatch(
           api.util.updateQueryData("getParticipants", undefined, (draft) => {
             const idx = draft.findIndex((p) => p.id === arg.id);
-            if (idx >= 0) draft[idx] = { ...draft[idx], ...arg } as Participant;
+            if (idx >= 0) {
+              const next: Participant = {
+                ...draft[idx],
+                ...arg,
+              } as Participant;
+              if (arg.userStreams === undefined) {
+                next.userStreams = draft[idx].userStreams;
+              } else {
+                next.userStreams = normalizeUserStreams(arg.userStreams);
+              }
+              draft[idx] = next;
+            }
           })
         );
 
         try {
           const { data } = await queryFulfilled;
+          const normalized = {
+            ...data,
+            userStreams: normalizeUserStreams(data.userStreams),
+          };
           dispatch(
             api.util.updateQueryData("getParticipants", undefined, (draft) => {
               const idx = draft.findIndex((p) => p.id === data.id);
-              if (idx >= 0) draft[idx] = data;
+              if (idx >= 0) draft[idx] = normalized;
             })
           );
         } catch (error) {
@@ -724,6 +752,7 @@ export const api = createApi({
           stream?: string;
           participantIds?: string[];
           roles?: string[];
+          userStreams?: string[];
           page?: number;
           size?: number;
         }
@@ -756,6 +785,9 @@ export const api = createApi({
 
         const roles = joinOrUndefined(arg?.roles);
         if (roles) params.role = roles;
+
+        const userStreams = joinOrUndefined(arg?.userStreams);
+        if (userStreams) params.userStream = userStreams;
 
         if (typeof arg?.page === "number") params.page = String(arg.page);
         if (typeof arg?.size === "number") params.size = String(arg.size);

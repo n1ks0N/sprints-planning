@@ -56,7 +56,10 @@ public final class DtoMapper {
             entity.getId().toString(),
             entity.getFullName(),
             entity.getRole(),
-            entity.getRate() != null ? entity.getRate().doubleValue() : 0.0
+            entity.getRate() != null ? entity.getRate().doubleValue() : 0.0,
+            entity.getUserStreams() == null
+                ? java.util.List.of()
+                : entity.getUserStreams().stream().toList()
         );
     }
 

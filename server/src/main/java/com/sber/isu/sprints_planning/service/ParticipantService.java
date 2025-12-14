@@ -12,7 +12,9 @@ import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import java.math.BigDecimal;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -37,6 +39,7 @@ public class ParticipantService {
         entity.setFullName(request.fullName());
         entity.setRole(request.role());
         entity.setRate(BigDecimal.valueOf(request.rate()));
+        entity.setUserStreams(normalizeUserStreams(request.userStreams()));
         int nextOrder = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey).stream()
             .map(ParticipantEntity::getDisplayOrder)
             .max(Comparator.naturalOrder())
@@ -61,6 +64,9 @@ public class ParticipantService {
         if (request.rate() != null) {
             entity.setRate(BigDecimal.valueOf(request.rate()));
         }
+        if (request.userStreams() != null) {
+            entity.setUserStreams(normalizeUserStreams(request.userStreams()));
+        }
         return DtoMapper.toParticipantDto(entity);
     }
 
@@ -84,5 +90,22 @@ public class ParticipantService {
                 entity.setDisplayOrder(order);
             }
         }
+    }
+
+    private Set<String> normalizeUserStreams(List<String> raw) {
+        if (raw == null) {
+            return new LinkedHashSet<>();
+        }
+        Set<String> normalized = new LinkedHashSet<>();
+        for (String value : raw) {
+            if (value == null) {
+                continue;
+            }
+            String trimmed = value.trim();
+            if (!trimmed.isEmpty()) {
+                normalized.add(trimmed);
+            }
+        }
+        return normalized;
     }
 }

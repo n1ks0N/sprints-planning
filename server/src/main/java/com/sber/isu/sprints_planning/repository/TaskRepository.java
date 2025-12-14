@@ -12,7 +12,7 @@ import org.springframework.data.repository.query.Param;
 
 public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
 
-    @EntityGraph(attributePaths = {"participants", "loads", "allocations"})
+    @EntityGraph(attributePaths = {"participants", "participants.participant", "loads", "allocations"})
     List<TaskEntity> findAllByTeamKeyOrderByDisplayOrderAsc(String teamKey);
 
     @EntityGraph(attributePaths = {"participants", "loads", "allocations"})

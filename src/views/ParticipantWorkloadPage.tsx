@@ -53,6 +53,7 @@ export default function ParticipantWorkloadPage() {
     quarterIds: ui.selectedQuarterIds,
     participantIds: ui.selectedParticipantIds,
     roles: ui.rolesFilter,
+    userStreams: ui.userStreamsFilter,
     priority: ui.priorityFilter,
   });
   const tasks: BacklogItem[] = tasksPage?.content ?? [];
@@ -109,6 +110,13 @@ export default function ParticipantWorkloadPage() {
     return Array.from(new Set(roles)).sort();
   }, [participants]);
 
+  const userStreamOptions = React.useMemo(() => {
+    const streams = participants
+      .flatMap((p) => p.userStreams || [])
+      .filter((stream): stream is string => Boolean(stream && stream.trim()));
+    return Array.from(new Set(streams)).sort();
+  }, [participants]);
+
   const handleRolesFilterChange = React.useCallback(
     (values: string[]) => {
       const next = Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
@@ -116,6 +124,15 @@ export default function ParticipantWorkloadPage() {
       dispatch(setParticipantWorkloadFilters({ rolesFilter: next }));
     },
     [dispatch, ui.rolesFilter]
+  );
+
+  const handleUserStreamsFilterChange = React.useCallback(
+    (values: string[]) => {
+      const next = Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
+      if (shallowArrayEqual(next, ui.userStreamsFilter)) return;
+      dispatch(setParticipantWorkloadFilters({ userStreamsFilter: next }));
+    },
+    [dispatch, ui.userStreamsFilter]
   );
 
   const handlePriorityFilterChange = React.useCallback(
@@ -148,8 +165,14 @@ export default function ParticipantWorkloadPage() {
       const rset = new Set(ui.rolesFilter);
       list = list.filter((p) => rset.has(p.role));
     }
+    if (ui.userStreamsFilter.length) {
+      const streamSet = new Set(ui.userStreamsFilter.map((s) => s.trim()));
+      list = list.filter((p) =>
+        (p.userStreams || []).some((stream) => streamSet.has(stream.trim()))
+      );
+    }
     return list;
-  }, [participants, selectedParticipants, ui.rolesFilter]);
+  }, [participants, selectedParticipants, ui.rolesFilter, ui.userStreamsFilter]);
 
   const getRowsForParticipant = (pid: string) => {
     const rows = tasks
@@ -224,6 +247,16 @@ export default function ParticipantWorkloadPage() {
               options={roleOptions}
               value={ui.rolesFilter}
               onChange={handleRolesFilterChange}
+              sx={{ minWidth: 240 }}
+            />
+
+            <FilterAutocomplete
+              multiple
+              allowCustom={false}
+              label="Стрим (участника)"
+              options={userStreamOptions}
+              value={ui.userStreamsFilter}
+              onChange={handleUserStreamsFilterChange}
               sx={{ minWidth: 240 }}
             />
 

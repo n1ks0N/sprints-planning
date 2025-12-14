@@ -16,6 +16,7 @@ export type UIState = {
   team: {
     filterRoles: string[];
     filterRates: string[]; // строки "1.00", "0.75" и т.п.
+    filterUserStreams: string[];
   };
   time: {
     selectedQuarterIds: string[];
@@ -24,6 +25,7 @@ export type UIState = {
     selectedQuarterIds: string[];
     selectedParticipantIds: string[];
     rolesFilter: string[];
+    userStreamsFilter: string[];
     priorityFilter: number[]; // [1,2,3]
   };
 };
@@ -50,12 +52,13 @@ function defaultState(): UIState {
       statusFilter: [],
     },
     capacity: { selectedQuarterIds: [] },
-    team: { filterRoles: [], filterRates: [] },
+    team: { filterRoles: [], filterRates: [], filterUserStreams: [] },
     time: { selectedQuarterIds: [] },
     participantWorkload: {
       selectedQuarterIds: [],
       selectedParticipantIds: [],
       rolesFilter: [],
+      userStreamsFilter: [],
       priorityFilter: [1, 2, 3],
     },
   };
@@ -111,6 +114,11 @@ function sanitizeTeam(
     filterRates: Array.isArray(input?.filterRates)
       ? input.filterRates.filter((s: any): s is string => typeof s === "string")
       : defaults.filterRates.slice(),
+    filterUserStreams: Array.isArray(input?.filterUserStreams)
+      ? input.filterUserStreams.filter(
+          (s: any): s is string => typeof s === "string"
+        )
+      : defaults.filterUserStreams.slice(),
   };
 }
 
@@ -153,6 +161,11 @@ function sanitizeParticipantWorkload(
     rolesFilter: Array.isArray(input?.rolesFilter)
       ? input.rolesFilter.filter((s: any): s is string => typeof s === "string")
       : defaults.rolesFilter.slice(),
+    userStreamsFilter: Array.isArray(input?.userStreamsFilter)
+      ? input.userStreamsFilter.filter(
+          (s: any): s is string => typeof s === "string"
+        )
+      : defaults.userStreamsFilter.slice(),
     priorityFilter:
       priorityFilter.length > 0 ? priorityFilter : defaults.priorityFilter,
   };

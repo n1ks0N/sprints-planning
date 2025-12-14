@@ -39,6 +39,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -461,6 +462,27 @@ public class TaskService {
                 .anyMatch(filter.roles()::contains);
 
             if (!hasRole) {
+                return false;
+            }
+        }
+
+        if (!filter.userStreams().isEmpty()) {
+            boolean hasUserStream = task.getParticipants().stream()
+                .map(TaskParticipantEntity::getParticipant)
+                .filter(Objects::nonNull)
+                .flatMap(participant -> {
+                    Set<String> userStreams = participant.getUserStreams();
+                    if (userStreams == null) {
+                        return Stream.empty();
+                    }
+                    return userStreams.stream();
+                })
+                .filter(Objects::nonNull)
+                .map(value -> value.trim().toLowerCase())
+                .filter(value -> !value.isEmpty())
+                .anyMatch(filter.userStreams()::contains);
+
+            if (!hasUserStream) {
                 return false;
             }
         }
