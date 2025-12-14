@@ -209,11 +209,11 @@ export default function ParticipantWorkloadPage() {
               display: "grid",
               gridTemplateColumns: {
                 xs: "repeat(auto-fit, minmax(220px, 1fr))",
-                md: "repeat(auto-fit, minmax(240px, 1fr))",
+                md: "repeat(auto-fit, minmax(200px, 1fr))",
               },
               gridAutoFlow: "row dense",
               gap: 2,
-              alignItems: "flex-start",
+              alignItems: "center",
             }}
           >
             <FilterAutocomplete
@@ -229,7 +229,7 @@ export default function ParticipantWorkloadPage() {
                   })
                 )
               }
-              sx={{ minWidth: 240 }}
+              sx={{ minWidth: 200 }}
             />
 
             <FilterAutocomplete
@@ -245,7 +245,7 @@ export default function ParticipantWorkloadPage() {
                   })
                 )
               }
-              sx={{ minWidth: 320 }}
+              sx={{ minWidth: 260 }}
             />
 
             <FilterAutocomplete
@@ -255,7 +255,7 @@ export default function ParticipantWorkloadPage() {
               options={roleOptions}
               value={ui.rolesFilter}
               onChange={handleRolesFilterChange}
-              sx={{ minWidth: 240 }}
+              sx={{ minWidth: 200 }}
             />
 
             <FilterAutocomplete
@@ -265,7 +265,7 @@ export default function ParticipantWorkloadPage() {
               options={userStreamOptions}
               value={ui.userStreamsFilter}
               onChange={handleUserStreamsFilterChange}
-              sx={{ minWidth: 240 }}
+              sx={{ minWidth: 200 }}
             />
 
             <FilterAutocomplete
@@ -275,7 +275,7 @@ export default function ParticipantWorkloadPage() {
               options={priorityOptions}
               value={ui.priorityFilter.map(String)}
               onChange={handlePriorityFilterChange}
-              sx={{ minWidth: 180 }}
+              sx={{ minWidth: 160 }}
             />
           </Box>
 
