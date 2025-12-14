@@ -238,15 +238,15 @@ const EditableText = React.memo(function EditableText({
 type EditableNumberCellProps = {
   value: number;
   onChange: (next: number) => void;
-  onCommit?: () => void;
+  onCommit?: (next: number) => void;
   title?: string;
 };
 
 /**
  * Простая числовая ячейка:
  * - кликом включаем редактирование;
- * - значение в стейт родителя уходит сразу onChange;
- * - API вызываем только на onCommit (blur / Enter).
+ * - ввод храним локально, наружу шлём только при завершении ввода;
+ * - API вызываем на onCommit (blur / Enter).
  */
 function EditableNumberCell({
   value,
@@ -255,9 +255,16 @@ function EditableNumberCell({
   title,
 }: EditableNumberCellProps) {
   const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(value ?? 0);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const prevEditingRef = React.useRef(editing);
   const inputId = React.useId();
+
+  React.useEffect(() => {
+    if (!editing) {
+      setDraft(value ?? 0);
+    }
+  }, [editing, value]);
 
   React.useEffect(() => {
     if (editing && !prevEditingRef.current && inputRef.current) {
@@ -274,8 +281,12 @@ function EditableNumberCell({
   const handleClose = React.useCallback(() => {
     if (!editing) return;
     setEditing(false);
-    onCommit?.();
-  }, [editing, onCommit]);
+    const next = Number.isFinite(draft) ? draft : 0;
+    if (next !== value) {
+      onChange(next);
+      onCommit?.(next);
+    }
+  }, [draft, editing, onChange, onCommit, value]);
 
   if (!editing) {
     return (
@@ -298,10 +309,10 @@ function EditableNumberCell({
       inputRef={inputRef}
       type="number"
       autoFocus
-      value={Number.isFinite(value) ? value : 0}
+      value={Number.isFinite(draft) ? draft : 0}
       onChange={(e) => {
         const v = Number(e.target.value);
-        onChange(Number.isFinite(v) ? v : 0);
+        setDraft(Number.isFinite(v) ? v : 0);
       }}
       onBlur={handleClose}
       onKeyDown={(e) => {
@@ -449,7 +460,8 @@ type TaskCardProps = {
   onAllocCommit: (
     taskId: string,
     participantId: string,
-    sprintId: string
+    sprintId: string,
+    value: number
   ) => void;
   onShiftRow: (
     taskId: string,
@@ -1114,8 +1126,8 @@ const TaskCard = React.memo(function TaskCard({
                                 onChange={(v) =>
                                   onAllocChange(task.id, p.id, s.id, v)
                                 }
-                                onCommit={() =>
-                                  onAllocCommit(task.id, p.id, s.id)
+                                onCommit={(next) =>
+                                  onAllocCommit(task.id, p.id, s.id, next)
                                 }
                               />
                             </TableCell>
@@ -1323,6 +1335,7 @@ export default function BacklogPage() {
   } = useAppSelector((s) => s.ui.backlog);
 
   const [isQuarterPending, startQuarterTransition] = React.useTransition();
+  const [, startTaskTransition] = React.useTransition();
 
   const currentQuarterId = currentQ?.id;
 
@@ -1817,40 +1830,37 @@ export default function BacklogPage() {
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
 
+  const updateField = React.useCallback(
+    (t: BacklogItem, patch: Partial<BacklogItem>) => {
+      if (!patch || !Object.keys(patch).length) return Promise.resolve();
+      const promise = updateTask({ id: t.id, ...patch })
+        .unwrap()
+        .catch((e) => {
+          console.error("Failed to update task", e);
+          throw e;
+        });
+      startTaskTransition(() => {
+        void promise;
+      });
+      return promise;
+    },
+    [startTaskTransition, updateTask]
+  );
+
   const handleStatusChange = React.useCallback(
     (task: BacklogItem, st: TaskStatus) => {
       if ((task.status ?? "inprogress") === st) return;
-      updateTask({ id: task.id, status: st })
-        .unwrap()
-        .catch((e) => {
-          console.error("Failed to update status", e);
-        });
+      void updateField(task, { status: st });
     },
-    [updateTask]
+    [updateField]
   );
 
   const handlePriorityChange = React.useCallback(
     (task: BacklogItem, priority: TaskPriority) => {
       if (task.priority === priority) return;
-      updateTask({ id: task.id, priority })
-        .unwrap()
-        .catch((e) => {
-          console.error("Failed to update priority", e);
-        });
+      void updateField(task, { priority });
     },
-    [updateTask]
-  );
-
-  const updateField = React.useCallback(
-    async (t: BacklogItem, patch: Partial<BacklogItem>) => {
-      if (!patch || !Object.keys(patch).length) return;
-      try {
-        await updateTask({ id: t.id, ...patch }).unwrap();
-      } catch (e) {
-        console.error("Failed to update task", e);
-      }
-    },
-    [updateTask]
+    [updateField]
   );
 
   const handleUpdateTaskPatch = React.useCallback(
@@ -1998,22 +2008,24 @@ export default function BacklogPage() {
     });
   };
 
-  const commitCell = async (
+  const commitCell = (
     taskId: string,
     participantId: string,
-    sprintId: string
+    sprintId: string,
+    value: number
   ) => {
-    const v = allocations[taskId]?.[participantId]?.[sprintId] ?? 0;
-    try {
-      await upsertTaskAllocation({
+    startTaskTransition(() => {
+      upsertTaskAllocation({
         taskId,
         participantId,
         sprintId,
-        days: toInt(Number(v) || 0),
-      }).unwrap();
-    } catch (e) {
-      console.error("Failed to save allocation", e);
-    }
+        days: toInt(Number(value) || 0),
+      })
+        .unwrap()
+        .catch((e) => {
+          console.error("Failed to save allocation", e);
+        });
+    });
   };
 
   const handleAllocChange = React.useCallback(
