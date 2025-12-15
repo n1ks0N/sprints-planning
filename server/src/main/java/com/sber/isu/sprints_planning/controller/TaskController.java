@@ -1,5 +1,6 @@
 package com.sber.isu.sprints_planning.controller;
 
+import com.sber.isu.sprints_planning.dto.PageResponse;
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
@@ -8,7 +9,6 @@ import com.sber.isu.sprints_planning.service.TaskFilter;
 import com.sber.isu.sprints_planning.service.TaskService;
 import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
-import org.springframework.data.domain.Page;
 import java.util.UUID;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,7 +29,7 @@ public class TaskController {
     }
 
     @GetMapping("/tasks")
-    public Page<TaskDto> getTasks(@PathVariable String teamKey,
+    public PageResponse<TaskDto> getTasks(@PathVariable String teamKey,
         @RequestParam(value = "quarterId", required = false) String quarterId,
         @RequestParam(value = "priority", required = false) String priority,
         @RequestParam(value = "status", required = false) String status,

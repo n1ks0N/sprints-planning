@@ -1,5 +1,6 @@
 package com.sber.isu.sprints_planning.service;
 
+import com.sber.isu.sprints_planning.dto.PageResponse;
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationBulkRequest;
@@ -24,9 +25,6 @@ import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.Pageable;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -69,18 +67,19 @@ public class TaskService {
     }
 
     @Transactional
-    public Page<TaskDto> findPage(String teamKey, TaskFilter filter, Integer page, Integer size) {
+    public PageResponse<TaskDto> findPage(String teamKey, TaskFilter filter, Integer page, Integer size) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
         List<TaskDto> filtered = findFilteredTasks(teamKey, effectiveFilter);
         if (page == null || size == null) {
-            return new PageImpl<>(filtered);
+            int fallbackSize = filtered.isEmpty() ? 1 : filtered.size();
+            return PageResponse.of(filtered, 0, fallbackSize, filtered.size());
         }
         int safePage = Math.max(page, 0);
         int safeSize = Math.max(size, 1);
         int fromIndex = Math.min((int) ((long) safePage * safeSize), filtered.size());
         int toIndex = Math.min(fromIndex + safeSize, filtered.size());
         List<TaskDto> content = filtered.subList(fromIndex, toIndex);
-        return new PageImpl<>(content, Pageable.ofSize(safeSize).withPage(safePage), filtered.size());
+        return PageResponse.of(content, safePage, safeSize, filtered.size());
     }
 
     public TaskDto findById(String teamKey, UUID id) {
