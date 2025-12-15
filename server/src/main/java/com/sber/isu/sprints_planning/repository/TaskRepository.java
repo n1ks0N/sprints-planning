@@ -59,7 +59,7 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
             and (:prioritiesEmpty = true or t.priority in :priorities)
             and (:statusesEmpty = true or lower(coalesce(t.status, '')) in :statuses)
             and (:releaseDate is null or t.releaseDate = :releaseDate)
-            and (:stream is null or lower(coalesce(t.stream, '')) like concat('%', :stream, '%'))
+            and (:streamPattern is null or lower(coalesce(t.stream, '')) like :streamPattern)
             and (:participantIdsEmpty = true or p.id in :participantIds)
             and (:rolesEmpty = true or lower(p.role) in :roles)
             and (:userStreamsEmpty = true or lower(us) in :userStreams)
@@ -79,7 +79,7 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID> {
         @Param("statuses") Set<String> statuses,
         @Param("statusesEmpty") boolean statusesEmpty,
         @Param("releaseDate") LocalDate releaseDate,
-        @Param("stream") String stream,
+        @Param("streamPattern") String streamPattern,
         @Param("participantIds") Set<UUID> participantIds,
         @Param("participantIdsEmpty") boolean participantIdsEmpty,
         @Param("roles") Set<String> roles,

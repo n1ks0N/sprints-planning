@@ -115,6 +115,8 @@ public class TaskService {
             ? Set.of("__none__")
             : effectiveFilter.userStreams();
 
+        String streamPattern = effectiveFilter.stream() == null ? null : "%" + effectiveFilter.stream() + "%";
+
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
         List<TaskEntity> tasks = taskRepository.findAllByTeamKeyWithFilters(
@@ -126,7 +128,7 @@ public class TaskService {
             statuses,
             effectiveFilter.statuses().isEmpty(),
             effectiveFilter.releaseDate(),
-            effectiveFilter.stream(),
+            streamPattern,
             participantIds,
             effectiveFilter.participantIds().isEmpty(),
             roles,
