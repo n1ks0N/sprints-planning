@@ -1,5 +1,6 @@
 package com.sber.isu.sprints_planning.service;
 
+import com.sber.isu.sprints_planning.dto.PageResponse;
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationBulkRequest;
@@ -24,9 +25,6 @@ import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.Pageable;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -69,18 +67,19 @@ public class TaskService {
     }
 
     @Transactional
-    public Page<TaskDto> findPage(String teamKey, TaskFilter filter, Integer page, Integer size) {
+    public PageResponse<TaskDto> findPage(String teamKey, TaskFilter filter, Integer page, Integer size) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
         List<TaskDto> filtered = findFilteredTasks(teamKey, effectiveFilter);
         if (page == null || size == null) {
-            return new PageImpl<>(filtered);
+            int fallbackSize = filtered.isEmpty() ? 1 : filtered.size();
+            return PageResponse.of(filtered, 0, fallbackSize, filtered.size());
         }
         int safePage = Math.max(page, 0);
         int safeSize = Math.max(size, 1);
         int fromIndex = Math.min((int) ((long) safePage * safeSize), filtered.size());
         int toIndex = Math.min(fromIndex + safeSize, filtered.size());
         List<TaskDto> content = filtered.subList(fromIndex, toIndex);
-        return new PageImpl<>(content, Pageable.ofSize(safeSize).withPage(safePage), filtered.size());
+        return PageResponse.of(content, safePage, safeSize, filtered.size());
     }
 
     public TaskDto findById(String teamKey, UUID id) {
@@ -96,13 +95,52 @@ public class TaskService {
 
     private List<TaskDto> findFilteredTasks(String teamKey, TaskFilter filter) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
-        List<TaskEntity> tasks = taskRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
+        Set<UUID> quarterIds = effectiveFilter.quarterIds().isEmpty()
+            ? Set.of(UUID.fromString("00000000-0000-0000-0000-000000000000"))
+            : effectiveFilter.quarterIds();
+        Set<Short> priorities = effectiveFilter.priorities().isEmpty()
+            ? Set.of((short) -1)
+            : effectiveFilter.priorities();
+        Set<String> statuses = effectiveFilter.statuses().isEmpty()
+            ? Set.of("__none__")
+            : effectiveFilter.statuses();
+        Set<UUID> participantIds = effectiveFilter.participantIds().isEmpty()
+            ? Set.of(UUID.fromString("00000000-0000-0000-0000-000000000000"))
+            : effectiveFilter.participantIds();
+        Set<String> roles = effectiveFilter.roles().isEmpty()
+            ? Set.of("__none__")
+            : effectiveFilter.roles();
+        Set<String> userStreams = effectiveFilter.userStreams().isEmpty()
+            ? Set.of("__none__")
+            : effectiveFilter.userStreams();
+
+        String streamPattern = effectiveFilter.stream() == null ? null : "%" + effectiveFilter.stream() + "%";
+
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
+        List<TaskEntity> tasks = taskRepository.findAllByTeamKeyWithFilters(
+            teamKey,
+            quarterIds,
+            effectiveFilter.quarterIds().isEmpty(),
+            priorities,
+            effectiveFilter.priorities().isEmpty(),
+            statuses,
+            effectiveFilter.statuses().isEmpty(),
+            effectiveFilter.releaseDate(),
+            streamPattern,
+            participantIds,
+            effectiveFilter.participantIds().isEmpty(),
+            roles,
+            effectiveFilter.roles().isEmpty(),
+            userStreams,
+            effectiveFilter.userStreams().isEmpty()
+        );
+
         tasks.forEach(task -> {
             task.setStatus(normalizeStatus(task.getStatus()));
             ensureLoadsForSprints(task, sprints);
         });
+
         return tasks.stream()
             .filter(task -> matchesFilters(task, effectiveFilter, sprintIndex))
             .map(DtoMapper::toTaskDto)
