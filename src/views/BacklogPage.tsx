@@ -242,6 +242,12 @@ type EditableNumberCellProps = {
   title?: string;
 };
 
+type EditableParticipantProps = {
+  value: Participant;
+  options: Participant[];
+  onCommit?: (next: Participant) => void;
+};
+
 /**
  * Простая числовая ячейка:
  * - кликом включаем редактирование;
@@ -337,6 +343,69 @@ function EditableNumberCell({
     />
   );
 }
+
+const EditableParticipant = React.memo(function EditableParticipant({
+  value,
+  options,
+  onCommit,
+}: EditableParticipantProps) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState<Participant | null>(value);
+
+  React.useEffect(() => {
+    if (!editing) {
+      setDraft(value);
+    }
+  }, [editing, value]);
+
+  const handleStart = React.useCallback(() => {
+    setDraft(value);
+    setEditing(true);
+  }, [value]);
+
+  const handleClose = React.useCallback(() => {
+    setEditing(false);
+  }, []);
+
+  const handleCommit = React.useCallback(
+    (_: unknown, next: Participant | null) => {
+      if (next && next.id !== value.id) {
+        onCommit?.(next);
+      }
+      setEditing(false);
+    },
+    [onCommit, value.id]
+  );
+
+  if (!editing) {
+    return (
+      <Box
+        sx={{ cursor: "pointer" }}
+        title="Нажмите, чтобы сменить участника"
+        onClick={handleStart}
+      >
+        <Typography>{value.fullName}</Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Autocomplete
+      size="small"
+      openOnFocus
+      options={options}
+      value={draft}
+      onChange={handleCommit}
+      onClose={handleClose}
+      isOptionEqualToValue={(a, b) => a?.id === b?.id}
+      getOptionLabel={(p) => (p ? `${p.fullName} (${p.role})` : "")}
+      renderInput={(params) => (
+        <TextField {...params} size="small" label="Участник" autoFocus />
+      )}
+      sx={{ minWidth: 220 }}
+    />
+  );
+});
 
 // ---------- LocalStorage ----------
 
@@ -471,6 +540,11 @@ type TaskCardProps = {
   onCopyRowToNextQuarter: (taskId: string, participantId: string) => void;
   onAddParticipant: (task: BacklogItem, participantId: string) => void;
   onRemoveParticipant: (task: BacklogItem, participantId: string) => void;
+  onChangeParticipant: (
+    task: BacklogItem,
+    fromParticipantId: string,
+    toParticipantId: string
+  ) => void;
   onParticipantOrderChange: (taskId: string, nextOrder: string[]) => void;
   hiddenParticipants: boolean;
   onToggleParticipantsVisibility: (taskId: string, hidden: boolean) => void;
@@ -539,6 +613,7 @@ const TaskCard = React.memo(function TaskCard({
   onCopyRowToNextQuarter,
   onAddParticipant,
   onRemoveParticipant,
+  onChangeParticipant,
   onParticipantOrderChange,
   hiddenParticipants,
   onToggleParticipantsVisibility,
@@ -1050,6 +1125,11 @@ const TaskCard = React.memo(function TaskCard({
                     0
                   );
                   const isLeader = leaderPid === p.id;
+                  const participantEditOptions = participants.filter(
+                    (candidate) =>
+                      candidate.id === p.id ||
+                      !assignedParticipantIds.includes(candidate.id)
+                  );
 
                   return (
                     <SortableParticipantRow key={p.id} participant={p}>
@@ -1115,7 +1195,13 @@ const TaskCard = React.memo(function TaskCard({
                                 )}
                               </IconButton>
                               <Chip label={p.role} size="small" />
-                              <Typography>{p.fullName}</Typography>
+                              <EditableParticipant
+                                value={p}
+                                options={participantEditOptions}
+                                onCommit={(next) =>
+                                  onChangeParticipant(task, p.id, next.id)
+                                }
+                              />
                             </Stack>
                           </TableCell>
 
@@ -2104,6 +2190,67 @@ export default function BacklogPage() {
     }
   };
 
+  const replaceParticipantInTask = async (
+    task: BacklogItem,
+    fromPid: string,
+    toPid: string
+  ) => {
+    if (!toPid || fromPid === toPid) return;
+    if (!task.participantIds.includes(fromPid)) return;
+    if (task.participantIds.includes(toPid)) return;
+
+    const participantIds = task.participantIds.map((id) =>
+      id === fromPid ? toPid : id
+    );
+    const taskAllocations = allocations[task.id] || {};
+    const rowToMove = taskAllocations[fromPid] || {};
+    const nextAllocations = Object.entries(taskAllocations).reduce<
+      Record<string, Record<string, number>>
+    >((acc, [pid, row]) => {
+      if (pid === fromPid) return acc;
+      acc[pid] = { ...row };
+      return acc;
+    }, {});
+
+    nextAllocations[toPid] = { ...rowToMove };
+
+    setAllocations((prev) => {
+      const prevTask = prev[task.id] || {};
+      const movedRow = prevTask[fromPid] || rowToMove;
+      const { [fromPid]: _, ...rest } = prevTask;
+      return {
+        ...prev,
+        [task.id]: {
+          ...rest,
+          [toPid]: { ...movedRow },
+        },
+      };
+    });
+
+    setParticipantOrders((prev) => {
+      const currentOrder = prev[task.id] || task.participantIds;
+      return {
+        ...prev,
+        [task.id]: currentOrder.map((id) => (id === fromPid ? toPid : id)),
+      };
+    });
+
+    const patch: Partial<BacklogItem> = {
+      participantIds,
+      allocations: nextAllocations,
+    };
+
+    if ((task as any).leaderId === fromPid) {
+      (patch as any).leaderId = toPid;
+    }
+
+    try {
+      await updateField(task, patch);
+    } catch (error) {
+      console.error("Failed to replace participant", error);
+    }
+  };
+
   const shiftRow = (
     taskId: string,
     participantId: string,
@@ -2505,6 +2652,7 @@ export default function BacklogPage() {
                         onCopyRowToNextQuarter={copyRowToNextQuarter}
                         onAddParticipant={addParticipantToTask}
                         onRemoveParticipant={removeParticipantFromTask}
+                        onChangeParticipant={replaceParticipantInTask}
                         onParticipantOrderChange={(taskId, order) => {
                           setParticipantOrders((prev) => ({
                             ...prev,
