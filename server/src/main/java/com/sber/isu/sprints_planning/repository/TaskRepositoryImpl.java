@@ -68,18 +68,20 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             return new PageImpl<>(List.of(), pageable, total);
         }
 
-        CriteriaQuery<UUID> idQuery = cb.createQuery(UUID.class);
+        CriteriaQuery<Object[]> idQuery = cb.createQuery(Object[].class);
         Root<TaskEntity> idRoot = idQuery.from(TaskEntity.class);
         Joins idJoins = createJoins(idRoot);
         List<Predicate> idPredicates = buildPredicates(teamKey, effectiveFilter, cb, idJoins);
-        idQuery.select(idRoot.get("id"))
-            .distinct(true)
+        idQuery.multiselect(idRoot.get("id"), idRoot.get("displayOrder"))
             .where(idPredicates.toArray(new Predicate[0]))
+            .groupBy(idRoot.get("id"), idRoot.get("displayOrder"))
             .orderBy(cb.asc(idRoot.get("displayOrder")));
-        TypedQuery<UUID> pagedIds = entityManager.createQuery(idQuery);
+        TypedQuery<Object[]> pagedIds = entityManager.createQuery(idQuery);
         pagedIds.setFirstResult(Math.max(page, 0) * Math.max(size, 1));
         pagedIds.setMaxResults(Math.max(size, 1));
-        List<UUID> ids = pagedIds.getResultList();
+        List<UUID> ids = pagedIds.getResultList().stream()
+            .map(row -> (UUID) row[0])
+            .toList();
 
         if (ids.isEmpty()) {
             return new PageImpl<>(List.of(), pageable, total);
