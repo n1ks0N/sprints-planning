@@ -1614,6 +1614,7 @@ export default function BacklogPage() {
   const [addTaskQuarterError, setAddTaskQuarterError] = React.useState(false);
 
   React.useEffect(() => {
+    if (quarterIdSet.size === 0) return;
     if (selectedQuarterIds.length === 0) return;
 
     const validSelected = selectedQuarterIds.filter((id) =>
