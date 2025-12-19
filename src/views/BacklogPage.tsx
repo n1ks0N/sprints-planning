@@ -1417,6 +1417,7 @@ export default function BacklogPage() {
     streamFilter,
     statusFilter,
     releaseSprintFilter,
+    searchQuery,
     selectedQuarterIds,
   } = useAppSelector((s) => s.ui.backlog);
 
@@ -1480,6 +1481,7 @@ export default function BacklogPage() {
   }, [participants]);
 
   const TASKS_PAGE_SIZE = 20;
+  const normalizedSearch = React.useMemo(() => searchQuery.trim(), [searchQuery]);
   const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
 
   const tasksQueryArgs = React.useMemo(
@@ -1490,6 +1492,7 @@ export default function BacklogPage() {
       releaseDate:
         releaseSprintFilter === "all" ? undefined : releaseSprintFilter.trim(),
       stream: streamFilter.trim(),
+      search: normalizedSearch,
       page: tasksPageNumber,
       size: TASKS_PAGE_SIZE,
     }),
@@ -1499,6 +1502,7 @@ export default function BacklogPage() {
       statusFilter,
       releaseSprintFilter,
       streamFilter,
+      normalizedSearch,
       tasksPageNumber,
     ]
   );
@@ -1511,7 +1515,14 @@ export default function BacklogPage() {
     statusFilter,
     releaseSprintFilter,
     streamFilter,
+    normalizedSearch,
   ]);
+
+  const [searchDraft, setSearchDraft] = React.useState(searchQuery);
+
+  React.useEffect(() => {
+    setSearchDraft(searchQuery);
+  }, [searchQuery]);
 
   const applyTaskOrderOptimistic = React.useCallback(
     (orderedIds: string[]) =>
@@ -1879,6 +1890,13 @@ export default function BacklogPage() {
     },
     [dispatch, releaseSprintFilter]
   );
+
+  const handleSearchCommit = React.useCallback(() => {
+    const normalized = searchDraft.trim();
+    if (normalized !== normalizedSearch) {
+      dispatch(setBacklogFilters({ searchQuery: normalized }));
+    }
+  }, [dispatch, normalizedSearch, searchDraft]);
 
   const filteredTasks = React.useMemo(() => {
     const byStatus =
@@ -2593,6 +2611,22 @@ export default function BacklogPage() {
                 }
               }}
               sx={{ minWidth: 200 }}
+            />
+
+            <TextField
+              label="Поиск по названию/описанию/DOD"
+              value={searchDraft}
+              onChange={(e) => setSearchDraft(e.target.value)}
+              onBlur={handleSearchCommit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                }
+              }}
+              placeholder="Введите текст"
+              size="small"
+              sx={{ minWidth: 220 }}
             />
 
             {isUiPending && (

@@ -750,6 +750,7 @@ export const api = createApi({
           statuses?: string[];
           releaseDate?: string;
           stream?: string;
+          search?: string;
           participantIds?: string[];
           roles?: string[];
           userStreams?: string[];
@@ -779,6 +780,9 @@ export const api = createApi({
 
         const stream = (arg?.stream || "").trim();
         if (stream) params.stream = stream;
+
+        const search = (arg?.search || "").trim();
+        if (search) params.search = search;
 
         const participantIds = joinOrUndefined(arg?.participantIds);
         if (participantIds) params.participantId = participantIds;

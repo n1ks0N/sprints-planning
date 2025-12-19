@@ -9,6 +9,7 @@ export type UIState = {
     priorityFilter: number[]; // [1,2,3]
     streamFilter: string;
     statusFilter: TaskStatus[];
+    searchQuery: string;
   };
   capacity: {
     selectedQuarterIds: string[];
@@ -50,6 +51,7 @@ function defaultState(): UIState {
       priorityFilter: [],
       streamFilter: "",
       statusFilter: [],
+      searchQuery: "",
     },
     capacity: { selectedQuarterIds: [] },
     team: { filterRoles: [], filterRates: [], filterUserStreams: [] },
@@ -95,6 +97,10 @@ function sanitizeBacklog(
         ? input.streamFilter
         : defaults.streamFilter,
     statusFilter,
+    searchQuery:
+      typeof input?.searchQuery === "string"
+        ? input.searchQuery
+        : defaults.searchQuery,
     selectedQuarterIds: Array.isArray(input?.selectedQuarterIds)
       ? input.selectedQuarterIds.filter(
           (id: any): id is string => typeof id === "string"

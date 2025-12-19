@@ -507,6 +507,18 @@ public class TaskService {
             }
         }
 
+        if (filter.searchQuery() != null) {
+            String needle = filter.searchQuery();
+            String title = lowerOrEmpty(task.getTitle());
+            String description = lowerOrEmpty(task.getDescription());
+            String dod = lowerOrEmpty(task.getDod());
+
+            boolean matches = title.contains(needle) || description.contains(needle) || dod.contains(needle);
+            if (!matches) {
+                return false;
+            }
+        }
+
         if (!filter.quarterIds().isEmpty()) {
             Set<UUID> quarters = deriveTaskQuarters(task, sprintIndex);
             if (!quarters.isEmpty() && quarters.stream().noneMatch(filter.quarterIds()::contains)) {
@@ -529,6 +541,10 @@ public class TaskService {
             return "inprogress";
         }
         return status.trim().toLowerCase();
+    }
+
+    private String lowerOrEmpty(String value) {
+        return value == null ? "" : value.toLowerCase();
     }
 
     private Set<UUID> deriveTaskQuarters(TaskEntity task, Map<UUID, SprintEntity> sprintIndex) {

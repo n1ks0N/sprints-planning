@@ -35,6 +35,7 @@ public class TaskController {
         @RequestParam(value = "status", required = false) String status,
         @RequestParam(value = "releaseDate", required = false) String releaseDate,
         @RequestParam(value = "stream", required = false) String stream,
+        @RequestParam(value = "search", required = false) String search,
         @RequestParam(value = "participantId", required = false) String participantId,
         @RequestParam(value = "role", required = false) String role,
         @RequestParam(value = "userStream", required = false) String userStream,
@@ -47,6 +48,7 @@ public class TaskController {
             status,
             releaseDate,
             stream,
+            search,
             participantId,
             role,
             userStream
