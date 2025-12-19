@@ -70,16 +70,18 @@ public class TaskService {
     @Transactional
     public Page<TaskDto> findPage(String teamKey, TaskFilter filter, Integer page, Integer size) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
-        List<TaskDto> filtered = findFilteredTasks(teamKey, effectiveFilter);
-        if (page == null || size == null) {
-            return new PageImpl<>(filtered);
-        }
-        int safePage = Math.max(page, 0);
-        int safeSize = Math.max(size, 1);
-        int fromIndex = Math.min((int) ((long) safePage * safeSize), filtered.size());
-        int toIndex = Math.min(fromIndex + safeSize, filtered.size());
-        List<TaskDto> content = filtered.subList(fromIndex, toIndex);
-        return new PageImpl<>(content, Pageable.ofSize(safeSize).withPage(safePage), filtered.size());
+        int safePage = page == null ? 0 : Math.max(page, 0);
+        int safeSize = size == null ? 20 : Math.max(size, 1);
+        Page<TaskEntity> filtered = taskRepository.findFilteredPageWithDetails(teamKey, effectiveFilter, safePage, safeSize);
+        List<SprintEntity> sprints = fetchAllSprints(teamKey);
+        List<TaskDto> content = filtered.getContent().stream()
+            .peek(task -> {
+                task.setStatus(normalizeStatus(task.getStatus()));
+                ensureLoadsForSprints(task, sprints);
+            })
+            .map(DtoMapper::toTaskDto)
+            .toList();
+        return new PageImpl<>(content, filtered.getPageable(), filtered.getTotalElements());
     }
 
     public TaskDto findById(String teamKey, UUID id) {
