@@ -39,7 +39,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -96,15 +95,13 @@ public class TaskService {
 
     private List<TaskDto> findFilteredTasks(String teamKey, TaskFilter filter) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
-        List<TaskEntity> tasks = taskRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
+        List<TaskEntity> tasks = taskRepository.findFilteredWithDetails(teamKey, effectiveFilter);
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
-        Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
         tasks.forEach(task -> {
             task.setStatus(normalizeStatus(task.getStatus()));
             ensureLoadsForSprints(task, sprints);
         });
         return tasks.stream()
-            .filter(task -> matchesFilters(task, effectiveFilter, sprintIndex))
             .map(DtoMapper::toTaskDto)
             .toList();
     }
@@ -441,128 +438,11 @@ public class TaskService {
         }
     }
 
-    private boolean matchesFilters(TaskEntity task, TaskFilter filter, Map<UUID, SprintEntity> sprintIndex) {
-        if (!filter.participantIds().isEmpty()) {
-            boolean hasSelectedParticipant = task.getParticipants().stream()
-                .map(TaskParticipantEntity::getParticipant)
-                .filter(Objects::nonNull)
-                .map(ParticipantEntity::getId)
-                .anyMatch(filter.participantIds()::contains);
-
-            if (!hasSelectedParticipant) {
-                return false;
-            }
-        }
-
-        if (!filter.roles().isEmpty()) {
-            boolean hasRole = task.getParticipants().stream()
-                .map(TaskParticipantEntity::getParticipant)
-                .filter(Objects::nonNull)
-                .map(ParticipantEntity::getRole)
-                .filter(Objects::nonNull)
-                .map(role -> role.trim().toLowerCase())
-                .anyMatch(filter.roles()::contains);
-
-            if (!hasRole) {
-                return false;
-            }
-        }
-
-        if (!filter.userStreams().isEmpty()) {
-            boolean hasUserStream = task.getParticipants().stream()
-                .map(TaskParticipantEntity::getParticipant)
-                .filter(Objects::nonNull)
-                .flatMap(participant -> {
-                    Set<String> userStreams = participant.getUserStreams();
-                    if (userStreams == null) {
-                        return Stream.empty();
-                    }
-                    return userStreams.stream();
-                })
-                .filter(Objects::nonNull)
-                .map(value -> value.trim().toLowerCase())
-                .filter(value -> !value.isEmpty())
-                .anyMatch(filter.userStreams()::contains);
-
-            if (!hasUserStream) {
-                return false;
-            }
-        }
-
-        if (!filter.priorities().isEmpty() && !filter.priorities().contains(task.getPriority())) {
-            return false;
-        }
-
-        if (filter.releaseDate() != null) {
-            LocalDate releaseDate = task.getReleaseDate();
-            if (releaseDate == null || !filter.releaseDate().equals(releaseDate)) {
-                return false;
-            }
-        }
-
-        if (filter.stream() != null) {
-            String taskStream = task.getStream() == null ? "" : task.getStream().toLowerCase();
-            if (!taskStream.contains(filter.stream())) {
-                return false;
-            }
-        }
-
-        if (filter.searchQuery() != null) {
-            String needle = filter.searchQuery();
-            String title = lowerOrEmpty(task.getTitle());
-            String description = lowerOrEmpty(task.getDescription());
-            String dod = lowerOrEmpty(task.getDod());
-
-            boolean matches = title.contains(needle) || description.contains(needle) || dod.contains(needle);
-            if (!matches) {
-                return false;
-            }
-        }
-
-        if (!filter.quarterIds().isEmpty()) {
-            Set<UUID> quarters = deriveTaskQuarters(task, sprintIndex);
-            if (!quarters.isEmpty() && quarters.stream().noneMatch(filter.quarterIds()::contains)) {
-                return false;
-            }
-        }
-
-        if (!filter.statuses().isEmpty()) {
-            String taskStatus = normalizeStatus(task.getStatus());
-            if (!filter.statuses().contains(taskStatus)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
     private String normalizeStatus(String status) {
         if (status == null || status.isBlank()) {
             return "inprogress";
         }
         return status.trim().toLowerCase();
-    }
-
-    private String lowerOrEmpty(String value) {
-        return value == null ? "" : value.toLowerCase();
-    }
-
-    private Set<UUID> deriveTaskQuarters(TaskEntity task, Map<UUID, SprintEntity> sprintIndex) {
-        Set<UUID> quarters = new LinkedHashSet<>();
-
-        for (TaskAllocationEntity allocation : task.getAllocations()) {
-            SprintEntity sprint = resolveSprint(sprintIndex, allocation.getSprint().getId());
-            quarters.add(sprint.getQuarter().getId());
-        }
-
-        for (TaskLoadEntity load : task.getLoads()) {
-            if (load.getDays() != null && load.getDays().compareTo(BigDecimal.ZERO) > 0) {
-                SprintEntity sprint = resolveSprint(sprintIndex, load.getSprint().getId());
-                quarters.add(sprint.getQuarter().getId());
-            }
-        }
-
-        return quarters;
     }
 
     private void recalcLoad(TaskEntity task, SprintEntity sprint) {

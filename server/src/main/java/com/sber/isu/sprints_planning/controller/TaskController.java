@@ -48,10 +48,10 @@ public class TaskController {
             status,
             releaseDate,
             stream,
-            search,
             participantId,
             role,
-            userStream
+            userStream,
+            search
         );
         return taskService.findPage(normalizedTeamKey, filter, page, size);
     }
