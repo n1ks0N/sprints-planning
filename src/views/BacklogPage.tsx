@@ -1421,7 +1421,7 @@ export default function BacklogPage() {
     selectedQuarterIds,
   } = useAppSelector((s) => s.ui.backlog);
 
-  const [isQuarterPending, startQuarterTransition] = React.useTransition();
+  const [isFiltersPending, startFiltersTransition] = React.useTransition();
   const [, startTaskTransition] = React.useTransition();
 
   const currentQuarterId = currentQ?.id;
@@ -1853,11 +1853,11 @@ export default function BacklogPage() {
       const filtered = ids.filter((id) => existing.has(id));
       const unique = Array.from(new Set(filtered));
       if (shallowArrayEqual(unique, selectedQuarterIds)) return;
-      startQuarterTransition(() => {
+      startFiltersTransition(() => {
         dispatch(setBacklogFilters({ selectedQuarterIds: unique }));
       });
     },
-    [quarters, selectedQuarterIds, startQuarterTransition, dispatch]
+    [quarters, selectedQuarterIds, startFiltersTransition, dispatch]
   );
 
   const handlePriorityFilterChange = React.useCallback(
@@ -1867,44 +1867,64 @@ export default function BacklogPage() {
         .map((v) => Number(v))
         .filter((n): n is number => PRIORITY_VALUES.includes(n));
       if (shallowArrayEqual(next, priorityFilter)) return;
-      dispatch(setBacklogFilters({ priorityFilter: next }));
+      startFiltersTransition(() => {
+        dispatch(setBacklogFilters({ priorityFilter: next }));
+      });
     },
-    [dispatch, priorityFilter]
+    [dispatch, priorityFilter, startFiltersTransition]
   );
 
   const handleStatusFilterChange = React.useCallback(
     (values: string[]) => {
       const next = Array.from(new Set(values)) as TaskStatus[];
       if (shallowArrayEqual(next, statusFilter)) return;
-      dispatch(setBacklogFilters({ statusFilter: next }));
+      startFiltersTransition(() => {
+        dispatch(setBacklogFilters({ statusFilter: next }));
+      });
     },
-    [dispatch, statusFilter]
+    [dispatch, statusFilter, startFiltersTransition]
   );
 
   const handleReleaseFilterChange = React.useCallback(
     (value: string) => {
       const normalized = (value || "").trim() || "all";
       if (normalized !== releaseSprintFilter) {
-        dispatch(setBacklogFilters({ releaseSprintFilter: normalized }));
+        startFiltersTransition(() => {
+          dispatch(setBacklogFilters({ releaseSprintFilter: normalized }));
+        });
       }
     },
-    [dispatch, releaseSprintFilter]
+    [dispatch, releaseSprintFilter, startFiltersTransition]
+  );
+
+  const handleStreamFilterChange = React.useCallback(
+    (value: string) => {
+      if (value === streamFilter) return;
+      startFiltersTransition(() => {
+        dispatch(setBacklogFilters({ streamFilter: value }));
+      });
+    },
+    [dispatch, streamFilter, startFiltersTransition]
   );
 
   const handleSearchCommit = React.useCallback(() => {
     const normalized = searchDraft.trim();
     if (normalized !== normalizedSearch) {
-      dispatch(setBacklogFilters({ searchQuery: normalized }));
+      startFiltersTransition(() => {
+        dispatch(setBacklogFilters({ searchQuery: normalized }));
+      });
     }
-  }, [dispatch, normalizedSearch, searchDraft]);
+  }, [dispatch, normalizedSearch, searchDraft, startFiltersTransition]);
+  const deferredStatusFilter = React.useDeferredValue(statusFilter);
+  const deferredTasks = React.useDeferredValue(allTasks);
 
   const filteredTasks = React.useMemo(() => {
     const byStatus =
-      statusFilter.length === 0
-        ? allTasks
-        : allTasks.filter((t) => {
+      deferredStatusFilter.length === 0
+        ? deferredTasks
+        : deferredTasks.filter((t) => {
             const st = t.status ?? "inprogress";
-            return statusFilter.includes(st);
+            return deferredStatusFilter.includes(st);
           });
 
     const withOrder = byStatus.slice().sort((a, b) => {
@@ -1915,9 +1935,9 @@ export default function BacklogPage() {
     });
 
     return withOrder;
-  }, [allTasks, statusFilter]);
+  }, [deferredTasks, deferredStatusFilter]);
 
-  const isUiPending = isQuarterPending;
+  const isUiPending = isFiltersPending;
   const isInitialLoading =
     (isTasksLoading ||
       isQuartersLoading ||
@@ -2601,15 +2621,7 @@ export default function BacklogPage() {
               label="Стрим"
               options={streamOptions}
               value={streamFilter}
-              onChange={(value) => {
-                if (value !== streamFilter) {
-                  dispatch(
-                    setBacklogFilters({
-                      streamFilter: value,
-                    })
-                  );
-                }
-              }}
+              onChange={handleStreamFilterChange}
               sx={{ minWidth: 200 }}
             />
 
