@@ -2718,6 +2718,12 @@ export default function BacklogPage() {
                 );
               })}
 
+              {isFetching && (
+                <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+                  <CircularProgress />
+                </Box>
+              )}
+
               {!filteredTasks.length && !isFetching && (
                 <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
                   <Typography color="text.secondary">
