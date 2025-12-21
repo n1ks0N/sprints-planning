@@ -242,6 +242,12 @@ type EditableNumberCellProps = {
   title?: string;
 };
 
+type EditableParticipantProps = {
+  value: Participant;
+  options: Participant[];
+  onCommit?: (next: Participant) => void;
+};
+
 /**
  * Простая числовая ячейка:
  * - кликом включаем редактирование;
@@ -337,6 +343,69 @@ function EditableNumberCell({
     />
   );
 }
+
+const EditableParticipant = React.memo(function EditableParticipant({
+  value,
+  options,
+  onCommit,
+}: EditableParticipantProps) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState<Participant | null>(value);
+
+  React.useEffect(() => {
+    if (!editing) {
+      setDraft(value);
+    }
+  }, [editing, value]);
+
+  const handleStart = React.useCallback(() => {
+    setDraft(value);
+    setEditing(true);
+  }, [value]);
+
+  const handleClose = React.useCallback(() => {
+    setEditing(false);
+  }, []);
+
+  const handleCommit = React.useCallback(
+    (_: unknown, next: Participant | null) => {
+      if (next && next.id !== value.id) {
+        onCommit?.(next);
+      }
+      setEditing(false);
+    },
+    [onCommit, value.id]
+  );
+
+  if (!editing) {
+    return (
+      <Box
+        sx={{ cursor: "pointer" }}
+        title="Нажмите, чтобы сменить участника"
+        onClick={handleStart}
+      >
+        <Typography>{value.fullName}</Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Autocomplete
+      size="small"
+      openOnFocus
+      options={options}
+      value={draft}
+      onChange={handleCommit}
+      onClose={handleClose}
+      isOptionEqualToValue={(a, b) => a?.id === b?.id}
+      getOptionLabel={(p) => (p ? `${p.fullName} (${p.role})` : "")}
+      renderInput={(params) => (
+        <TextField {...params} size="small" label="Участник" autoFocus />
+      )}
+      sx={{ minWidth: 220 }}
+    />
+  );
+});
 
 // ---------- LocalStorage ----------
 
@@ -471,6 +540,11 @@ type TaskCardProps = {
   onCopyRowToNextQuarter: (taskId: string, participantId: string) => void;
   onAddParticipant: (task: BacklogItem, participantId: string) => void;
   onRemoveParticipant: (task: BacklogItem, participantId: string) => void;
+  onChangeParticipant: (
+    task: BacklogItem,
+    fromParticipantId: string,
+    toParticipantId: string
+  ) => void;
   onParticipantOrderChange: (taskId: string, nextOrder: string[]) => void;
   hiddenParticipants: boolean;
   onToggleParticipantsVisibility: (taskId: string, hidden: boolean) => void;
@@ -539,6 +613,7 @@ const TaskCard = React.memo(function TaskCard({
   onCopyRowToNextQuarter,
   onAddParticipant,
   onRemoveParticipant,
+  onChangeParticipant,
   onParticipantOrderChange,
   hiddenParticipants,
   onToggleParticipantsVisibility,
@@ -1050,6 +1125,11 @@ const TaskCard = React.memo(function TaskCard({
                     0
                   );
                   const isLeader = leaderPid === p.id;
+                  const participantEditOptions = participants.filter(
+                    (candidate) =>
+                      candidate.id === p.id ||
+                      !assignedParticipantIds.includes(candidate.id)
+                  );
 
                   return (
                     <SortableParticipantRow key={p.id} participant={p}>
@@ -1115,7 +1195,13 @@ const TaskCard = React.memo(function TaskCard({
                                 )}
                               </IconButton>
                               <Chip label={p.role} size="small" />
-                              <Typography>{p.fullName}</Typography>
+                              <EditableParticipant
+                                value={p}
+                                options={participantEditOptions}
+                                onCommit={(next) =>
+                                  onChangeParticipant(task, p.id, next.id)
+                                }
+                              />
                             </Stack>
                           </TableCell>
 
@@ -1331,10 +1417,11 @@ export default function BacklogPage() {
     streamFilter,
     statusFilter,
     releaseSprintFilter,
+    searchQuery,
     selectedQuarterIds,
   } = useAppSelector((s) => s.ui.backlog);
 
-  const [isQuarterPending, startQuarterTransition] = React.useTransition();
+  const [isFiltersPending, startFiltersTransition] = React.useTransition();
   const [, startTaskTransition] = React.useTransition();
 
   const currentQuarterId = currentQ?.id;
@@ -1394,6 +1481,7 @@ export default function BacklogPage() {
   }, [participants]);
 
   const TASKS_PAGE_SIZE = 20;
+  const normalizedSearch = React.useMemo(() => searchQuery.trim(), [searchQuery]);
   const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
 
   const tasksQueryArgs = React.useMemo(
@@ -1404,6 +1492,7 @@ export default function BacklogPage() {
       releaseDate:
         releaseSprintFilter === "all" ? undefined : releaseSprintFilter.trim(),
       stream: streamFilter.trim(),
+      search: normalizedSearch,
       page: tasksPageNumber,
       size: TASKS_PAGE_SIZE,
     }),
@@ -1413,6 +1502,7 @@ export default function BacklogPage() {
       statusFilter,
       releaseSprintFilter,
       streamFilter,
+      normalizedSearch,
       tasksPageNumber,
     ]
   );
@@ -1425,7 +1515,14 @@ export default function BacklogPage() {
     statusFilter,
     releaseSprintFilter,
     streamFilter,
+    normalizedSearch,
   ]);
+
+  const [searchDraft, setSearchDraft] = React.useState(searchQuery);
+
+  React.useEffect(() => {
+    setSearchDraft(searchQuery);
+  }, [searchQuery]);
 
   const applyTaskOrderOptimistic = React.useCallback(
     (orderedIds: string[]) =>
@@ -1528,6 +1625,7 @@ export default function BacklogPage() {
   const [addTaskQuarterError, setAddTaskQuarterError] = React.useState(false);
 
   React.useEffect(() => {
+    if (quarterIdSet.size === 0) return;
     if (selectedQuarterIds.length === 0) return;
 
     const validSelected = selectedQuarterIds.filter((id) =>
@@ -1755,11 +1853,11 @@ export default function BacklogPage() {
       const filtered = ids.filter((id) => existing.has(id));
       const unique = Array.from(new Set(filtered));
       if (shallowArrayEqual(unique, selectedQuarterIds)) return;
-      startQuarterTransition(() => {
+      startFiltersTransition(() => {
         dispatch(setBacklogFilters({ selectedQuarterIds: unique }));
       });
     },
-    [quarters, selectedQuarterIds, startQuarterTransition, dispatch]
+    [quarters, selectedQuarterIds, startFiltersTransition, dispatch]
   );
 
   const handlePriorityFilterChange = React.useCallback(
@@ -1769,37 +1867,64 @@ export default function BacklogPage() {
         .map((v) => Number(v))
         .filter((n): n is number => PRIORITY_VALUES.includes(n));
       if (shallowArrayEqual(next, priorityFilter)) return;
-      dispatch(setBacklogFilters({ priorityFilter: next }));
+      startFiltersTransition(() => {
+        dispatch(setBacklogFilters({ priorityFilter: next }));
+      });
     },
-    [dispatch, priorityFilter]
+    [dispatch, priorityFilter, startFiltersTransition]
   );
 
   const handleStatusFilterChange = React.useCallback(
     (values: string[]) => {
       const next = Array.from(new Set(values)) as TaskStatus[];
       if (shallowArrayEqual(next, statusFilter)) return;
-      dispatch(setBacklogFilters({ statusFilter: next }));
+      startFiltersTransition(() => {
+        dispatch(setBacklogFilters({ statusFilter: next }));
+      });
     },
-    [dispatch, statusFilter]
+    [dispatch, statusFilter, startFiltersTransition]
   );
 
   const handleReleaseFilterChange = React.useCallback(
     (value: string) => {
       const normalized = (value || "").trim() || "all";
       if (normalized !== releaseSprintFilter) {
-        dispatch(setBacklogFilters({ releaseSprintFilter: normalized }));
+        startFiltersTransition(() => {
+          dispatch(setBacklogFilters({ releaseSprintFilter: normalized }));
+        });
       }
     },
-    [dispatch, releaseSprintFilter]
+    [dispatch, releaseSprintFilter, startFiltersTransition]
   );
+
+  const handleStreamFilterChange = React.useCallback(
+    (value: string) => {
+      if (value === streamFilter) return;
+      startFiltersTransition(() => {
+        dispatch(setBacklogFilters({ streamFilter: value }));
+      });
+    },
+    [dispatch, streamFilter, startFiltersTransition]
+  );
+
+  const handleSearchCommit = React.useCallback(() => {
+    const normalized = searchDraft.trim();
+    if (normalized !== normalizedSearch) {
+      startFiltersTransition(() => {
+        dispatch(setBacklogFilters({ searchQuery: normalized }));
+      });
+    }
+  }, [dispatch, normalizedSearch, searchDraft, startFiltersTransition]);
+  const deferredStatusFilter = React.useDeferredValue(statusFilter);
+  const deferredTasks = React.useDeferredValue(allTasks);
 
   const filteredTasks = React.useMemo(() => {
     const byStatus =
-      statusFilter.length === 0
-        ? allTasks
-        : allTasks.filter((t) => {
+      deferredStatusFilter.length === 0
+        ? deferredTasks
+        : deferredTasks.filter((t) => {
             const st = t.status ?? "inprogress";
-            return statusFilter.includes(st);
+            return deferredStatusFilter.includes(st);
           });
 
     const withOrder = byStatus.slice().sort((a, b) => {
@@ -1810,9 +1935,9 @@ export default function BacklogPage() {
     });
 
     return withOrder;
-  }, [allTasks, statusFilter]);
+  }, [deferredTasks, deferredStatusFilter]);
 
-  const isUiPending = isQuarterPending;
+  const isUiPending = isFiltersPending;
   const isInitialLoading =
     (isTasksLoading ||
       isQuartersLoading ||
@@ -2101,6 +2226,67 @@ export default function BacklogPage() {
       await updateField(task, patch);
     } catch (error) {
       console.error("Failed to remove participant from task", error);
+    }
+  };
+
+  const replaceParticipantInTask = async (
+    task: BacklogItem,
+    fromPid: string,
+    toPid: string
+  ) => {
+    if (!toPid || fromPid === toPid) return;
+    if (!task.participantIds.includes(fromPid)) return;
+    if (task.participantIds.includes(toPid)) return;
+
+    const participantIds = task.participantIds.map((id) =>
+      id === fromPid ? toPid : id
+    );
+    const taskAllocations = allocations[task.id] || {};
+    const rowToMove = taskAllocations[fromPid] || {};
+    const nextAllocations = Object.entries(taskAllocations).reduce<
+      Record<string, Record<string, number>>
+    >((acc, [pid, row]) => {
+      if (pid === fromPid) return acc;
+      acc[pid] = { ...row };
+      return acc;
+    }, {});
+
+    nextAllocations[toPid] = { ...rowToMove };
+
+    setAllocations((prev) => {
+      const prevTask = prev[task.id] || {};
+      const movedRow = prevTask[fromPid] || rowToMove;
+      const { [fromPid]: _, ...rest } = prevTask;
+      return {
+        ...prev,
+        [task.id]: {
+          ...rest,
+          [toPid]: { ...movedRow },
+        },
+      };
+    });
+
+    setParticipantOrders((prev) => {
+      const currentOrder = prev[task.id] || task.participantIds;
+      return {
+        ...prev,
+        [task.id]: currentOrder.map((id) => (id === fromPid ? toPid : id)),
+      };
+    });
+
+    const patch: Partial<BacklogItem> = {
+      participantIds,
+      allocations: nextAllocations,
+    };
+
+    if ((task as any).leaderId === fromPid) {
+      (patch as any).leaderId = toPid;
+    }
+
+    try {
+      await updateField(task, patch);
+    } catch (error) {
+      console.error("Failed to replace participant", error);
     }
   };
 
@@ -2435,16 +2621,24 @@ export default function BacklogPage() {
               label="Стрим"
               options={streamOptions}
               value={streamFilter}
-              onChange={(value) => {
-                if (value !== streamFilter) {
-                  dispatch(
-                    setBacklogFilters({
-                      streamFilter: value,
-                    })
-                  );
+              onChange={handleStreamFilterChange}
+              sx={{ minWidth: 200 }}
+            />
+
+            <TextField
+              label="Поиск по названию/описанию/DOD"
+              value={searchDraft}
+              onChange={(e) => setSearchDraft(e.target.value)}
+              onBlur={handleSearchCommit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
                 }
               }}
-              sx={{ minWidth: 200 }}
+              placeholder="Введите текст"
+              size="small"
+              sx={{ minWidth: 220 }}
             />
 
             {isUiPending && (
@@ -2505,6 +2699,7 @@ export default function BacklogPage() {
                         onCopyRowToNextQuarter={copyRowToNextQuarter}
                         onAddParticipant={addParticipantToTask}
                         onRemoveParticipant={removeParticipantFromTask}
+                        onChangeParticipant={replaceParticipantInTask}
                         onParticipantOrderChange={(taskId, order) => {
                           setParticipantOrders((prev) => ({
                             ...prev,

@@ -15,7 +15,8 @@ public record TaskFilter(
     String stream,
     Set<UUID> participantIds,
     Set<String> roles,
-    Set<String> userStreams
+    Set<String> userStreams,
+    String searchQuery
 ) {
 
     public static TaskFilter empty() {
@@ -27,7 +28,8 @@ public record TaskFilter(
             null,
             Collections.emptySet(),
             Collections.emptySet(),
-            Collections.emptySet()
+            Collections.emptySet(),
+            null
         );
     }
 
@@ -39,7 +41,8 @@ public record TaskFilter(
         String stream,
         String participantIds,
         String roles,
-        String userStreams
+        String userStreams,
+        String searchQuery
     ) {
         return new TaskFilter(
             parseUuidSet(quarterIds),
@@ -49,7 +52,8 @@ public record TaskFilter(
             normalize(stream),
             parseUuidSet(participantIds),
             parseStringSet(roles),
-            parseStringSet(userStreams)
+            parseStringSet(userStreams),
+            normalize(searchQuery)
         );
     }
 
