@@ -18,7 +18,6 @@ import {
   Tooltip,
   Divider,
   InputBase,
-  CircularProgress,
   FormControl,
   InputLabel,
   FormHelperText,
@@ -62,6 +61,7 @@ import type {
   TaskPriority,
   Quarter,
   TaskStatus,
+  Page,
 } from "../types";
 import { setBacklogFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
@@ -111,6 +111,30 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
     if (a[i] !== b[i]) return false;
   }
   return true;
+}
+
+type TasksPage = Page<BacklogItem>;
+
+function syncTasksPageMeta(draft: TasksPage) {
+  const size = Math.max(1, (draft.page?.size ?? draft.content.length) || 1);
+  const pageInfo = draft.page ??
+    (draft.page = {
+      size,
+      number: 0,
+      totalElements: draft.content.length,
+      totalPages: Math.max(1, Math.ceil(draft.content.length / size)),
+    });
+
+  draft.numberOfElements = draft.content.length;
+  pageInfo.totalElements = Math.max(pageInfo.totalElements, draft.content.length);
+  const totalPages = Math.max(
+    pageInfo.totalPages,
+    Math.max(1, Math.ceil(pageInfo.totalElements / Math.max(1, pageInfo.size)))
+  );
+  pageInfo.totalPages = totalPages;
+  draft.empty = draft.content.length === 0;
+  draft.first = pageInfo.number <= 0;
+  draft.last = pageInfo.number + 1 >= totalPages;
 }
 
 // ---------- Editable inputs (максимально локальное состояние) ----------
@@ -1421,7 +1445,7 @@ export default function BacklogPage() {
     selectedQuarterIds,
   } = useAppSelector((s) => s.ui.backlog);
 
-  const [isFiltersPending, startFiltersTransition] = React.useTransition();
+  const [, startFiltersTransition] = React.useTransition();
   const [, startTaskTransition] = React.useTransition();
 
   const currentQuarterId = currentQ?.id;
@@ -1484,6 +1508,34 @@ export default function BacklogPage() {
   const normalizedSearch = React.useMemo(() => searchQuery.trim(), [searchQuery]);
   const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
 
+  const filtersSignature = React.useMemo(
+    () =>
+      JSON.stringify({
+        selectedQuarterIds: selectedQuarterIds.slice().sort(),
+        priorityFilter,
+        statusFilter,
+        releaseSprintFilter,
+        streamFilter,
+        normalizedSearch,
+      }),
+    [
+      normalizedSearch,
+      priorityFilter,
+      releaseSprintFilter,
+      selectedQuarterIds,
+      statusFilter,
+      streamFilter,
+    ]
+  );
+
+  const lastFiltersSignature = React.useRef(filtersSignature);
+  const effectiveTasksPageNumber = React.useMemo(() => {
+    if (lastFiltersSignature.current !== filtersSignature) {
+      return 0;
+    }
+    return tasksPageNumber;
+  }, [filtersSignature, tasksPageNumber]);
+
   const tasksQueryArgs = React.useMemo(
     () => ({
       quarterIds: selectedQuarterIds,
@@ -1493,7 +1545,7 @@ export default function BacklogPage() {
         releaseSprintFilter === "all" ? undefined : releaseSprintFilter.trim(),
       stream: streamFilter.trim(),
       search: normalizedSearch,
-      page: tasksPageNumber,
+      page: effectiveTasksPageNumber,
       size: TASKS_PAGE_SIZE,
     }),
     [
@@ -1503,20 +1555,16 @@ export default function BacklogPage() {
       releaseSprintFilter,
       streamFilter,
       normalizedSearch,
-      tasksPageNumber,
+      effectiveTasksPageNumber,
     ]
   );
 
   React.useEffect(() => {
-    setTasksPageNumber(0);
-  }, [
-    selectedQuarterIds,
-    priorityFilter,
-    statusFilter,
-    releaseSprintFilter,
-    streamFilter,
-    normalizedSearch,
-  ]);
+    if (lastFiltersSignature.current !== filtersSignature) {
+      lastFiltersSignature.current = filtersSignature;
+      setTasksPageNumber(0);
+    }
+  }, [filtersSignature]);
 
   const [searchDraft, setSearchDraft] = React.useState(searchQuery);
 
@@ -1548,8 +1596,7 @@ export default function BacklogPage() {
           });
 
           draft.content.splice(0, draft.content.length, ...fullList);
-          draft.numberOfElements = draft.content.length;
-          draft.totalElements = Math.max(draft.totalElements, draft.content.length);
+          syncTasksPageMeta(draft as TasksPage);
         })
       ),
     [dispatch, tasksQueryArgs]
@@ -1572,7 +1619,6 @@ export default function BacklogPage() {
   const {
     data: fetchedTasksPage,
     isFetching,
-    isLoading: isTasksLoading,
   } = useGetTasksQuery(tasksQueryArgs);
 
   const fetchedTasks = React.useMemo(
@@ -1580,10 +1626,12 @@ export default function BacklogPage() {
     [fetchedTasksPage]
   );
 
-  const hasMoreTasks = React.useMemo(
-    () => (fetchedTasksPage ? !fetchedTasksPage.last : true),
-    [fetchedTasksPage]
-  );
+  const totalPages = fetchedTasksPage?.page?.totalPages;
+
+  const hasMoreTasks = React.useMemo(() => {
+    if (!totalPages || !Number.isFinite(totalPages)) return true;
+    return effectiveTasksPageNumber + 1 < totalPages;
+  }, [effectiveTasksPageNumber, totalPages]);
 
   React.useEffect(() => {
     const handleScroll = () => {
@@ -1591,14 +1639,23 @@ export default function BacklogPage() {
         document.documentElement;
       const distanceToBottom = scrollHeight - (scrollTop + clientHeight);
 
-      if (distanceToBottom < 400 && hasMoreTasks && !isFetching) {
-        setTasksPageNumber((prev) => prev + 1);
+      if (distanceToBottom >= 400 || !hasMoreTasks || isFetching) {
+        return;
       }
+
+      setTasksPageNumber((prev) => {
+        if (typeof totalPages === "number") {
+          const maxPage = Math.max(0, totalPages - 1);
+          return prev < maxPage ? prev + 1 : prev;
+        }
+
+        return prev + 1;
+      });
     };
 
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [hasMoreTasks, isFetching]);
+  }, [hasMoreTasks, isFetching, fetchedTasksPage, totalPages]);
 
   const allTasks = React.useMemo(
     () =>
@@ -1937,17 +1994,6 @@ export default function BacklogPage() {
     return withOrder;
   }, [deferredTasks, deferredStatusFilter]);
 
-  const isUiPending = isFiltersPending;
-  const isInitialLoading =
-    (isTasksLoading ||
-      isQuartersLoading ||
-      isParticipantsLoading ||
-      isSprintsLoading ||
-      isReleasesLoading) &&
-    !fetchedTasks.length &&
-    !participants.length &&
-    !quarters.length &&
-    !allSprints.length;
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
@@ -2481,23 +2527,6 @@ export default function BacklogPage() {
     [filteredTasks, persistTaskOrder]
   );
 
-  if (isInitialLoading) {
-    return (
-      <Paper elevation={0} sx={{ p: 2 }}>
-        <Box
-          sx={{
-            minHeight: 240,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <CircularProgress />
-        </Box>
-      </Paper>
-    );
-  }
-
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
       <Stack spacing={2}>
@@ -2641,11 +2670,6 @@ export default function BacklogPage() {
               sx={{ minWidth: 220 }}
             />
 
-            {isUiPending && (
-              <Box sx={{ display: "flex", justifyContent: "center" }}>
-                <CircularProgress size={18} sx={{ color: "text.secondary" }} />
-              </Box>
-            )}
           </Box>
         </Paper>
 

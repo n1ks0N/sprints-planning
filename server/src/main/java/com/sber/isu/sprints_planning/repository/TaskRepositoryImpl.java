@@ -13,7 +13,6 @@ import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
-import jakarta.persistence.criteria.Fetch;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
@@ -42,8 +41,8 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         CriteriaBuilder cb = entityManager.getCriteriaBuilder();
         CriteriaQuery<TaskEntity> cq = cb.createQuery(TaskEntity.class);
         Root<TaskEntity> task = cq.from(TaskEntity.class);
-        Joins joins = createJoins(task);
-        applyFetches(task);
+        FilterJoins joins = createFilterJoins(task, effectiveFilter);
+        applyFetches(task, effectiveFilter);
         List<Predicate> predicates = buildPredicates(teamKey, effectiveFilter, cb, joins);
 
         cq.select(task).distinct(true).where(predicates.toArray(new Predicate[0])).orderBy(cb.asc(task.get("displayOrder")));
@@ -58,7 +57,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
 
         CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
         Root<TaskEntity> countRoot = countQuery.from(TaskEntity.class);
-        Joins countJoins = createJoins(countRoot);
+        FilterJoins countJoins = createFilterJoins(countRoot, effectiveFilter);
         List<Predicate> countPredicates = buildPredicates(teamKey, effectiveFilter, cb, countJoins);
         countQuery.select(cb.countDistinct(countRoot)).where(countPredicates.toArray(new Predicate[0]));
         long total = entityManager.createQuery(countQuery).getSingleResult();
@@ -70,7 +69,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
 
         CriteriaQuery<Object[]> idQuery = cb.createQuery(Object[].class);
         Root<TaskEntity> idRoot = idQuery.from(TaskEntity.class);
-        Joins idJoins = createJoins(idRoot);
+        FilterJoins idJoins = createFilterJoins(idRoot, effectiveFilter);
         List<Predicate> idPredicates = buildPredicates(teamKey, effectiveFilter, cb, idJoins);
         idQuery.multiselect(idRoot.get("id"), idRoot.get("displayOrder"))
             .where(idPredicates.toArray(new Predicate[0]))
@@ -89,8 +88,8 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
 
         CriteriaQuery<TaskEntity> dataQuery = cb.createQuery(TaskEntity.class);
         Root<TaskEntity> dataRoot = dataQuery.from(TaskEntity.class);
-        applyFetches(dataRoot);
-        Joins dataJoins = createJoins(dataRoot);
+        applyFetches(dataRoot, effectiveFilter);
+        FilterJoins dataJoins = createFilterJoins(dataRoot, effectiveFilter);
         List<Predicate> dataPredicates = buildPredicates(teamKey, effectiveFilter, cb, dataJoins);
         dataPredicates.add(dataRoot.get("id").in(ids));
         dataQuery.select(dataRoot)
@@ -103,39 +102,56 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         return new PageImpl<>(results, pageable, total);
     }
 
-    private void applyFetches(Root<TaskEntity> task) {
-        Fetch<TaskEntity, TaskParticipantEntity> participantFetch = task.fetch("participants", JoinType.LEFT);
-        Fetch<TaskParticipantEntity, ParticipantEntity> participantEntityFetch = participantFetch.fetch("participant", JoinType.LEFT);
-        participantEntityFetch.fetch("userStreams", JoinType.LEFT);
-
-        Fetch<TaskEntity, TaskLoadEntity> loadFetch = task.fetch("loads", JoinType.LEFT);
-        loadFetch.fetch("sprint", JoinType.LEFT);
-
-        Fetch<TaskEntity, TaskAllocationEntity> allocationFetch = task.fetch("allocations", JoinType.LEFT);
-        allocationFetch.fetch("participant", JoinType.LEFT);
-        allocationFetch.fetch("sprint", JoinType.LEFT);
-
+    private void applyFetches(Root<TaskEntity> task, TaskFilter filter) {
         task.fetch("leaderParticipant", JoinType.LEFT);
         task.fetch("releaseSprint", JoinType.LEFT);
+
+        var participantFetch = task.fetch("participants", JoinType.LEFT);
+        participantFetch.fetch("participant", JoinType.LEFT);
+
+        var loadFetch = task.fetch("loads", JoinType.LEFT);
+        var loadSprintFetch = loadFetch.fetch("sprint", JoinType.LEFT);
+        if (!filter.quarterIds().isEmpty()) {
+            loadSprintFetch.fetch("quarter", JoinType.LEFT);
+        }
+
+        var allocationFetch = task.fetch("allocations", JoinType.LEFT);
+        allocationFetch.fetch("participant", JoinType.LEFT);
+        var allocationSprintFetch = allocationFetch.fetch("sprint", JoinType.LEFT);
+        if (!filter.quarterIds().isEmpty()) {
+            allocationSprintFetch.fetch("quarter", JoinType.LEFT);
+        }
     }
 
-    private Joins createJoins(Root<TaskEntity> task) {
-        SetJoin<TaskEntity, TaskParticipantEntity> participantLinks = task.joinSet("participants", JoinType.LEFT);
-        Join<TaskParticipantEntity, ParticipantEntity> participant = participantLinks.join("participant", JoinType.LEFT);
-        SetJoin<ParticipantEntity, String> userStreams = participant.joinSet("userStreams", JoinType.LEFT);
+    private FilterJoins createFilterJoins(Root<TaskEntity> task, TaskFilter filter) {
+        Join<TaskParticipantEntity, ParticipantEntity> participant = null;
+        SetJoin<ParticipantEntity, String> userStreams = null;
 
-        SetJoin<TaskEntity, TaskLoadEntity> loads = task.joinSet("loads", JoinType.LEFT);
-        Join<TaskLoadEntity, SprintEntity> loadSprint = loads.join("sprint", JoinType.LEFT);
-        Join<SprintEntity, QuarterEntity> loadQuarter = loadSprint.join("quarter", JoinType.LEFT);
+        if (needsParticipantFiltering(filter)) {
+            participant = task.joinSet("participants", JoinType.LEFT).join("participant", JoinType.LEFT);
+            if (!filter.userStreams().isEmpty()) {
+                userStreams = participant.joinSet("userStreams", JoinType.LEFT);
+            }
+        }
 
-        SetJoin<TaskEntity, TaskAllocationEntity> allocations = task.joinSet("allocations", JoinType.LEFT);
-        Join<TaskAllocationEntity, SprintEntity> allocationSprint = allocations.join("sprint", JoinType.LEFT);
-        Join<SprintEntity, QuarterEntity> allocationQuarter = allocationSprint.join("quarter", JoinType.LEFT);
+        SetJoin<TaskEntity, TaskLoadEntity> loads = null;
+        Join<SprintEntity, QuarterEntity> loadQuarter = null;
+        if (!filter.quarterIds().isEmpty()) {
+            loads = task.joinSet("loads", JoinType.LEFT);
+            loadQuarter = loads.join("sprint", JoinType.LEFT).join("quarter", JoinType.LEFT);
+        }
 
-        return new Joins(task, participantLinks, participant, userStreams, loads, loadSprint, loadQuarter, allocations, allocationSprint, allocationQuarter);
+        SetJoin<TaskEntity, TaskAllocationEntity> allocations = null;
+        Join<SprintEntity, QuarterEntity> allocationQuarter = null;
+        if (!filter.quarterIds().isEmpty()) {
+            allocations = task.joinSet("allocations", JoinType.LEFT);
+            allocationQuarter = allocations.join("sprint", JoinType.LEFT).join("quarter", JoinType.LEFT);
+        }
+
+        return new FilterJoins(task, participant, userStreams, loads, loadQuarter, allocations, allocationQuarter);
     }
 
-    private List<Predicate> buildPredicates(String teamKey, TaskFilter effectiveFilter, CriteriaBuilder cb, Joins joins) {
+    private List<Predicate> buildPredicates(String teamKey, TaskFilter effectiveFilter, CriteriaBuilder cb, FilterJoins joins) {
         List<Predicate> predicates = new ArrayList<>();
         predicates.add(cb.equal(joins.task().get("teamKey"), teamKey));
 
@@ -188,16 +204,17 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         return predicates;
     }
 
-    private record Joins(
+    private boolean needsParticipantFiltering(TaskFilter filter) {
+        return !filter.participantIds().isEmpty() || !filter.roles().isEmpty() || !filter.userStreams().isEmpty();
+    }
+
+    private record FilterJoins(
         Root<TaskEntity> task,
-        SetJoin<TaskEntity, TaskParticipantEntity> participantLinks,
         Join<TaskParticipantEntity, ParticipantEntity> participant,
         SetJoin<ParticipantEntity, String> userStreams,
         SetJoin<TaskEntity, TaskLoadEntity> loads,
-        Join<TaskLoadEntity, SprintEntity> loadSprint,
         Join<SprintEntity, QuarterEntity> loadQuarter,
         SetJoin<TaskEntity, TaskAllocationEntity> allocations,
-        Join<TaskAllocationEntity, SprintEntity> allocationSprint,
         Join<SprintEntity, QuarterEntity> allocationQuarter
     ) {
     }

@@ -241,15 +241,35 @@ const applyPatches = <Args>(
 
 type TasksPage = Page<BacklogItem>;
 
+const recalcPageMeta = (draft: TasksPage) => {
+  const size = Math.max(1, (draft.page?.size ?? draft.content.length) || 1);
+  const pageInfo = draft.page ??
+    (draft.page = {
+      size,
+      number: 0,
+      totalElements: draft.content.length,
+      totalPages: Math.max(1, Math.ceil(draft.content.length / size)),
+    });
+
+  draft.numberOfElements = draft.content.length;
+  pageInfo.totalElements = Math.max(pageInfo.totalElements, draft.content.length);
+  const totalPages = Math.max(
+    pageInfo.totalPages,
+    Math.max(1, Math.ceil(pageInfo.totalElements / size))
+  );
+  pageInfo.totalPages = totalPages;
+  draft.empty = draft.content.length === 0;
+  draft.first = pageInfo.number <= 0;
+  draft.last = pageInfo.number + 1 >= totalPages;
+};
+
 const updateTasksDraft = (
   draft: TasksPage | undefined,
   updater: (tasks: BacklogItem[]) => void
 ) => {
   if (!draft) return;
   updater(draft.content);
-  draft.numberOfElements = draft.content.length;
-  draft.totalElements = Math.max(draft.totalElements, draft.content.length);
-  draft.empty = draft.content.length === 0;
+  recalcPageMeta(draft);
 };
 
 const collectSprintsFromCache = (state: AnyState): Sprint[] => {
@@ -815,6 +835,7 @@ export const api = createApi({
         const shouldReset = !arg || typeof arg !== "object" || !("page" in arg) || (arg as any).page === 0;
         if (shouldReset) {
           Object.assign(currentCache, newData);
+          recalcPageMeta(currentCache);
           return;
         }
 
@@ -828,14 +849,11 @@ export const api = createApi({
           }
         });
 
-        currentCache.number = newData.number;
-        currentCache.size = newData.size;
-        currentCache.totalPages = newData.totalPages;
-        currentCache.totalElements = newData.totalElements;
-        currentCache.last = newData.last;
-        currentCache.first = newData.first && ((arg as any).page ?? 0) === 0;
-        currentCache.numberOfElements = currentCache.content.length;
-        currentCache.empty = currentCache.content.length === 0;
+        currentCache.page = newData.page;
+        currentCache._links = newData._links;
+        currentCache.first = (newData.first ?? currentCache.first) &&
+          ((arg as any).page ?? 0) === 0;
+        recalcPageMeta(currentCache);
       },
       forceRefetch({ currentArg, previousArg }) {
         if (!currentArg || !previousArg) return true;

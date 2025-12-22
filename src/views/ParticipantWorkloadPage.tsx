@@ -11,7 +11,6 @@ import {
   TableCell,
   TableContainer,
   Tooltip,
-  CircularProgress,
   Box,
 } from "@mui/material";
 import {
@@ -43,14 +42,11 @@ export default function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
   const ui = useAppSelector((s) => s.ui.participantWorkload);
 
-  const { data: quarters = [], isLoading: isQuartersLoading } =
-    useGetQuartersQuery();
-  const { data: participants = [], isLoading: isParticipantsLoading } =
-    useGetParticipantsQuery();
-  const { data: sprintsData = [], isLoading: isSprintsLoading } =
-    useGetSprintsQuery(undefined);
+  const { data: quarters = [] } = useGetQuartersQuery();
+  const { data: participants = [] } = useGetParticipantsQuery();
+  const { data: sprintsData = [] } = useGetSprintsQuery(undefined);
   const allSprints = sprintsData;
-  const { data: tasksPage, isLoading: isTasksLoading } = useGetTasksQuery({
+  const { data: tasksPage } = useGetTasksQuery({
     quarterIds: ui.selectedQuarterIds,
     participantIds: ui.selectedParticipantIds,
     roles: ui.rolesFilter,
@@ -58,16 +54,6 @@ export default function ParticipantWorkloadPage() {
     priority: ui.priorityFilter,
   });
   const tasks: BacklogItem[] = tasksPage?.content ?? [];
-
-  const isInitialLoading =
-    (isQuartersLoading ||
-      isParticipantsLoading ||
-      isSprintsLoading ||
-      isTasksLoading) &&
-    !quarters.length &&
-    !participants.length &&
-    !allSprints.length &&
-    !tasks.length;
 
   const sprintsInScope = React.useMemo(() => {
     const selected = new Set(ui.selectedQuarterIds);
@@ -193,29 +179,23 @@ export default function ParticipantWorkloadPage() {
 
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
-      {isInitialLoading ? (
-        <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 240 }}>
-          <CircularProgress />
-        </Stack>
-      ) : (
-        <>
-          <Typography variant="h6" sx={{ mb: 2 }}>
-            Нагрузка по участникам
-          </Typography>
+      <Typography variant="h6" sx={{ mb: 2 }}>
+        Нагрузка по участникам
+      </Typography>
 
-          <Box
-            sx={{
-              mb: 2,
-              display: "grid",
-              gridTemplateColumns: {
-                xs: "repeat(auto-fit, minmax(220px, 1fr))",
-                md: "repeat(auto-fit, minmax(200px, 1fr))",
-              },
-              gridAutoFlow: "row dense",
-              gap: 2,
-              alignItems: "center",
-            }}
-          >
+      <Box
+        sx={{
+          mb: 2,
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "repeat(auto-fit, minmax(220px, 1fr))",
+            md: "repeat(auto-fit, minmax(200px, 1fr))",
+          },
+          gridAutoFlow: "row dense",
+          gap: 2,
+          alignItems: "center",
+        }}
+      >
             <FilterAutocomplete
               multiple
               allowCustom={false}
@@ -416,8 +396,6 @@ export default function ParticipantWorkloadPage() {
               </Typography>
             )}
           </Stack>
-        </>
-      )}
     </Paper>
   );
 }

@@ -15,7 +15,6 @@ import {
   Button,
   Stack,
   Tooltip,
-  CircularProgress,
   Box,
 } from "@mui/material";
 
@@ -156,11 +155,7 @@ function TeamScopedApp() {
                   onClick={handleExportExcel}
                   disabled={isExporting}
                 >
-                  {isExporting ? (
-                    <CircularProgress size={16} sx={{ color: "inherit" }} />
-                  ) : (
-                    "Экспорт в Excel"
-                  )}
+                  Экспорт в Excel
                 </Button>
               </span>
             </Tooltip>
