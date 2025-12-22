@@ -76,16 +76,21 @@ export type BacklogItem = {
   updatedAt: string;
 };
 
-export type Page<T> = {
-  content: T[];
-  totalElements: number;
-  totalPages: number;
+export type PageInfo = {
   size: number;
   number: number;
-  numberOfElements: number;
-  first: boolean;
-  last: boolean;
+  totalElements: number;
+  totalPages: number;
+};
+
+export type Page<T> = {
+  content: T[];
+  page: PageInfo;
+  numberOfElements?: number;
+  first?: boolean;
+  last?: boolean;
   empty?: boolean;
+  _links?: Record<string, unknown>;
 };
 
 /** Релиз и ключевые этапы */

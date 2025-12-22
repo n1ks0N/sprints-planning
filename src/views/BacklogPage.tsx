@@ -61,6 +61,7 @@ import type {
   TaskPriority,
   Quarter,
   TaskStatus,
+  Page,
 } from "../types";
 import { setBacklogFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
@@ -110,6 +111,30 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
     if (a[i] !== b[i]) return false;
   }
   return true;
+}
+
+type TasksPage = Page<BacklogItem>;
+
+function syncTasksPageMeta(draft: TasksPage) {
+  const size = Math.max(1, (draft.page?.size ?? draft.content.length) || 1);
+  const pageInfo = draft.page ??
+    (draft.page = {
+      size,
+      number: 0,
+      totalElements: draft.content.length,
+      totalPages: Math.max(1, Math.ceil(draft.content.length / size)),
+    });
+
+  draft.numberOfElements = draft.content.length;
+  pageInfo.totalElements = Math.max(pageInfo.totalElements, draft.content.length);
+  const totalPages = Math.max(
+    pageInfo.totalPages,
+    Math.max(1, Math.ceil(pageInfo.totalElements / Math.max(1, pageInfo.size)))
+  );
+  pageInfo.totalPages = totalPages;
+  draft.empty = draft.content.length === 0;
+  draft.first = pageInfo.number <= 0;
+  draft.last = pageInfo.number + 1 >= totalPages;
 }
 
 // ---------- Editable inputs (максимально локальное состояние) ----------
@@ -1547,8 +1572,7 @@ export default function BacklogPage() {
           });
 
           draft.content.splice(0, draft.content.length, ...fullList);
-          draft.numberOfElements = draft.content.length;
-          draft.totalElements = Math.max(draft.totalElements, draft.content.length);
+          syncTasksPageMeta(draft as TasksPage);
         })
       ),
     [dispatch, tasksQueryArgs]
@@ -1578,15 +1602,12 @@ export default function BacklogPage() {
     [fetchedTasksPage]
   );
 
-  const totalPages = fetchedTasksPage?.totalPages;
+  const totalPages = fetchedTasksPage?.page?.totalPages;
 
   const hasMoreTasks = React.useMemo(() => {
-    if (!fetchedTasksPage) return true;
-    if (typeof totalPages === "number") {
-      return tasksPageNumber + 1 < totalPages;
-    }
-    return !fetchedTasksPage.last;
-  }, [fetchedTasksPage, totalPages, tasksPageNumber]);
+    if (!totalPages || !Number.isFinite(totalPages)) return true;
+    return tasksPageNumber + 1 < totalPages;
+  }, [totalPages, tasksPageNumber]);
 
   React.useEffect(() => {
     const handleScroll = () => {
