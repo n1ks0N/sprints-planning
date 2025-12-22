@@ -1578,11 +1578,15 @@ export default function BacklogPage() {
     [fetchedTasksPage]
   );
 
+  const totalPages = fetchedTasksPage?.totalPages;
+
   const hasMoreTasks = React.useMemo(() => {
     if (!fetchedTasksPage) return true;
-    if (typeof fetchedTasksPage.totalPages !== "number") return !fetchedTasksPage.last;
-    return fetchedTasksPage.number + 1 < fetchedTasksPage.totalPages;
-  }, [fetchedTasksPage]);
+    if (typeof totalPages === "number") {
+      return tasksPageNumber + 1 < totalPages;
+    }
+    return !fetchedTasksPage.last;
+  }, [fetchedTasksPage, totalPages, tasksPageNumber]);
 
   React.useEffect(() => {
     const handleScroll = () => {
@@ -1595,18 +1599,18 @@ export default function BacklogPage() {
       }
 
       setTasksPageNumber((prev) => {
-        if (!fetchedTasksPage || fetchedTasksPage.totalPages === undefined) {
-          return prev + 1;
+        if (typeof totalPages === "number") {
+          const maxPage = Math.max(0, totalPages - 1);
+          return prev < maxPage ? prev + 1 : prev;
         }
 
-        const maxPage = fetchedTasksPage.totalPages - 1;
-        return prev < maxPage ? prev + 1 : prev;
+        return prev + 1;
       });
     };
 
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [hasMoreTasks, isFetching, fetchedTasksPage]);
+  }, [hasMoreTasks, isFetching, fetchedTasksPage, totalPages]);
 
   const allTasks = React.useMemo(
     () =>
