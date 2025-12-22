@@ -73,12 +73,8 @@ public class TaskService {
         int safePage = page == null ? 0 : Math.max(page, 0);
         int safeSize = size == null ? 20 : Math.max(size, 1);
         Page<TaskEntity> filtered = taskRepository.findFilteredPageWithDetails(teamKey, effectiveFilter, safePage, safeSize);
-        List<SprintEntity> sprints = fetchAllSprints(teamKey);
         List<TaskDto> content = filtered.getContent().stream()
-            .peek(task -> {
-                task.setStatus(normalizeStatus(task.getStatus()));
-                ensureLoadsForSprints(task, sprints);
-            })
+            .peek(task -> task.setStatus(normalizeStatus(task.getStatus())))
             .map(DtoMapper::toTaskDto)
             .toList();
         return new PageImpl<>(content, filtered.getPageable(), filtered.getTotalElements());
@@ -90,19 +86,13 @@ public class TaskService {
             throw new EntityNotFoundException("Task not found");
         }
         entity.setStatus(normalizeStatus(entity.getStatus()));
-        List<SprintEntity> sprints = fetchAllSprints(teamKey);
-        ensureLoadsForSprints(entity, sprints);
         return DtoMapper.toTaskDto(entity);
     }
 
     private List<TaskDto> findFilteredTasks(String teamKey, TaskFilter filter) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
         List<TaskEntity> tasks = taskRepository.findFilteredWithDetails(teamKey, effectiveFilter);
-        List<SprintEntity> sprints = fetchAllSprints(teamKey);
-        tasks.forEach(task -> {
-            task.setStatus(normalizeStatus(task.getStatus()));
-            ensureLoadsForSprints(task, sprints);
-        });
+        tasks.forEach(task -> task.setStatus(normalizeStatus(task.getStatus())));
         return tasks.stream()
             .map(DtoMapper::toTaskDto)
             .toList();
@@ -139,7 +129,6 @@ public class TaskService {
         updateParticipants(teamKey, saved, request.participantIds(), sprints);
         applyLoads(saved, request.loads(), sprintIndex);
         applyAllocations(saved, request.allocations(), sprintIndex);
-        ensureLoadsForSprints(saved, sprints);
         return DtoMapper.toTaskDto(saved);
     }
 
@@ -205,7 +194,6 @@ public class TaskService {
             reorderTask(teamKey, entity, request.order());
         }
         entity.setUpdatedAt(LocalDate.now());
-        ensureLoadsForSprints(entity, sprints);
         return DtoMapper.toTaskDto(entity);
     }
 
@@ -240,7 +228,6 @@ public class TaskService {
         allocation.setDays(maxOrZero(request.days()));
         recalcLoad(task, sprint);
         task.setUpdatedAt(LocalDate.now());
-        ensureLoadsForSprints(task, fetchAllSprints(teamKey));
         return DtoMapper.toTaskDto(task);
     }
 
@@ -297,7 +284,6 @@ public class TaskService {
             recalcLoad(task, sprint);
         }
         task.setUpdatedAt(LocalDate.now());
-        ensureLoadsForSprints(task, fetchAllSprints(teamKey));
         return DtoMapper.toTaskDto(task);
     }
 
@@ -320,7 +306,6 @@ public class TaskService {
             });
         load.setDays(maxOrZero(request.days()));
         task.setUpdatedAt(LocalDate.now());
-        ensureLoadsForSprints(task, fetchAllSprints(teamKey));
         return DtoMapper.toTaskDto(task);
     }
 
@@ -412,30 +397,6 @@ public class TaskService {
                     });
                 allocation.setDays(maxOrZero(sprintEntry.getValue()));
                 recalcLoad(entity, sprint);
-            }
-        }
-    }
-
-    private void ensureLoadsForSprints(TaskEntity entity, List<SprintEntity> sprints) {
-        Set<UUID> existing = entity.getLoads().stream()
-            .map(load -> load.getSprint().getId())
-            .collect(Collectors.toSet());
-        for (SprintEntity sprint : sprints) {
-            if (!existing.contains(sprint.getId())) {
-                TaskLoadId id = new TaskLoadId(entity.getId(), sprint.getId());
-                TaskLoadEntity load = taskLoadRepository.findById(id)
-                    .orElseGet(() -> {
-                TaskLoadEntity created = new TaskLoadEntity();
-                created.setId(id);
-                created.setTask(entity);
-                created.setSprint(sprint);
-                created.setDays(BigDecimal.ZERO);
-                created.setTeamKey(entity.getTeamKey());
-                entity.getLoads().add(created);
-                return created;
-            });
-                load.setDays(maxOrZero(load.getDays()));
-                existing.add(sprint.getId());
             }
         }
     }
