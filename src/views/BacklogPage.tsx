@@ -1508,6 +1508,34 @@ export default function BacklogPage() {
   const normalizedSearch = React.useMemo(() => searchQuery.trim(), [searchQuery]);
   const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
 
+  const filtersSignature = React.useMemo(
+    () =>
+      JSON.stringify({
+        selectedQuarterIds: selectedQuarterIds.slice().sort(),
+        priorityFilter,
+        statusFilter,
+        releaseSprintFilter,
+        streamFilter,
+        normalizedSearch,
+      }),
+    [
+      normalizedSearch,
+      priorityFilter,
+      releaseSprintFilter,
+      selectedQuarterIds,
+      statusFilter,
+      streamFilter,
+    ]
+  );
+
+  const lastFiltersSignature = React.useRef(filtersSignature);
+  const effectiveTasksPageNumber = React.useMemo(() => {
+    if (lastFiltersSignature.current !== filtersSignature) {
+      return 0;
+    }
+    return tasksPageNumber;
+  }, [filtersSignature, tasksPageNumber]);
+
   const tasksQueryArgs = React.useMemo(
     () => ({
       quarterIds: selectedQuarterIds,
@@ -1517,7 +1545,7 @@ export default function BacklogPage() {
         releaseSprintFilter === "all" ? undefined : releaseSprintFilter.trim(),
       stream: streamFilter.trim(),
       search: normalizedSearch,
-      page: tasksPageNumber,
+      page: effectiveTasksPageNumber,
       size: TASKS_PAGE_SIZE,
     }),
     [
@@ -1527,20 +1555,16 @@ export default function BacklogPage() {
       releaseSprintFilter,
       streamFilter,
       normalizedSearch,
-      tasksPageNumber,
+      effectiveTasksPageNumber,
     ]
   );
 
   React.useEffect(() => {
-    setTasksPageNumber(0);
-  }, [
-    selectedQuarterIds,
-    priorityFilter,
-    statusFilter,
-    releaseSprintFilter,
-    streamFilter,
-    normalizedSearch,
-  ]);
+    if (lastFiltersSignature.current !== filtersSignature) {
+      lastFiltersSignature.current = filtersSignature;
+      setTasksPageNumber(0);
+    }
+  }, [filtersSignature]);
 
   const [searchDraft, setSearchDraft] = React.useState(searchQuery);
 
@@ -1606,8 +1630,8 @@ export default function BacklogPage() {
 
   const hasMoreTasks = React.useMemo(() => {
     if (!totalPages || !Number.isFinite(totalPages)) return true;
-    return tasksPageNumber + 1 < totalPages;
-  }, [totalPages, tasksPageNumber]);
+    return effectiveTasksPageNumber + 1 < totalPages;
+  }, [effectiveTasksPageNumber, totalPages]);
 
   React.useEffect(() => {
     const handleScroll = () => {
