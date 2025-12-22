@@ -11,7 +11,6 @@ import {
   TableRow,
   TableCell,
   TableBody,
-  CircularProgress,
 } from "@mui/material";
 import moment from "moment";
 import "moment/locale/ru";
@@ -99,12 +98,6 @@ export default function CapacityPage() {
     [capacityRows]
   );
 
-  const isInitialLoading =
-    (isCapacityLoading || isQuartersLoading || isSprintsLoading) &&
-    !capacityRows.length &&
-    !quarters.length &&
-    !sprints.length;
-
   React.useEffect(() => {
     if (!quarters.length) return;
     const actualIds = new Set(quarters.map((q) => q.id));
@@ -185,20 +178,8 @@ export default function CapacityPage() {
       elevation={0}
       sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
     >
-      {isInitialLoading ? (
-        <Box
-          sx={{
-            minHeight: 240,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <CircularProgress />
-        </Box>
-      ) : (
-        <>
-          <Typography variant="h6">Нагрузка по спринтам</Typography>
+      <>
+        <Typography variant="h6">Нагрузка по спринтам</Typography>
 
           <Stack
             direction="row"
@@ -318,8 +299,7 @@ export default function CapacityPage() {
               </TableBody>
             </Table>
           </Box>
-        </>
-      )}
+      </>
     </Paper>
   );
 }

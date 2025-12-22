@@ -3,7 +3,6 @@ import {
   AccordionDetails,
   AccordionSummary,
   Alert,
-  CircularProgress,
   Divider,
   Stack,
   Typography,
@@ -26,14 +25,6 @@ export default function HistoryPage() {
     refetchOnReconnect: true,
     refetchOnFocus: true,
   });
-
-  if (isLoading) {
-    return (
-      <Stack alignItems="center" py={4}>
-        <CircularProgress />
-      </Stack>
-    );
-  }
 
   if (isError) {
     return <Alert severity="error">Не удалось загрузить историю действий</Alert>;

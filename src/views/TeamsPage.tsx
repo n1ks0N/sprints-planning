@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Checkbox,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -38,7 +37,7 @@ import { DEFAULT_TEAM_KEY } from "../teams";
 
 export default function TeamsPage() {
   const dispatch = useDispatch();
-  const { data: teams, isLoading } = useGetTeamsQuery();
+  const { data: teams } = useGetTeamsQuery();
   const [addTeam, { isLoading: isAdding }] = useAddTeamMutation();
   const [updateTeam, { isLoading: isUpdating }] = useUpdateTeamMutation();
   const [deleteTeam, { isLoading: isDeleting }] = useDeleteTeamMutation();
@@ -52,14 +51,6 @@ export default function TeamsPage() {
   const [confirmKey, setConfirmKey] = React.useState<string | null>(null);
   const [deleteData, setDeleteData] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-
-  if (isLoading && !teams) {
-    return (
-      <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 240 }}>
-        <CircularProgress />
-      </Stack>
-    );
-  }
 
   const keyPattern = /^[a-z0-9_-]+$/;
 
@@ -222,7 +213,7 @@ export default function TeamsPage() {
             onClick={handleAdd}
             disabled={isAdding}
           >
-            {isAdding ? <CircularProgress size={20} /> : "Добавить"}
+            Добавить
           </Button>
         </Stack>
       </Paper>
@@ -232,7 +223,6 @@ export default function TeamsPage() {
           <Typography variant="h6" sx={{ flex: 1 }}>
             Список команд
           </Typography>
-          {isLoading && <CircularProgress size={20} />}
         </Stack>
         <Table size="small">
           <TableHead>
@@ -266,7 +256,7 @@ export default function TeamsPage() {
         <DialogActions>
           <Button onClick={() => setConfirmKey(null)}>Отмена</Button>
           <Button color="error" onClick={performDelete} disabled={isDeleting}>
-            {isDeleting ? <CircularProgress size={20} /> : "Удалить"}
+            Удалить
           </Button>
         </DialogActions>
       </Dialog>

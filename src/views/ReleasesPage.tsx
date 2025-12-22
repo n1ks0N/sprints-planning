@@ -17,7 +17,6 @@ import {
   Checkbox,
   FormControlLabel,
   TableContainer,
-  CircularProgress,
 } from "@mui/material";
 import { Add, Delete, Backspace } from "@mui/icons-material";
 import moment from "moment";
@@ -357,10 +356,7 @@ function InlineDate({
 }
 
 export default function ReleasesPage() {
-  const { data: releasesRaw = [], isLoading: isReleasesLoading } =
-    useGetReleasesQuery();
-
-  const isInitialLoading = isReleasesLoading && releasesRaw.length === 0;
+  const { data: releasesRaw = [] } = useGetReleasesQuery();
   const [addRelease, { isLoading: adding }] = useAddReleaseMutation();
   const [updateRelease] = useUpdateReleaseMutation();
   const [deleteRelease] = useDeleteReleaseMutation();
@@ -409,16 +405,6 @@ export default function ReleasesPage() {
   const PROM_W = 180;
   const ACTION_W = 120;
   const stickyBg = "background.paper";
-
-  if (isInitialLoading) {
-    return (
-      <Paper elevation={0} sx={{ p: 2 }}>
-        <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 240 }}>
-          <CircularProgress />
-        </Stack>
-      </Paper>
-    );
-  }
 
   return (
     <Paper

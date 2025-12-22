@@ -18,7 +18,6 @@ import {
   Tooltip,
   Divider,
   InputBase,
-  CircularProgress,
   FormControl,
   InputLabel,
   FormHelperText,
@@ -1421,7 +1420,7 @@ export default function BacklogPage() {
     selectedQuarterIds,
   } = useAppSelector((s) => s.ui.backlog);
 
-  const [isFiltersPending, startFiltersTransition] = React.useTransition();
+  const [, startFiltersTransition] = React.useTransition();
   const [, startTaskTransition] = React.useTransition();
 
   const currentQuarterId = currentQ?.id;
@@ -1572,7 +1571,6 @@ export default function BacklogPage() {
   const {
     data: fetchedTasksPage,
     isFetching,
-    isLoading: isTasksLoading,
   } = useGetTasksQuery(tasksQueryArgs);
 
   const fetchedTasks = React.useMemo(
@@ -1580,10 +1578,11 @@ export default function BacklogPage() {
     [fetchedTasksPage]
   );
 
-  const hasMoreTasks = React.useMemo(
-    () => (fetchedTasksPage ? !fetchedTasksPage.last : true),
-    [fetchedTasksPage]
-  );
+  const hasMoreTasks = React.useMemo(() => {
+    if (!fetchedTasksPage) return true;
+    if (typeof fetchedTasksPage.totalPages !== "number") return !fetchedTasksPage.last;
+    return fetchedTasksPage.number + 1 < fetchedTasksPage.totalPages;
+  }, [fetchedTasksPage]);
 
   React.useEffect(() => {
     const handleScroll = () => {
@@ -1591,14 +1590,23 @@ export default function BacklogPage() {
         document.documentElement;
       const distanceToBottom = scrollHeight - (scrollTop + clientHeight);
 
-      if (distanceToBottom < 400 && hasMoreTasks && !isFetching) {
-        setTasksPageNumber((prev) => prev + 1);
+      if (distanceToBottom >= 400 || !hasMoreTasks || isFetching) {
+        return;
       }
+
+      setTasksPageNumber((prev) => {
+        if (!fetchedTasksPage || fetchedTasksPage.totalPages === undefined) {
+          return prev + 1;
+        }
+
+        const maxPage = fetchedTasksPage.totalPages - 1;
+        return prev < maxPage ? prev + 1 : prev;
+      });
     };
 
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [hasMoreTasks, isFetching]);
+  }, [hasMoreTasks, isFetching, fetchedTasksPage]);
 
   const allTasks = React.useMemo(
     () =>
@@ -1937,17 +1945,6 @@ export default function BacklogPage() {
     return withOrder;
   }, [deferredTasks, deferredStatusFilter]);
 
-  const isUiPending = isFiltersPending;
-  const isInitialLoading =
-    (isTasksLoading ||
-      isQuartersLoading ||
-      isParticipantsLoading ||
-      isSprintsLoading ||
-      isReleasesLoading) &&
-    !fetchedTasks.length &&
-    !participants.length &&
-    !quarters.length &&
-    !allSprints.length;
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
@@ -2481,23 +2478,6 @@ export default function BacklogPage() {
     [filteredTasks, persistTaskOrder]
   );
 
-  if (isInitialLoading) {
-    return (
-      <Paper elevation={0} sx={{ p: 2 }}>
-        <Box
-          sx={{
-            minHeight: 240,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <CircularProgress />
-        </Box>
-      </Paper>
-    );
-  }
-
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
       <Stack spacing={2}>
@@ -2641,11 +2621,6 @@ export default function BacklogPage() {
               sx={{ minWidth: 220 }}
             />
 
-            {isUiPending && (
-              <Box sx={{ display: "flex", justifyContent: "center" }}>
-                <CircularProgress size={18} sx={{ color: "text.secondary" }} />
-              </Box>
-            )}
           </Box>
         </Paper>
 
@@ -2717,12 +2692,6 @@ export default function BacklogPage() {
                   </SortableTaskCard>
                 );
               })}
-
-              {isFetching && (
-                <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-                  <CircularProgress />
-                </Box>
-              )}
 
               {!filteredTasks.length && !isFetching && (
                 <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
