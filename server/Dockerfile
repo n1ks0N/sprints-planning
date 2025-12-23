@@ -3,10 +3,10 @@
 FROM maven:3.9.6-eclipse-temurin-17 AS build
 WORKDIR /app
 COPY pom.xml .
-RUN mvn -q dependency:go-offline
+RUN mvn -q -Dmaven.wagon.http.retryHandler.count=5 dependency:go-offline
 COPY src src
 COPY database database
-RUN mvn -q -DskipTests package
+RUN mvn -q -DskipTests -Dmaven.wagon.http.retryHandler.count=5 package
 
 FROM eclipse-temurin:17-jre
 WORKDIR /app
