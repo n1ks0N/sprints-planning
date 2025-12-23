@@ -70,14 +70,23 @@ public class TaskService {
     @Transactional
     public Page<TaskDto> findPage(String teamKey, TaskFilter filter, Integer page, Integer size) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
+        if (page == null && size == null) {
+            List<TaskEntity> tasks = taskRepository.findFilteredWithDetails(teamKey, effectiveFilter);
+            List<TaskDto> content = toDtos(tasks);
+            return new PageImpl<>(content);
+        }
         int safePage = page == null ? 0 : Math.max(page, 0);
         int safeSize = size == null ? 20 : Math.max(size, 1);
         Page<TaskEntity> filtered = taskRepository.findFilteredPageWithDetails(teamKey, effectiveFilter, safePage, safeSize);
-        List<TaskDto> content = filtered.getContent().stream()
+        List<TaskDto> content = toDtos(filtered.getContent());
+        return new PageImpl<>(content, filtered.getPageable(), filtered.getTotalElements());
+    }
+
+    private List<TaskDto> toDtos(List<TaskEntity> tasks) {
+        return tasks.stream()
             .peek(task -> task.setStatus(normalizeStatus(task.getStatus())))
             .map(DtoMapper::toTaskDto)
             .toList();
-        return new PageImpl<>(content, filtered.getPageable(), filtered.getTotalElements());
     }
 
     public TaskDto findById(String teamKey, UUID id) {

@@ -234,10 +234,11 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
     private Predicate participantExists(CriteriaQuery<?> query, CriteriaBuilder cb, Root<TaskEntity> task, Iterable<UUID> ids) {
         var sub = query.subquery(UUID.class);
         Root<TaskParticipantEntity> tp = sub.from(TaskParticipantEntity.class);
+        Join<TaskParticipantEntity, ParticipantEntity> participant = tp.join("participant");
         sub.select(tp.get("task").get("id"))
             .where(
                 cb.equal(tp.get("task").get("id"), task.get("id")),
-                tp.get("participant").get("id").in(ids)
+                participant.get("id").in(ids)
             );
         return cb.exists(sub);
     }
