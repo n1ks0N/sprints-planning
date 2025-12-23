@@ -21,7 +21,7 @@ import {
   useGetCapacityQuery,
 } from "../app/api";
 import type { Participant, Quarter, Sprint, CapacityCell } from "../types";
-import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import { setCapacitySelectedQuarterIds } from "../app/uiSlice";
 
@@ -181,22 +181,31 @@ export default function CapacityPage() {
       <>
         <Typography variant="h6">Нагрузка по спринтам</Typography>
 
-          <Stack
-            direction="row"
-            spacing={2}
-            alignItems="center"
-            sx={{ flexWrap: { xs: "wrap", md: "nowrap" } }}
-          >
-            <FilterAutocomplete
-              multiple
-              allowCustom={false}
-              label="Фильтр по кварталам"
-              options={quarterFilterOptions}
-              value={selectedQuarterIds}
-              onChange={handleQuarterFilterChange}
-              sx={{ minWidth: 280, flex: 1 }}
-            />
-          </Stack>
+          <FiltersPanel
+            withPaper={false}
+            containerSx={{ mb: 1 }}
+            gridSx={{
+              gridTemplateColumns: {
+                xs: "repeat(auto-fit, minmax(240px, 1fr))",
+                md: "repeat(auto-fit, minmax(260px, 1fr))",
+              },
+            }}
+            filters={[
+              {
+                type: "autocomplete",
+                key: "quarters",
+                minWidth: 280,
+                props: {
+                  multiple: true,
+                  allowCustom: false,
+                  label: "Фильтр по кварталам",
+                  options: quarterFilterOptions,
+                  value: selectedQuarterIds,
+                  onChange: handleQuarterFilterChange,
+                },
+              },
+            ]}
+          />
 
           <Box sx={{ overflowX: "auto" }}>
             <Table stickyHeader size="small">
