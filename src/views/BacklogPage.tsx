@@ -2114,6 +2114,27 @@ export default function BacklogPage() {
 
   const duplicateTask = async (task: BacklogItem) => {
     const taskQuarters = getTaskQuarters(task);
+    const taskAllocations = allocations[task.id] || {};
+    const allocationsPayload = Object.entries(taskAllocations).reduce<
+      Record<string, Record<string, number>>
+    >((acc, [pid, row]) => {
+      const positive = Object.entries(row)
+        .map(([sid, value]) => [sid, toInt(Number(value) || 0)] as const)
+        .filter(([, days]) => days > 0);
+      if (positive.length) {
+        acc[pid] = Object.fromEntries(positive);
+      }
+      return acc;
+    }, {});
+
+    const loadsPayload = task.loads
+      ? Object.fromEntries(
+          Object.entries(task.loads)
+            .map(([sid, days]) => [sid, toInt(Number(days) || 0)] as const)
+            .filter(([, days]) => days > 0)
+        )
+      : undefined;
+
     const copy = await addTask({
       title: `${task.title} (копия)`,
       description: (task as any).description,
@@ -2127,33 +2148,11 @@ export default function BacklogPage() {
       releaseSprintId: task.releaseSprintId,
       leaderId: (task as any).leaderId ?? undefined,
       quarterIds: taskQuarters,
+      loads: loadsPayload,
+      allocations: Object.keys(allocationsPayload).length
+        ? allocationsPayload
+        : undefined,
     }).unwrap();
-
-    const rows = allocations[task.id] || {};
-    const ops: Promise<any>[] = [];
-
-    for (const pid of Object.keys(rows)) {
-      const row = rows[pid] || {};
-      for (const sid of Object.keys(row)) {
-        const val = toInt(Number(row[sid] || 0));
-        if (val > 0) {
-          ops.push(
-            upsertTaskAllocation({
-              taskId: copy.id,
-              participantId: pid,
-              sprintId: sid,
-              days: val,
-            }).unwrap()
-          );
-        }
-      }
-    }
-
-    try {
-      await Promise.all(ops);
-    } catch {
-      // ignore
-    }
 
     if (taskQuarters.length) {
       setTaskQuartersMap((prev) => ({ ...prev, [copy.id]: taskQuarters }));
