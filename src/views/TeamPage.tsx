@@ -31,7 +31,7 @@ import {
 import type { Participant } from "../types";
 import { setTeamFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
-import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import FiltersPanel from "../components/filters/FiltersPanel";
 
 import {
   DndContext,
@@ -544,42 +544,49 @@ export default function TeamPage() {
       </Stack>
 
       {/* Фильтры */}
-      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <Stack
-          direction={{ xs: "column", md: "row" }}
-          spacing={2}
-          alignItems="center"
-        >
-          <FilterAutocomplete
-            multiple
-            allowCustom={false}
-            label="Фильтр: Роли"
-            options={allRoleOptions}
-            value={filterRoles}
-            onChange={handleRoleFilterChange}
-            sx={{ minWidth: 260, flex: 1 }}
-          />
-
-          <FilterAutocomplete
-            multiple
-            allowCustom={false}
-            label="Фильтр: Стрим"
-            options={allUserStreamOptions}
-            value={filterUserStreams}
-            onChange={handleUserStreamFilterChange}
-            sx={{ minWidth: 260, flex: 1 }}
-          />
-
-          <FilterAutocomplete
-            multiple
-            label="Фильтр: Ставка (0..1)"
-            options={rateOptions}
-            value={filterRates}
-            onChange={handleRateFilterChange}
-            sx={{ minWidth: 260, flex: 1 }}
-          />
-        </Stack>
-      </Paper>
+      <FiltersPanel
+        containerSx={{ mb: 2 }}
+        filters={[
+          {
+            type: "autocomplete",
+            key: "roles",
+            minWidth: 260,
+            props: {
+              multiple: true,
+              allowCustom: false,
+              label: "Фильтр: Роли",
+              options: allRoleOptions,
+              value: filterRoles,
+              onChange: handleRoleFilterChange,
+            },
+          },
+          {
+            type: "autocomplete",
+            key: "streams",
+            minWidth: 260,
+            props: {
+              multiple: true,
+              allowCustom: false,
+              label: "Фильтр: Стрим",
+              options: allUserStreamOptions,
+              value: filterUserStreams,
+              onChange: handleUserStreamFilterChange,
+            },
+          },
+          {
+            type: "autocomplete",
+            key: "rates",
+            minWidth: 260,
+            props: {
+              multiple: true,
+              label: "Фильтр: Ставка (0..1)",
+              options: rateOptions,
+              value: filterRates,
+              onChange: handleRateFilterChange,
+            },
+          },
+        ]}
+      />
 
       {/* Таблица с DnD */}
       <TableContainer component={Paper} variant="outlined">

@@ -66,6 +66,7 @@ import type {
 import { setBacklogFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import FiltersPanel from "../components/filters/FiltersPanel";
 
 import {
   DndContext,
@@ -2592,85 +2593,85 @@ export default function BacklogPage() {
         </Stack>
 
         {/* Фильтры */}
-        <Paper variant="outlined" sx={{ p: 2 }}>
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: {
-                xs: "repeat(auto-fit, minmax(220px, 1fr))",
-                md: "repeat(auto-fit, minmax(200px, 1fr))",
+        <FiltersPanel
+          filters={[
+            {
+              type: "autocomplete",
+              key: "quarters",
+              minWidth: 200,
+              props: {
+                multiple: true,
+                allowCustom: false,
+                label: "Фильтр по кварталам",
+                options: quarterFilterOptions,
+                value: selectedQuarterIds,
+                onChange: handleQuarterFilterChange,
               },
-              gridAutoFlow: "row dense",
-              gap: 2,
-              alignItems: "center",
-            }}
-          >
-            <FilterAutocomplete
-              multiple
-              allowCustom={false}
-              label="Фильтр по кварталам"
-              options={quarterFilterOptions}
-              value={selectedQuarterIds}
-              onChange={handleQuarterFilterChange}
-              sx={{ minWidth: 200 }}
-            />
-
-            <FilterAutocomplete
-              multiple
-              allowCustom={false}
-              label="Приоритет"
-              options={priorityOptions}
-              value={priorityFilter.map(String)}
-              onChange={handlePriorityFilterChange}
-              sx={{ minWidth: 160 }}
-            />
-
-            <FilterAutocomplete
-              multiple
-              allowCustom={false}
-              label="Статусы"
-              options={statusOptions}
-              value={statusFilter}
-              onChange={handleStatusFilterChange}
-              sx={{ minWidth: 200 }}
-            />
-
-            <FilterAutocomplete
-              label="Релиз"
-              allowCustom={false}
-              options={releaseFilterOptions}
-              value={releaseSprintFilter === "all" ? "" : releaseSprintFilter}
-              onChange={handleReleaseFilterChange}
-              sx={{ minWidth: 200 }}
-              placeholder="Все релизы"
-            />
-
-            <FilterAutocomplete
-              label="Стрим"
-              options={streamOptions}
-              value={streamFilter}
-              onChange={handleStreamFilterChange}
-              sx={{ minWidth: 200 }}
-            />
-
-            <TextField
-              label="Поиск по названию/описанию/DOD"
-              value={searchDraft}
-              onChange={(e) => setSearchDraft(e.target.value)}
-              onBlur={handleSearchCommit}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  e.currentTarget.blur();
-                }
-              }}
-              placeholder="Введите текст"
-              size="small"
-              sx={{ minWidth: 220 }}
-            />
-
-          </Box>
-        </Paper>
+            },
+            {
+              type: "autocomplete",
+              key: "priority",
+              minWidth: 160,
+              props: {
+                multiple: true,
+                allowCustom: false,
+                label: "Приоритет",
+                options: priorityOptions,
+                value: priorityFilter.map(String),
+                onChange: handlePriorityFilterChange,
+              },
+            },
+            {
+              type: "autocomplete",
+              key: "status",
+              minWidth: 200,
+              props: {
+                multiple: true,
+                allowCustom: false,
+                label: "Статусы",
+                options: statusOptions,
+                value: statusFilter,
+                onChange: handleStatusFilterChange,
+              },
+            },
+            {
+              type: "autocomplete",
+              key: "release",
+              minWidth: 200,
+              props: {
+                allowCustom: false,
+                label: "Релиз",
+                options: releaseFilterOptions,
+                value: releaseSprintFilter === "all" ? "" : releaseSprintFilter,
+                onChange: handleReleaseFilterChange,
+                placeholder: "Все релизы",
+              },
+            },
+            {
+              type: "autocomplete",
+              key: "stream",
+              minWidth: 200,
+              props: {
+                label: "Стрим",
+                options: streamOptions,
+                value: streamFilter,
+                onChange: handleStreamFilterChange,
+              },
+            },
+            {
+              type: "search",
+              key: "search",
+              minWidth: 220,
+              props: {
+                label: "Поиск по названию/описанию/DOD",
+                value: searchDraft,
+                onChange: setSearchDraft,
+                onCommit: handleSearchCommit,
+                placeholder: "Введите текст",
+              },
+            },
+          ]}
+        />
 
         {/* Список задач с DnD */}
         <DndContext
