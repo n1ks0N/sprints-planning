@@ -50,7 +50,12 @@ const baseGridSx: SxProps<Theme> = {
 const mergeSx = (
   base: SxProps<Theme>,
   override?: SxProps<Theme>
-): SxProps<Theme> => (override ? [base, override] : base);
+): SxProps<Theme> => {
+  if (!override) return base;
+  const baseArray = Array.isArray(base) ? base : [base];
+  const overrideArray = Array.isArray(override) ? override : [override];
+  return [...baseArray, ...overrideArray];
+};
 
 export default function FiltersPanel({
   filters,
