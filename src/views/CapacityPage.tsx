@@ -86,7 +86,7 @@ export default function CapacityPage() {
     useGetQuartersQuery();
   const { data: sprints = [], isLoading: isSprintsLoading } =
     useGetSprintsQuery(undefined);
-  const { data: participants = [] } = useGetParticipantsQuery();
+  const { data: participantList = [] } = useGetParticipantsQuery();
   const dispatch = useAppDispatch();
   const capacityFilters = useAppSelector((state) => state.ui.capacity);
   const {
@@ -156,26 +156,26 @@ export default function CapacityPage() {
 
   const participantOptions = React.useMemo(
     () =>
-      participants.map((p) => ({
+      participantList.map((p) => ({
         value: p.id,
         label: `${p.fullName}${p.role ? ` (${p.role})` : ""}`,
       })),
-    [participants]
+    [participantList]
   );
 
   const roleOptions = React.useMemo(() => {
-    const roles = participants
+    const roles = participantList
       .map((p) => p.role)
       .filter((role): role is string => Boolean(role && role.trim()));
     return Array.from(new Set(roles)).sort();
-  }, [participants]);
+  }, [participantList]);
 
   const userStreamOptions = React.useMemo(() => {
-    const streams = participants
+    const streams = participantList
       .flatMap((p) => p.userStreams || [])
       .filter((stream): stream is string => Boolean(stream && stream.trim()));
     return Array.from(new Set(streams)).sort();
-  }, [participants]);
+  }, [participantList]);
 
   const handleQuarterFilterChange = React.useCallback(
     (ids: string[]) => {
@@ -191,12 +191,12 @@ export default function CapacityPage() {
 
   const handleParticipantFilterChange = React.useCallback(
     (ids: string[]) => {
-      const existing = new Set(participants.map((p) => p.id));
+      const existing = new Set(participantList.map((p) => p.id));
       const filtered = ids.filter((id) => existing.has(id));
       if (shallowStringArrayEqual(filtered, selectedParticipantIds)) return;
       dispatch(setCapacityFilters({ selectedParticipantIds: filtered }));
     },
-    [dispatch, participants, selectedParticipantIds]
+    [dispatch, participantList, selectedParticipantIds]
   );
 
   const handleRoleFilterChange = React.useCallback(
