@@ -106,10 +106,31 @@ export default function CapacityPage() {
       userStreams: userStreamsFilter.length ? userStreamsFilter : undefined,
     });
 
-  const participants = React.useMemo(
-    () => capacityRows.map((row) => row.participant),
-    [capacityRows]
-  );
+  const participants = React.useMemo(() => {
+    let rows = capacityRows.slice();
+    if (selectedParticipantIds.length) {
+      const set = new Set(selectedParticipantIds);
+      rows = rows.filter((row) => set.has(row.participant.id));
+    }
+    if (rolesFilter.length) {
+      const set = new Set(rolesFilter);
+      rows = rows.filter((row) => set.has(row.participant.role));
+    }
+    if (userStreamsFilter.length) {
+      const streamSet = new Set(userStreamsFilter.map((s) => s.trim()));
+      rows = rows.filter((row) =>
+        (row.participant.userStreams || []).some((stream) =>
+          streamSet.has(stream.trim())
+        )
+      );
+    }
+    return rows.map((row) => row.participant);
+  }, [
+    capacityRows,
+    rolesFilter,
+    selectedParticipantIds,
+    userStreamsFilter,
+  ]);
 
   React.useEffect(() => {
     if (!quarters.length) return;
