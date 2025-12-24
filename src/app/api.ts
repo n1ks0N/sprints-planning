@@ -746,10 +746,38 @@ export const api = createApi({
     }),
 
     // ---- Capacity ----
-    getCapacity: b.query<CapacityRow[], { quarterIds?: string[] } | void>({
+    getCapacity: b.query<
+      CapacityRow[],
+      | {
+          quarterIds?: string[];
+          participantIds?: string[];
+          roles?: string[];
+          userStreams?: string[];
+        }
+      | void
+    >({
       query: (arg) => {
-        const quarterIds = arg?.quarterIds?.length ? arg.quarterIds.join(",") : undefined;
-        return { url: "/capacity", method: "GET", params: { quarterId: quarterIds } };
+        const joinOrUndefined = (values?: string[]) => {
+          if (!values || values.length === 0) return undefined;
+          return values.join(",");
+        };
+
+        const quarterIds = joinOrUndefined(arg?.quarterIds);
+        const participantIds = joinOrUndefined(arg?.participantIds);
+        const roles = joinOrUndefined(arg?.roles);
+        const userStreams = joinOrUndefined(arg?.userStreams);
+
+        const params: Record<string, string> = {};
+        if (quarterIds) params.quarterId = quarterIds;
+        if (participantIds) params.participantId = participantIds;
+        if (roles) params.role = roles;
+        if (userStreams) params.userStream = userStreams;
+
+        return {
+          url: "/capacity",
+          method: "GET",
+          params: Object.keys(params).length ? params : undefined,
+        };
       },
       providesTags: (result, error, arg) => {
         const ids = arg?.quarterIds?.length ? arg.quarterIds.slice().sort().join(",") : "all";

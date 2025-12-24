@@ -13,6 +13,9 @@ export type UIState = {
   };
   capacity: {
     selectedQuarterIds: string[];
+    selectedParticipantIds: string[];
+    rolesFilter: string[];
+    userStreamsFilter: string[];
   };
   team: {
     filterRoles: string[];
@@ -53,7 +56,12 @@ function defaultState(): UIState {
       statusFilter: [],
       searchQuery: "",
     },
-    capacity: { selectedQuarterIds: [] },
+    capacity: {
+      selectedQuarterIds: [],
+      selectedParticipantIds: [],
+      rolesFilter: [],
+      userStreamsFilter: [],
+    },
     team: { filterRoles: [], filterRates: [], filterUserStreams: [] },
     time: { selectedQuarterIds: [] },
     participantWorkload: {
@@ -138,6 +146,19 @@ function sanitizeCapacity(
           (id: any): id is string => typeof id === "string"
         )
       : defaults.selectedQuarterIds.slice(),
+    selectedParticipantIds: Array.isArray(input?.selectedParticipantIds)
+      ? input.selectedParticipantIds.filter(
+          (id: any): id is string => typeof id === "string"
+        )
+      : defaults.selectedParticipantIds.slice(),
+    rolesFilter: Array.isArray(input?.rolesFilter)
+      ? input.rolesFilter.filter((s: any): s is string => typeof s === "string")
+      : defaults.rolesFilter.slice(),
+    userStreamsFilter: Array.isArray(input?.userStreamsFilter)
+      ? input.userStreamsFilter.filter(
+          (s: any): s is string => typeof s === "string"
+        )
+      : defaults.userStreamsFilter.slice(),
   };
 }
 
@@ -221,6 +242,12 @@ const uiSlice = createSlice({
     ) {
       state.capacity.selectedQuarterIds = action.payload;
     },
+    setCapacityFilters(
+      state,
+      action: PayloadAction<Partial<UIState["capacity"]>>
+    ) {
+      state.capacity = { ...state.capacity, ...action.payload };
+    },
     setTeamFilters(state, action: PayloadAction<Partial<UIState["team"]>>) {
       state.team = { ...state.team, ...action.payload };
     },
@@ -242,6 +269,7 @@ const uiSlice = createSlice({
 export const {
   setBacklogFilters,
   setCapacitySelectedQuarterIds,
+  setCapacityFilters,
   setTeamFilters,
   setTimeSelectedQuarterIds,
   setParticipantWorkloadFilters,
