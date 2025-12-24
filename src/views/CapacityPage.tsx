@@ -301,7 +301,7 @@ export default function CapacityPage() {
                 props: {
                   multiple: true,
                   allowCustom: false,
-                  label: "Стрим",
+                  label: "Стрим по участнику",
                   options: userStreamOptions,
                   value: userStreamsFilter,
                   onChange: handleUserStreamsFilterChange,

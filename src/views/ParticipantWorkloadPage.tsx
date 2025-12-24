@@ -52,6 +52,7 @@ export default function ParticipantWorkloadPage() {
     roles: ui.rolesFilter,
     userStreams: ui.userStreamsFilter,
     priority: ui.priorityFilter,
+    stream: ui.taskStreamFilter,
   });
   const tasks: BacklogItem[] = tasksPage?.content ?? [];
 
@@ -103,6 +104,22 @@ export default function ParticipantWorkloadPage() {
       .filter((stream): stream is string => Boolean(stream && stream.trim()));
     return Array.from(new Set(streams)).sort();
   }, [participants]);
+
+  const taskStreamOptions = React.useMemo(() => {
+    const streams = tasks
+      .map((t) => t.stream)
+      .filter((stream): stream is string => Boolean(stream && stream.trim()));
+    return Array.from(new Set(streams)).sort();
+  }, [tasks]);
+
+  const handleTaskStreamFilterChange = React.useCallback(
+    (value: string) => {
+      const next = value.trim();
+      if (next === ui.taskStreamFilter) return;
+      dispatch(setParticipantWorkloadFilters({ taskStreamFilter: next }));
+    },
+    [dispatch, ui.taskStreamFilter]
+  );
 
   const handleRolesFilterChange = React.useCallback(
     (values: string[]) => {
@@ -243,10 +260,22 @@ export default function ParticipantWorkloadPage() {
             props: {
               multiple: true,
               allowCustom: false,
-              label: "Стрим",
+              label: "Стрим по участнику",
               options: userStreamOptions,
               value: ui.userStreamsFilter,
               onChange: handleUserStreamsFilterChange,
+            },
+          },
+          {
+            type: "autocomplete",
+            key: "task-stream",
+            minWidth: 200,
+            props: {
+              allowCustom: false,
+              label: "Стрим по задаче",
+              options: taskStreamOptions,
+              value: ui.taskStreamFilter,
+              onChange: handleTaskStreamFilterChange,
             },
           },
           {

@@ -31,6 +31,7 @@ export type UIState = {
     rolesFilter: string[];
     userStreamsFilter: string[];
     priorityFilter: number[]; // [1,2,3]
+    taskStreamFilter: string;
   };
 };
 
@@ -70,6 +71,7 @@ function defaultState(): UIState {
       rolesFilter: [],
       userStreamsFilter: [],
       priorityFilter: [1, 2, 3],
+      taskStreamFilter: "",
     },
   };
 }
@@ -195,6 +197,10 @@ function sanitizeParticipantWorkload(
       : defaults.userStreamsFilter.slice(),
     priorityFilter:
       priorityFilter.length > 0 ? priorityFilter : defaults.priorityFilter,
+    taskStreamFilter:
+      typeof input?.taskStreamFilter === "string"
+        ? input.taskStreamFilter
+        : defaults.taskStreamFilter,
   };
 }
 

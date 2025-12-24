@@ -567,7 +567,7 @@ export default function TeamPage() {
             props: {
               multiple: true,
               allowCustom: false,
-              label: "Фильтр: Стрим",
+              label: "Фильтр: Стрим по участнику",
               options: allUserStreamOptions,
               value: filterUserStreams,
               onChange: handleUserStreamFilterChange,

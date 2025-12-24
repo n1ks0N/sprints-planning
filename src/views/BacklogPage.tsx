@@ -2652,7 +2652,7 @@ export default function BacklogPage() {
               key: "stream",
               minWidth: 200,
               props: {
-                label: "Стрим",
+                label: "Стрим по задаче",
                 options: streamOptions,
                 value: streamFilter,
                 onChange: handleStreamFilterChange,
