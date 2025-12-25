@@ -38,7 +38,13 @@ public class CapacityService {
         this.capacityProperties = capacityProperties;
     }
 
-    public List<CapacityRowDto> calculate(String teamKey, List<UUID> quarterIds) {
+    public List<CapacityRowDto> calculate(
+        String teamKey,
+        List<UUID> quarterIds,
+        List<UUID> participantIds,
+        List<String> roles,
+        List<String> userStreams
+    ) {
         List<SprintEntity> sprints = resolveSprints(teamKey, quarterIds);
         if (sprints.isEmpty()) {
             return Collections.emptyList();
@@ -49,8 +55,14 @@ public class CapacityService {
         double normFactor = capacityProperties.normFactor();
         double roundedNormFactor = roundToOneDecimal(normFactor);
         List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
+        List<ParticipantEntity> filteredParticipants = filterParticipants(
+            participants,
+            participantIds,
+            roles,
+            userStreams
+        );
         List<CapacityRowDto> rows = new ArrayList<>();
-        for (ParticipantEntity participant : participants) {
+        for (ParticipantEntity participant : filteredParticipants) {
             double participantRate = participant.getRate() != null ? participant.getRate().doubleValue() : 0.0;
             double roundedParticipantRate = roundToOneDecimal(participantRate);
             List<CapacityCellDto> cells = new ArrayList<>();
@@ -128,5 +140,49 @@ public class CapacityService {
         }
 
         return sprintRepository.findByTeamKeyAndQuarterIdsOrderByQuarterAndOrder(teamKey, filteredIds);
+    }
+
+    private List<ParticipantEntity> filterParticipants(
+        List<ParticipantEntity> participants,
+        List<UUID> participantIds,
+        List<String> roles,
+        List<String> userStreams
+    ) {
+        if (participants.isEmpty()) {
+            return participants;
+        }
+        List<ParticipantEntity> filtered = participants;
+        if (participantIds != null && !participantIds.isEmpty()) {
+            var idSet = participantIds.stream().filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+            filtered = filtered.stream()
+                .filter(p -> idSet.contains(p.getId()))
+                .toList();
+        }
+        if (roles != null && !roles.isEmpty()) {
+            var roleSet = roles.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(java.util.stream.Collectors.toSet());
+            filtered = filtered.stream()
+                .filter(p -> p.getRole() != null && roleSet.contains(p.getRole()))
+                .toList();
+        }
+        if (userStreams != null && !userStreams.isEmpty()) {
+            var streamSet = userStreams.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(java.util.stream.Collectors.toSet());
+            filtered = filtered.stream()
+                .filter(p -> {
+                    if (p.getUserStreams() == null) {
+                        return false;
+                    }
+                    return p.getUserStreams().stream().anyMatch(streamSet::contains);
+                })
+                .toList();
+        }
+        return filtered;
     }
 }

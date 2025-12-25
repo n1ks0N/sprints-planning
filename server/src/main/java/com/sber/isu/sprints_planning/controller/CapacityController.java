@@ -25,22 +25,53 @@ public class CapacityController {
     @GetMapping("/capacity")
     public List<CapacityRowDto> getCapacity(
         @PathVariable String teamKey,
-        @RequestParam(value = "quarterId", required = false) String quarterId
+        @RequestParam(value = "quarterId", required = false) String quarterId,
+        @RequestParam(value = "participantId", required = false) String participantId,
+        @RequestParam(value = "role", required = false) String role,
+        @RequestParam(value = "userStream", required = false) String userStream
     ) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
         List<UUID> quarterIds = parseQuarterIds(quarterId);
-        return capacityService.calculate(normalizedTeamKey, quarterIds);
+        List<UUID> participantIds = parseParticipantIds(participantId);
+        List<String> roles = parseStringValues(role);
+        List<String> userStreams = parseStringValues(userStream);
+        return capacityService.calculate(
+            normalizedTeamKey,
+            quarterIds,
+            participantIds,
+            roles,
+            userStreams
+        );
     }
 
     private List<UUID> parseQuarterIds(String rawQuarterIds) {
-        if (rawQuarterIds == null || rawQuarterIds.isBlank()) {
+        return parseUuidValues(rawQuarterIds);
+    }
+
+    private List<UUID> parseParticipantIds(String rawParticipantIds) {
+        return parseUuidValues(rawParticipantIds);
+    }
+
+    private List<UUID> parseUuidValues(String rawValues) {
+        if (rawValues == null || rawValues.isBlank()) {
             return List.of();
         }
-        return List.of(rawQuarterIds.split(","))
+        return List.of(rawValues.split(","))
             .stream()
             .map(String::trim)
             .filter(s -> !s.isEmpty())
             .map(UUID::fromString)
+            .collect(Collectors.toList());
+    }
+
+    private List<String> parseStringValues(String rawValues) {
+        if (rawValues == null || rawValues.isBlank()) {
+            return List.of();
+        }
+        return List.of(rawValues.split(","))
+            .stream()
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
             .collect(Collectors.toList());
     }
 }

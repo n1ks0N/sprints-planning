@@ -21,7 +21,7 @@ import {
 } from "../app/api";
 import type { Sprint, BacklogItem } from "../types";
 import { setParticipantWorkloadFilters } from "../app/uiSlice";
-import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAppDispatch, useAppSelector } from "./hooks";
 
 function byStart(a: Sprint, b: Sprint) {
@@ -52,6 +52,7 @@ export default function ParticipantWorkloadPage() {
     roles: ui.rolesFilter,
     userStreams: ui.userStreamsFilter,
     priority: ui.priorityFilter,
+    stream: ui.taskStreamFilter,
   });
   const tasks: BacklogItem[] = tasksPage?.content ?? [];
 
@@ -103,6 +104,22 @@ export default function ParticipantWorkloadPage() {
       .filter((stream): stream is string => Boolean(stream && stream.trim()));
     return Array.from(new Set(streams)).sort();
   }, [participants]);
+
+  const taskStreamOptions = React.useMemo(() => {
+    const streams = tasks
+      .map((t) => t.stream)
+      .filter((stream): stream is string => Boolean(stream && stream.trim()));
+    return Array.from(new Set(streams)).sort();
+  }, [tasks]);
+
+  const handleTaskStreamFilterChange = React.useCallback(
+    (value: string) => {
+      const next = value.trim();
+      if (next === ui.taskStreamFilter) return;
+      dispatch(setParticipantWorkloadFilters({ taskStreamFilter: next }));
+    },
+    [dispatch, ui.taskStreamFilter]
+  );
 
   const handleRolesFilterChange = React.useCallback(
     (values: string[]) => {
@@ -183,81 +200,99 @@ export default function ParticipantWorkloadPage() {
         Нагрузка по участникам
       </Typography>
 
-      <Box
-        sx={{
-          mb: 2,
-          display: "grid",
-          gridTemplateColumns: {
-            xs: "repeat(auto-fit, minmax(220px, 1fr))",
-            md: "repeat(auto-fit, minmax(200px, 1fr))",
-          },
-          gridAutoFlow: "row dense",
-          gap: 2,
-          alignItems: "center",
-        }}
-      >
-            <FilterAutocomplete
-              multiple
-              allowCustom={false}
-              label="Фильтр по кварталам"
-              options={quarterOptions}
-              value={ui.selectedQuarterIds}
-              onChange={(ids) =>
+      <FiltersPanel
+        withPaper={false}
+        containerSx={{ mb: 2 }}
+        filters={[
+          {
+            type: "autocomplete",
+            key: "quarters",
+            minWidth: 200,
+            props: {
+              multiple: true,
+              allowCustom: false,
+              label: "Фильтр по кварталам",
+              options: quarterOptions,
+              value: ui.selectedQuarterIds,
+              onChange: (ids) =>
                 dispatch(
                   setParticipantWorkloadFilters({
                     selectedQuarterIds: Array.from(new Set(ids)),
                   })
-                )
-              }
-              sx={{ minWidth: 200 }}
-            />
-
-            <FilterAutocomplete
-              multiple
-              allowCustom={false}
-              label="Фильтр по ФИО"
-              options={participantOptions}
-              value={ui.selectedParticipantIds}
-              onChange={(ids) =>
+                ),
+            },
+          },
+          {
+            type: "autocomplete",
+            key: "participants",
+            minWidth: 260,
+            props: {
+              multiple: true,
+              allowCustom: false,
+              label: "Фильтр по ФИО",
+              options: participantOptions,
+              value: ui.selectedParticipantIds,
+              onChange: (ids) =>
                 dispatch(
                   setParticipantWorkloadFilters({
                     selectedParticipantIds: ids,
                   })
-                )
-              }
-              sx={{ minWidth: 260 }}
-            />
-
-            <FilterAutocomplete
-              multiple
-              allowCustom={false}
-              label="Роли"
-              options={roleOptions}
-              value={ui.rolesFilter}
-              onChange={handleRolesFilterChange}
-              sx={{ minWidth: 200 }}
-            />
-
-            <FilterAutocomplete
-              multiple
-              allowCustom={false}
-              label="Стрим"
-              options={userStreamOptions}
-              value={ui.userStreamsFilter}
-              onChange={handleUserStreamsFilterChange}
-              sx={{ minWidth: 200 }}
-            />
-
-            <FilterAutocomplete
-              multiple
-              allowCustom={false}
-              label="Приоритет"
-              options={priorityOptions}
-              value={ui.priorityFilter.map(String)}
-              onChange={handlePriorityFilterChange}
-              sx={{ minWidth: 160 }}
-            />
-          </Box>
+                ),
+            },
+          },
+          {
+            type: "autocomplete",
+            key: "roles",
+            minWidth: 200,
+            props: {
+              multiple: true,
+              allowCustom: false,
+              label: "Роли",
+              options: roleOptions,
+              value: ui.rolesFilter,
+              onChange: handleRolesFilterChange,
+            },
+          },
+          {
+            type: "autocomplete",
+            key: "streams",
+            minWidth: 200,
+            props: {
+              multiple: true,
+              allowCustom: false,
+              label: "Стрим по участнику",
+              options: userStreamOptions,
+              value: ui.userStreamsFilter,
+              onChange: handleUserStreamsFilterChange,
+            },
+          },
+          {
+            type: "autocomplete",
+            key: "task-stream",
+            minWidth: 200,
+            props: {
+              allowCustom: false,
+              label: "Стрим по задаче",
+              options: taskStreamOptions,
+              value: ui.taskStreamFilter,
+              onChange: handleTaskStreamFilterChange,
+            },
+          },
+          {
+            type: "autocomplete",
+            key: "priority",
+            minWidth: 160,
+            props: {
+              multiple: true,
+              allowCustom: false,
+              label: "Приоритет",
+              options: priorityOptions,
+              value: ui.priorityFilter.map(String),
+              onChange: handlePriorityFilterChange,
+            },
+          },
+        ]}
+      />
 
           <Stack spacing={2}>
             {participantsInScope.map((p) => {

@@ -3,7 +3,6 @@ import * as React from "react";
 import {
   Paper,
   Typography,
-  Stack,
   Box,
   Chip,
   Table,
@@ -19,11 +18,12 @@ import {
   useGetQuartersQuery,
   useGetSprintsQuery,
   useGetCapacityQuery,
+  useGetParticipantsQuery,
 } from "../app/api";
 import type { Participant, Quarter, Sprint, CapacityCell } from "../types";
-import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAppDispatch, useAppSelector } from "./hooks";
-import { setCapacitySelectedQuarterIds } from "../app/uiSlice";
+import { setCapacityFilters, setCapacitySelectedQuarterIds } from "../app/uiSlice";
 
 moment.locale("ru");
 
@@ -78,19 +78,32 @@ function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
   return true;
 }
 
+const normalizeUnique = (values: string[]) =>
+  Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
+
 export default function CapacityPage() {
   const { data: quarters = [], isLoading: isQuartersLoading } =
     useGetQuartersQuery();
   const { data: sprints = [], isLoading: isSprintsLoading } =
     useGetSprintsQuery(undefined);
+  const { data: participantList = [] } = useGetParticipantsQuery();
   const dispatch = useAppDispatch();
-  const selectedQuarterIds = useAppSelector(
-    (state) => state.ui.capacity.selectedQuarterIds
-  );
+  const capacityFilters = useAppSelector((state) => state.ui.capacity);
+  const {
+    selectedQuarterIds,
+    selectedParticipantIds,
+    rolesFilter,
+    userStreamsFilter,
+  } = capacityFilters;
 
   const { data: capacityRows = [], isLoading: isCapacityLoading } =
     useGetCapacityQuery({
       quarterIds: selectedQuarterIds.length ? selectedQuarterIds : undefined,
+      participantIds: selectedParticipantIds.length
+        ? selectedParticipantIds
+        : undefined,
+      roles: rolesFilter.length ? rolesFilter : undefined,
+      userStreams: userStreamsFilter.length ? userStreamsFilter : undefined,
     });
 
   const participants = React.useMemo(
@@ -141,6 +154,29 @@ export default function CapacityPage() {
       }));
   }, [quarters]);
 
+  const participantOptions = React.useMemo(
+    () =>
+      participantList.map((p) => ({
+        value: p.id,
+        label: `${p.fullName}${p.role ? ` (${p.role})` : ""}`,
+      })),
+    [participantList]
+  );
+
+  const roleOptions = React.useMemo(() => {
+    const roles = participantList
+      .map((p) => p.role)
+      .filter((role): role is string => Boolean(role && role.trim()));
+    return Array.from(new Set(roles)).sort();
+  }, [participantList]);
+
+  const userStreamOptions = React.useMemo(() => {
+    const streams = participantList
+      .flatMap((p) => p.userStreams || [])
+      .filter((stream): stream is string => Boolean(stream && stream.trim()));
+    return Array.from(new Set(streams)).sort();
+  }, [participantList]);
+
   const handleQuarterFilterChange = React.useCallback(
     (ids: string[]) => {
       const existing = new Set(quarters.map((q) => q.id));
@@ -151,6 +187,34 @@ export default function CapacityPage() {
       }
     },
     [quarters, dispatch, selectedQuarterIds]
+  );
+
+  const handleParticipantFilterChange = React.useCallback(
+    (ids: string[]) => {
+      const existing = new Set(participantList.map((p) => p.id));
+      const filtered = ids.filter((id) => existing.has(id));
+      if (shallowStringArrayEqual(filtered, selectedParticipantIds)) return;
+      dispatch(setCapacityFilters({ selectedParticipantIds: filtered }));
+    },
+    [dispatch, participantList, selectedParticipantIds]
+  );
+
+  const handleRoleFilterChange = React.useCallback(
+    (values: string[]) => {
+      const next = normalizeUnique(values);
+      if (shallowStringArrayEqual(next, rolesFilter)) return;
+      dispatch(setCapacityFilters({ rolesFilter: next }));
+    },
+    [dispatch, rolesFilter]
+  );
+
+  const handleUserStreamsFilterChange = React.useCallback(
+    (values: string[]) => {
+      const next = normalizeUnique(values);
+      if (shallowStringArrayEqual(next, userStreamsFilter)) return;
+      dispatch(setCapacityFilters({ userStreamsFilter: next }));
+    },
+    [dispatch, userStreamsFilter]
   );
 
   const getCell = React.useCallback(
@@ -181,22 +245,70 @@ export default function CapacityPage() {
       <>
         <Typography variant="h6">Нагрузка по спринтам</Typography>
 
-          <Stack
-            direction="row"
-            spacing={2}
-            alignItems="center"
-            sx={{ flexWrap: { xs: "wrap", md: "nowrap" } }}
-          >
-            <FilterAutocomplete
-              multiple
-              allowCustom={false}
-              label="Фильтр по кварталам"
-              options={quarterFilterOptions}
-              value={selectedQuarterIds}
-              onChange={handleQuarterFilterChange}
-              sx={{ minWidth: 280, flex: 1 }}
-            />
-          </Stack>
+          <FiltersPanel
+            withPaper={false}
+            containerSx={{ mb: 1 }}
+            gridSx={{
+              gridTemplateColumns: {
+                xs: "repeat(auto-fit, minmax(240px, 1fr))",
+                md: "repeat(auto-fit, minmax(260px, 1fr))",
+              },
+            }}
+            filters={[
+              {
+                type: "autocomplete",
+                key: "quarters",
+                minWidth: 280,
+                props: {
+                  multiple: true,
+                  allowCustom: false,
+                  label: "Фильтр по кварталам",
+                  options: quarterFilterOptions,
+                  value: selectedQuarterIds,
+                  onChange: handleQuarterFilterChange,
+                },
+              },
+              {
+                type: "autocomplete",
+                key: "participants",
+                minWidth: 280,
+                props: {
+                  multiple: true,
+                  allowCustom: false,
+                  label: "Фильтр по ФИО",
+                  options: participantOptions,
+                  value: selectedParticipantIds,
+                  onChange: handleParticipantFilterChange,
+                },
+              },
+              {
+                type: "autocomplete",
+                key: "roles",
+                minWidth: 220,
+                props: {
+                  multiple: true,
+                  allowCustom: false,
+                  label: "Роли",
+                  options: roleOptions,
+                  value: rolesFilter,
+                  onChange: handleRoleFilterChange,
+                },
+              },
+              {
+                type: "autocomplete",
+                key: "streams",
+                minWidth: 220,
+                props: {
+                  multiple: true,
+                  allowCustom: false,
+                  label: "Стрим по участнику",
+                  options: userStreamOptions,
+                  value: userStreamsFilter,
+                  onChange: handleUserStreamsFilterChange,
+                },
+              },
+            ]}
+          />
 
           <Box sx={{ overflowX: "auto" }}>
             <Table stickyHeader size="small">

@@ -251,10 +251,12 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
     private Predicate roleExists(CriteriaQuery<?> query, CriteriaBuilder cb, Root<TaskEntity> task, Iterable<String> roles) {
         var sub = query.subquery(UUID.class);
         Root<TaskParticipantEntity> tp = sub.from(TaskParticipantEntity.class);
+        CriteriaBuilder.In<String> roleFilter = cb.in(cb.lower(tp.get("participant").get("role")));
+        roles.forEach(roleFilter::value);
         sub.select(tp.get("task").get("id"))
             .where(
                 cb.equal(tp.get("task").get("id"), task.get("id")),
-                cb.lower(tp.get("participant").get("role")).in(roles)
+                roleFilter
             );
         return cb.exists(sub);
     }
@@ -269,10 +271,12 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         Root<TaskParticipantEntity> tp = sub.from(TaskParticipantEntity.class);
         Join<TaskParticipantEntity, ParticipantEntity> participant = tp.join("participant");
         SetJoin<ParticipantEntity, String> streams = participant.joinSet("userStreams");
+        CriteriaBuilder.In<String> streamFilter = cb.in(cb.lower(streams));
+        userStreams.forEach(streamFilter::value);
         sub.select(tp.get("task").get("id"))
             .where(
                 cb.equal(tp.get("task").get("id"), task.get("id")),
-                cb.lower(streams).in(userStreams)
+                streamFilter
             );
         return cb.exists(sub);
     }
