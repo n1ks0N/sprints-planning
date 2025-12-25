@@ -96,7 +96,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         Expression<?> orderValue = cb.coalesce(task.get("displayOrder"), cb.literal(Integer.MAX_VALUE));
         List<Order> ordering = new ArrayList<>();
         if (filter.pinnedTaskId() != null) {
-            Expression<Integer> pinnedOrder = cb.selectCase()
+            Expression<Integer> pinnedOrder = cb.<Integer>selectCase()
                 .when(cb.equal(task.get("id"), filter.pinnedTaskId()), 0)
                 .otherwise(1);
             ordering.add(cb.asc(pinnedOrder));
