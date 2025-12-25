@@ -649,6 +649,8 @@ const TaskCard = React.memo(function TaskCard({
   const taskQuarterIds = getTaskQuarters(task);
   const [selectedParticipantToAdd, setSelectedParticipantToAdd] =
     React.useState<Participant | null>(null);
+  const [participantInputValue, setParticipantInputValue] =
+    React.useState("");
 
   const allowedSprints = React.useMemo(
     () =>
@@ -746,6 +748,7 @@ const TaskCard = React.memo(function TaskCard({
       !availableParticipants.some((p) => p.id === selectedParticipantToAdd.id)
     ) {
       setSelectedParticipantToAdd(null);
+      setParticipantInputValue("");
     }
   }, [availableParticipants, selectedParticipantToAdd]);
 
@@ -1324,10 +1327,15 @@ const TaskCard = React.memo(function TaskCard({
                       getOptionLabel={(p) =>
                         p ? `${p.fullName} (${p.role})` : ""
                       }
+                      inputValue={participantInputValue}
+                      onInputChange={(_, value) =>
+                        setParticipantInputValue(value)
+                      }
                       onChange={(_, value) => {
                         setSelectedParticipantToAdd(value);
                         if (value) onAddParticipant(task, value.id);
                         setSelectedParticipantToAdd(null);
+                        setParticipantInputValue("");
                       }}
                       value={selectedParticipantToAdd}
                       renderInput={(params) => (
@@ -1419,6 +1427,7 @@ export default function BacklogPage() {
     isLoading: isSprintsLoading,
     isFetching: isSprintsFetching,
   } = useGetSprintsQuery(undefined);
+  const { data: allTasksMeta } = useGetTasksQuery({ page: 0, size: 1 });
   const allSprints = sprintsData;
   const { data: releases = [], isLoading: isReleasesLoading } =
     useGetReleasesQuery();
@@ -1631,6 +1640,11 @@ export default function BacklogPage() {
     () => fetchedTasksPage?.content ?? [],
     [fetchedTasksPage]
   );
+  const totalTasksCount = React.useMemo(() => {
+    const total = allTasksMeta?.page?.totalElements;
+    if (Number.isFinite(total)) return Number(total);
+    return allTasksMeta?.content?.length ?? fetchedTasks.length;
+  }, [allTasksMeta, fetchedTasks.length]);
 
   const totalPages = fetchedTasksPage?.page?.totalPages;
 
@@ -2112,7 +2126,7 @@ export default function BacklogPage() {
       participantIds: [],
       releaseDate: "",
       releaseSprintId: "",
-      order: allTasks.length,
+      order: totalTasksCount,
     }).unwrap();
 
     setAllocations((prev) => ({ ...prev, [created.id]: {} }));
