@@ -1537,16 +1537,19 @@ export default function BacklogPage() {
     return effectiveTasksPageNumber + 1 < totalPages;
   }, [effectiveTasksPageNumber, totalPages]);
 
-  const loadNextTasksPage = React.useCallback(() => {
-    setTasksPageNumber((prev) => {
-      if (typeof totalPages === "number") {
-        const maxPage = Math.max(0, totalPages - 1);
-        return prev < maxPage ? prev + 1 : prev;
-      }
+  const loadNextTasksPage = React.useCallback(
+    (page: number) => {
+      setTasksPageNumber(() => {
+        if (typeof totalPages === "number") {
+          const maxPage = Math.max(0, totalPages - 1);
+          return page < maxPage ? page + 1 : page;
+        }
 
-      return prev + 1;
-    });
-  }, [totalPages]);
+        return page + 1;
+      });
+    },
+    [totalPages]
+  );
 
   React.useEffect(() => {
     const handleScroll = () => {
@@ -1558,12 +1561,17 @@ export default function BacklogPage() {
         return;
       }
 
-      loadNextTasksPage();
+      loadNextTasksPage(effectiveTasksPageNumber);
     };
 
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [hasMoreTasks, isFetching, loadNextTasksPage]);
+  }, [
+    effectiveTasksPageNumber,
+    hasMoreTasks,
+    isFetching,
+    loadNextTasksPage,
+  ]);
 
   const allTasks = React.useMemo(
     () =>
@@ -2706,7 +2714,7 @@ export default function BacklogPage() {
             variant="outlined"
             onClick={() => {
               if (!hasMoreTasks || isFetching) return;
-              loadNextTasksPage();
+              loadNextTasksPage(effectiveTasksPageNumber);
             }}
             disabled={!hasMoreTasks || isFetching}
           >
