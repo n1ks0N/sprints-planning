@@ -12,12 +12,14 @@ import {
   TableContainer,
   Tooltip,
   Box,
+  InputBase,
 } from "@mui/material";
 import {
   useGetParticipantsQuery,
   useGetQuartersQuery,
   useGetSprintsQuery,
   useGetTasksQuery,
+  useUpsertTaskAllocationMutation,
 } from "../app/api";
 import type { Sprint, BacklogItem } from "../types";
 import { setParticipantWorkloadFilters } from "../app/uiSlice";
@@ -38,9 +40,110 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   return true;
 }
 
+type Allocations = Record<string, Record<string, Record<string, number>>>;
+
+type EditableNumberCellProps = {
+  value: number;
+  onChange: (next: number) => void;
+  onCommit?: (next: number) => void;
+  title?: string;
+};
+
+function EditableNumberCell({
+  value,
+  onChange,
+  onCommit,
+  title,
+}: EditableNumberCellProps) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(value ?? 0);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const prevEditingRef = React.useRef(editing);
+  const inputId = React.useId();
+
+  React.useEffect(() => {
+    if (!editing) {
+      setDraft(value ?? 0);
+    }
+  }, [editing, value]);
+
+  React.useEffect(() => {
+    if (editing && !prevEditingRef.current && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+    prevEditingRef.current = editing;
+  }, [editing]);
+
+  const handleStart = React.useCallback(() => {
+    setEditing(true);
+  }, []);
+
+  const handleClose = React.useCallback(() => {
+    if (!editing) return;
+    setEditing(false);
+    const next = Number.isFinite(draft) ? draft : 0;
+    if (next !== value) {
+      onChange(next);
+      onCommit?.(next);
+    }
+  }, [draft, editing, onChange, onCommit, value]);
+
+  if (!editing) {
+    return (
+      <Box
+        sx={{
+          minWidth: 48,
+          textAlign: "center",
+          cursor: "pointer",
+        }}
+        title={title || "Клик для редактирования"}
+        onClick={handleStart}
+      >
+        <Typography component="span">{toInt(value)}</Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <InputBase
+      inputRef={inputRef}
+      type="number"
+      autoFocus
+      value={Number.isFinite(draft) ? draft : 0}
+      onChange={(e) => {
+        const v = Number(e.target.value);
+        setDraft(Number.isFinite(v) ? v : 0);
+      }}
+      onBlur={handleClose}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === "Escape") {
+          (e.currentTarget as HTMLInputElement).blur();
+        }
+      }}
+      sx={{
+        textAlign: "center",
+        px: 0.5,
+        borderRadius: 1,
+        bgcolor: "background.paper",
+        outline: "1px solid",
+        outlineColor: "divider",
+        width: "100%",
+      }}
+      inputProps={{
+        id: inputId,
+        name: title || "allocation-value",
+        "aria-label": title || "Значение нагрузки",
+      }}
+    />
+  );
+}
+
 export default function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
   const ui = useAppSelector((s) => s.ui.participantWorkload);
+  const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
+  const [allocations, setAllocations] = React.useState<Allocations>({});
 
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: participants = [] } = useGetParticipantsQuery();
@@ -178,6 +281,91 @@ export default function ParticipantWorkloadPage() {
     return list;
   }, [participants, selectedParticipants, ui.rolesFilter, ui.userStreamsFilter]);
 
+  React.useEffect(() => {
+    setAllocations((prev) => {
+      const next: Allocations = { ...prev };
+      let changed = false;
+      const taskIdSet = new Set(tasks.map((t) => t.id));
+
+      Object.keys(next).forEach((taskId) => {
+        if (!taskIdSet.has(taskId)) {
+          delete next[taskId];
+          changed = true;
+        }
+      });
+
+      for (const t of tasks) {
+        if (!next[t.id]) {
+          next[t.id] = {};
+          changed = true;
+        }
+        const taskAllocations = next[t.id];
+        const pids = t.participantIds || [];
+
+        Object.keys(taskAllocations).forEach((pid) => {
+          if (!pids.includes(pid)) {
+            delete taskAllocations[pid];
+            changed = true;
+          }
+        });
+
+        for (const pid of pids) {
+          if (!taskAllocations[pid]) {
+            taskAllocations[pid] = {};
+            changed = true;
+          }
+          const participantAllocations = taskAllocations[pid];
+          for (const s of sprintsInScope) {
+            const existing = participantAllocations[s.id];
+            const incoming = t.allocations?.[pid]?.[s.id];
+            const value = Number(incoming ?? existing ?? 0) || 0;
+            if (participantAllocations[s.id] !== value) {
+              participantAllocations[s.id] = value;
+              changed = true;
+            }
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [tasks, sprintsInScope]);
+
+  const handleAllocChange = React.useCallback(
+    (
+      taskId: string,
+      participantId: string,
+      sprintId: string,
+      value: number
+    ) => {
+      setAllocations((prev) => {
+        const prevTask = prev[taskId] || {};
+        const prevRow = prevTask[participantId] || {};
+        const current = prevRow[sprintId] ?? 0;
+        if (current === value) return prev;
+        const nextRow = { ...prevRow, [sprintId]: value };
+        const nextTask = { ...prevTask, [participantId]: nextRow };
+        return { ...prev, [taskId]: nextTask };
+      });
+    },
+    []
+  );
+
+  const commitCell = React.useCallback(
+    (taskId: string, participantId: string, sprintId: string, value: number) => {
+      upsertTaskAllocation({
+        taskId,
+        participantId,
+        sprintId,
+        days: toInt(Number(value) || 0),
+      })
+        .unwrap()
+        .catch((error) => {
+          console.error("Failed to save allocation", error);
+        });
+    },
+    [upsertTaskAllocation]
+  );
+
   const getRowsForParticipant = (pid: string) => {
     const rows = tasks
       .filter(
@@ -188,7 +376,7 @@ export default function ParticipantWorkloadPage() {
       .map((t) => ({
         task: t,
         perSprint: sprintsInScope.map((s) =>
-          toInt(t.allocations?.[pid]?.[s.id] ?? 0)
+          toInt(allocations[t.id]?.[pid]?.[s.id] ?? t.allocations?.[pid]?.[s.id] ?? 0)
         ),
       }));
     return rows as { task: BacklogItem; perSprint: number[] }[];
@@ -377,11 +565,31 @@ export default function ParticipantWorkloadPage() {
                                   </Tooltip>
                                 </Stack>
                               </TableCell>
-                              {r.perSprint.map((v, i) => (
-                                <TableCell key={`${p.id}-${r.task.id}-${i}`} align="center">
-                                  {v}
-                                </TableCell>
-                              ))}
+                              {sprintsInScope.map((s, i) => {
+                                const v = r.perSprint[i] ?? 0;
+                                return (
+                                  <TableCell
+                                    key={`${p.id}-${r.task.id}-${s.id}`}
+                                    align="center"
+                                  >
+                                    <EditableNumberCell
+                                      value={v}
+                                      onChange={(next) =>
+                                        handleAllocChange(
+                                          r.task.id,
+                                          p.id,
+                                          s.id,
+                                          next
+                                        )
+                                      }
+                                      onCommit={(next) =>
+                                        commitCell(r.task.id, p.id, s.id, next)
+                                      }
+                                      title={`${r.task.title} / ${s.name}`}
+                                    />
+                                  </TableCell>
+                                );
+                              })}
                               <TableCell align="center" sx={{ fontWeight: 700 }}>
                                 {total}
                               </TableCell>
