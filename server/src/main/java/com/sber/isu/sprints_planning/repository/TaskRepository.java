@@ -69,11 +69,25 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID>, TaskRep
     );
 
     @Modifying(flushAutomatically = true)
+    @Query("update TaskEntity t set t.displayOrder = t.displayOrder + 1 where t.teamKey = :teamKey and t.displayOrder >= :start")
+    void incrementDisplayOrderFrom(
+        @Param("teamKey") String teamKey,
+        @Param("start") int start
+    );
+
+    @Modifying(flushAutomatically = true)
     @Query("update TaskEntity t set t.displayOrder = t.displayOrder - 1 where t.id <> :taskId and t.teamKey = :teamKey and t.displayOrder > :start and t.displayOrder <= :end")
     void decrementDisplayOrderRange(
         @Param("taskId") UUID taskId,
         @Param("teamKey") String teamKey,
         @Param("start") int start,
         @Param("end") int end
+    );
+
+    @Modifying(flushAutomatically = true)
+    @Query("update TaskEntity t set t.displayOrder = t.displayOrder - 1 where t.teamKey = :teamKey and t.displayOrder > :start")
+    void decrementDisplayOrderAfter(
+        @Param("teamKey") String teamKey,
+        @Param("start") int start
     );
 }
