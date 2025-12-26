@@ -2157,6 +2157,9 @@ export default function BacklogPage() {
         )
       : undefined;
 
+    const baseOrder = Number.isFinite(task.order)
+      ? Number(task.order)
+      : allTasks.length;
     const copy = await addTask({
       title: `${task.title} (копия)`,
       description: (task as any).description,
@@ -2170,6 +2173,7 @@ export default function BacklogPage() {
       releaseSprintId: task.releaseSprintId,
       leaderId: (task as any).leaderId ?? undefined,
       quarterIds: taskQuarters,
+      order: baseOrder + 1,
       loads: loadsPayload,
       allocations: Object.keys(allocationsPayload).length
         ? allocationsPayload
@@ -2180,13 +2184,7 @@ export default function BacklogPage() {
       setTaskQuartersMap((prev) => ({ ...prev, [copy.id]: taskQuarters }));
     }
 
-    const currentIds = allTasks.map((t) => t.id);
-    const targetIndex = currentIds.indexOf(task.id);
-    const nextOrder = currentIds.slice();
-    if (targetIndex >= 0) nextOrder.splice(targetIndex + 1, 0, copy.id);
-    else nextOrder.push(copy.id);
-
-    await persistTaskOrder(nextOrder, copy.id);
+    return copy;
   };
 
   const removeTask = async (t: BacklogItem) => {
