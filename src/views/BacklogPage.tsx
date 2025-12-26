@@ -1325,6 +1325,7 @@ const TaskCard = React.memo(function TaskCard({
                         p ? `${p.fullName} (${p.role})` : ""
                       }
                       onChange={(_, value) => {
+                        setSelectedParticipantToAdd(value);
                         if (value) onAddParticipant(task, value.id);
                         setSelectedParticipantToAdd(null);
                       }}
