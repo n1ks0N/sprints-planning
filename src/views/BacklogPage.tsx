@@ -1508,6 +1508,7 @@ export default function BacklogPage() {
   const TASKS_PAGE_SIZE = 20;
   const normalizedSearch = React.useMemo(() => searchQuery.trim(), [searchQuery]);
   const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
+  const [pinnedTaskId, setPinnedTaskId] = React.useState<string | null>(null);
 
   const filtersSignature = React.useMemo(
     () =>
@@ -1518,6 +1519,7 @@ export default function BacklogPage() {
         releaseSprintFilter,
         streamFilter,
         normalizedSearch,
+        pinnedTaskId,
       }),
     [
       normalizedSearch,
@@ -1526,6 +1528,7 @@ export default function BacklogPage() {
       selectedQuarterIds,
       statusFilter,
       streamFilter,
+      pinnedTaskId,
     ]
   );
 
@@ -1546,6 +1549,7 @@ export default function BacklogPage() {
         releaseSprintFilter === "all" ? undefined : releaseSprintFilter.trim(),
       stream: streamFilter.trim(),
       search: normalizedSearch,
+      pinnedId: pinnedTaskId ?? undefined,
       page: effectiveTasksPageNumber,
       size: TASKS_PAGE_SIZE,
     }),
@@ -1556,6 +1560,7 @@ export default function BacklogPage() {
       releaseSprintFilter,
       streamFilter,
       normalizedSearch,
+      pinnedTaskId,
       effectiveTasksPageNumber,
     ]
   );
@@ -1985,15 +1990,31 @@ export default function BacklogPage() {
             return deferredStatusFilter.includes(st);
           });
 
-    const withOrder = byStatus.slice().sort((a, b) => {
-      const oa = Number.isFinite(a.order) ? Number(a.order) : Number.MAX_SAFE_INTEGER;
-      const ob = Number.isFinite(b.order) ? Number(b.order) : Number.MAX_SAFE_INTEGER;
+    const pinnedTask = pinnedTaskId
+      ? deferredTasks.find((t) => t.id === pinnedTaskId) ?? null
+      : null;
+    const withPinned =
+      pinnedTask && !byStatus.some((t) => t.id === pinnedTask.id)
+        ? [pinnedTask, ...byStatus]
+        : byStatus;
+
+    const withOrder = withPinned.slice().sort((a, b) => {
+      if (pinnedTaskId) {
+        if (a.id === pinnedTaskId) return -1;
+        if (b.id === pinnedTaskId) return 1;
+      }
+      const oa = Number.isFinite(a.order)
+        ? Number(a.order)
+        : Number.MAX_SAFE_INTEGER;
+      const ob = Number.isFinite(b.order)
+        ? Number(b.order)
+        : Number.MAX_SAFE_INTEGER;
       if (oa !== ob) return oa - ob;
       return (a.createdAt || "").localeCompare(b.createdAt || "");
     });
 
     return withOrder;
-  }, [deferredTasks, deferredStatusFilter]);
+  }, [deferredTasks, deferredStatusFilter, pinnedTaskId]);
 
 
   const [addTask] = useAddTaskMutation();
@@ -2091,10 +2112,10 @@ export default function BacklogPage() {
       participantIds: [],
       releaseDate: "",
       releaseSprintId: "",
-      order: allTasks.length,
     }).unwrap();
 
     setAllocations((prev) => ({ ...prev, [created.id]: {} }));
+    setPinnedTaskId(created.id);
     if (quarterId) {
       setTaskQuartersMap((prev) => ({ ...prev, [created.id]: [quarterId] }));
     }
@@ -2136,6 +2157,9 @@ export default function BacklogPage() {
         )
       : undefined;
 
+    const baseOrder = Number.isFinite(task.order)
+      ? Number(task.order)
+      : allTasks.length;
     const copy = await addTask({
       title: `${task.title} (копия)`,
       description: (task as any).description,
@@ -2149,6 +2173,7 @@ export default function BacklogPage() {
       releaseSprintId: task.releaseSprintId,
       leaderId: (task as any).leaderId ?? undefined,
       quarterIds: taskQuarters,
+      order: baseOrder + 1,
       loads: loadsPayload,
       allocations: Object.keys(allocationsPayload).length
         ? allocationsPayload
@@ -2159,13 +2184,7 @@ export default function BacklogPage() {
       setTaskQuartersMap((prev) => ({ ...prev, [copy.id]: taskQuarters }));
     }
 
-    const currentIds = allTasks.map((t) => t.id);
-    const targetIndex = currentIds.indexOf(task.id);
-    const nextOrder = currentIds.slice();
-    if (targetIndex >= 0) nextOrder.splice(targetIndex + 1, 0, copy.id);
-    else nextOrder.push(copy.id);
-
-    await persistTaskOrder(nextOrder, copy.id);
+    return copy;
   };
 
   const removeTask = async (t: BacklogItem) => {

@@ -210,7 +210,9 @@ public class TaskService {
     public TaskDto delete(String teamKey, IdRequest request) {
         TaskEntity entity = taskRepository.findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
+        int order = entity.getDisplayOrder();
         taskRepository.delete(entity);
+        taskRepository.decrementDisplayOrderAfter(teamKey, order);
         return DtoMapper.toTaskDto(entity);
     }
 
@@ -241,10 +243,13 @@ public class TaskService {
     }
 
     private int resolveDisplayOrder(String teamKey, Integer requestedOrder) {
-        if (requestedOrder != null && requestedOrder >= 0) {
-            return requestedOrder;
+        int maxOrder = taskRepository.findMaxDisplayOrder(teamKey);
+        if (requestedOrder == null || requestedOrder < 0) {
+            return maxOrder + 1;
         }
-        return taskRepository.findMaxDisplayOrder(teamKey) + 1;
+        int targetOrder = Math.min(requestedOrder, maxOrder + 1);
+        taskRepository.incrementDisplayOrderFrom(teamKey, targetOrder);
+        return targetOrder;
     }
 
     private void reorderTask(String teamKey, TaskEntity entity, Integer requestedOrder) {

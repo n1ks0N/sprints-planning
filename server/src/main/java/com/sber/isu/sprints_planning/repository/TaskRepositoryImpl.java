@@ -13,6 +13,7 @@ import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Join;
+import jakarta.persistence.criteria.Order;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.SetJoin;
@@ -81,8 +82,8 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         CriteriaBuilder cb = entityManager.getCriteriaBuilder();
         CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
         Root<TaskEntity> task = countQuery.from(TaskEntity.class);
-        List<Predicate> predicates = buildPredicates(teamKey, filter, cb, countQuery, task);
-        countQuery.select(cb.count(task)).where(predicates.toArray(new Predicate[0]));
+        Predicate predicate = buildPredicate(teamKey, filter, cb, countQuery, task);
+        countQuery.select(cb.count(task)).where(predicate);
         return entityManager.createQuery(countQuery).getSingleResult();
     }
 
@@ -90,12 +91,22 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         CriteriaBuilder cb = entityManager.getCriteriaBuilder();
         CriteriaQuery<UUID> idQuery = cb.createQuery(UUID.class);
         Root<TaskEntity> task = idQuery.from(TaskEntity.class);
-        List<Predicate> predicates = buildPredicates(teamKey, filter, cb, idQuery, task);
+        Predicate predicate = buildPredicate(teamKey, filter, cb, idQuery, task);
 
         Expression<?> orderValue = cb.coalesce(task.get("displayOrder"), cb.literal(Integer.MAX_VALUE));
+        List<Order> ordering = new ArrayList<>();
+        if (filter.pinnedTaskId() != null) {
+            Expression<Integer> pinnedOrder = cb.<Integer>selectCase()
+                .when(cb.equal(task.get("id"), filter.pinnedTaskId()), 0)
+                .otherwise(1);
+            ordering.add(cb.asc(pinnedOrder));
+        }
+        ordering.add(cb.asc(orderValue));
+        ordering.add(cb.asc(task.get("createdAt")));
+
         idQuery.select(task.get("id"))
-            .where(predicates.toArray(new Predicate[0]))
-            .orderBy(cb.asc(orderValue), cb.asc(task.get("createdAt")));
+            .where(predicate)
+            .orderBy(ordering);
 
         TypedQuery<UUID> query = entityManager.createQuery(idQuery);
         if (page != null && size != null) {
@@ -175,7 +186,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             .getResultList();
     }
 
-    private List<Predicate> buildPredicates(
+    private Predicate buildPredicate(
         String teamKey,
         TaskFilter filter,
         CriteriaBuilder cb,
@@ -183,7 +194,8 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         Root<TaskEntity> task
     ) {
         List<Predicate> predicates = new ArrayList<>();
-        predicates.add(cb.equal(task.get("teamKey"), teamKey));
+        Predicate teamPredicate = cb.equal(task.get("teamKey"), teamKey);
+        predicates.add(teamPredicate);
 
         if (!filter.participantIds().isEmpty()) {
             predicates.add(participantExists(query, cb, task, filter.participantIds()));
@@ -228,7 +240,16 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             predicates.add(cb.lower(task.get("status")).in(filter.statuses()));
         }
 
-        return predicates;
+        Predicate basePredicate = cb.and(predicates.toArray(new Predicate[0]));
+        if (filter.pinnedTaskId() != null) {
+            Predicate pinned = cb.and(
+                teamPredicate,
+                cb.equal(task.get("id"), filter.pinnedTaskId())
+            );
+            return cb.or(basePredicate, pinned);
+        }
+
+        return basePredicate;
     }
 
     private Predicate participantExists(CriteriaQuery<?> query, CriteriaBuilder cb, Root<TaskEntity> task, Iterable<UUID> ids) {

@@ -802,6 +802,7 @@ export const api = createApi({
           participantIds?: string[];
           roles?: string[];
           userStreams?: string[];
+          pinnedId?: string;
           page?: number;
           size?: number;
         }
@@ -840,6 +841,9 @@ export const api = createApi({
 
         const userStreams = joinOrUndefined(arg?.userStreams);
         if (userStreams) params.userStream = userStreams;
+
+        const pinnedId = (arg?.pinnedId || "").trim();
+        if (pinnedId) params.id = pinnedId;
 
         if (typeof arg?.page === "number") params.page = String(arg.page);
         if (typeof arg?.size === "number") params.size = String(arg.size);

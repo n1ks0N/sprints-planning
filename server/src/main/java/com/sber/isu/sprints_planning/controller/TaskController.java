@@ -39,6 +39,7 @@ public class TaskController {
         @RequestParam(value = "participantId", required = false) String participantId,
         @RequestParam(value = "role", required = false) String role,
         @RequestParam(value = "userStream", required = false) String userStream,
+        @RequestParam(value = "id", required = false) String pinnedTaskId,
         @RequestParam(value = "page", required = false) Integer page,
         @RequestParam(value = "size", required = false) Integer size) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
@@ -51,7 +52,8 @@ public class TaskController {
             participantId,
             role,
             userStream,
-            search
+            search,
+            pinnedTaskId
         );
         return taskService.findPage(normalizedTeamKey, filter, page, size);
     }

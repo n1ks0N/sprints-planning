@@ -16,7 +16,8 @@ public record TaskFilter(
     Set<UUID> participantIds,
     Set<String> roles,
     Set<String> userStreams,
-    String searchQuery
+    String searchQuery,
+    UUID pinnedTaskId
 ) {
 
     public static TaskFilter empty() {
@@ -29,6 +30,7 @@ public record TaskFilter(
             Collections.emptySet(),
             Collections.emptySet(),
             Collections.emptySet(),
+            null,
             null
         );
     }
@@ -42,7 +44,8 @@ public record TaskFilter(
         String participantIds,
         String roles,
         String userStreams,
-        String searchQuery
+        String searchQuery,
+        String pinnedTaskId
     ) {
         return new TaskFilter(
             parseUuidSet(quarterIds),
@@ -53,7 +56,8 @@ public record TaskFilter(
             parseUuidSet(participantIds),
             parseStringSet(roles),
             parseStringSet(userStreams),
-            normalize(searchQuery)
+            normalize(searchQuery),
+            parseUuid(pinnedTaskId)
         );
     }
 
@@ -123,5 +127,16 @@ public record TaskFilter(
         }
         String trimmed = raw.trim();
         return trimmed.isEmpty() ? null : trimmed.toLowerCase();
+    }
+
+    private static UUID parseUuid(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw.trim());
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 }
