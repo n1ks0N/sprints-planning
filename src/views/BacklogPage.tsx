@@ -1531,11 +1531,12 @@ export default function BacklogPage() {
   );
 
   const totalPages = fetchedTasksPage?.page?.totalPages;
+  const totalTasksCount = fetchedTasksPage?.page?.totalElements ?? 0;
 
-  const hasMoreTasks = React.useMemo(() => {
-    if (!totalPages || !Number.isFinite(totalPages)) return true;
-    return effectiveTasksPageNumber + 1 < totalPages;
-  }, [effectiveTasksPageNumber, totalPages]);
+  const hasMoreTasks = React.useMemo(
+    () => fetchedTasks.length < totalTasksCount,
+    [fetchedTasks.length, totalTasksCount]
+  );
 
   const loadNextTasksPage = React.useCallback(
     (page: number) => {
@@ -1927,8 +1928,6 @@ export default function BacklogPage() {
   }, [deferredTasks, deferredStatusFilter, pinnedTaskId]);
 
   const displayedTasksCount = filteredTasks.length;
-  const totalTasksCount =
-    fetchedTasksPage?.page?.totalElements ?? displayedTasksCount;
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
@@ -2713,10 +2712,10 @@ export default function BacklogPage() {
           <Button
             variant="outlined"
             onClick={() => {
-              if (!hasMoreTasks || isFetching) return;
+              if (fetchedTasks.length >= totalTasksCount || isFetching) return;
               loadNextTasksPage(effectiveTasksPageNumber);
             }}
-            disabled={!hasMoreTasks || isFetching}
+            disabled={fetchedTasks.length >= totalTasksCount || isFetching}
           >
             {isFetching ? "Загрузка..." : "Загрузить еще"}
           </Button>
