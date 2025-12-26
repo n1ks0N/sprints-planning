@@ -1537,6 +1537,17 @@ export default function BacklogPage() {
     return effectiveTasksPageNumber + 1 < totalPages;
   }, [effectiveTasksPageNumber, totalPages]);
 
+  const loadNextTasksPage = React.useCallback(() => {
+    setTasksPageNumber((prev) => {
+      if (typeof totalPages === "number") {
+        const maxPage = Math.max(0, totalPages - 1);
+        return prev < maxPage ? prev + 1 : prev;
+      }
+
+      return prev + 1;
+    });
+  }, [totalPages]);
+
   React.useEffect(() => {
     const handleScroll = () => {
       const { scrollTop, clientHeight, scrollHeight } =
@@ -1547,19 +1558,12 @@ export default function BacklogPage() {
         return;
       }
 
-      setTasksPageNumber((prev) => {
-        if (typeof totalPages === "number") {
-          const maxPage = Math.max(0, totalPages - 1);
-          return prev < maxPage ? prev + 1 : prev;
-        }
-
-        return prev + 1;
-      });
+      loadNextTasksPage();
     };
 
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [hasMoreTasks, isFetching, fetchedTasksPage, totalPages]);
+  }, [hasMoreTasks, isFetching, loadNextTasksPage]);
 
   const allTasks = React.useMemo(
     () =>
@@ -1914,6 +1918,9 @@ export default function BacklogPage() {
     return withOrder;
   }, [deferredTasks, deferredStatusFilter, pinnedTaskId]);
 
+  const displayedTasksCount = filteredTasks.length;
+  const totalTasksCount =
+    fetchedTasksPage?.page?.totalElements ?? displayedTasksCount;
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
@@ -2685,6 +2692,27 @@ export default function BacklogPage() {
             ) : null}
           </DragOverlay>
         </DndContext>
+
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1}
+          alignItems={{ xs: "flex-start", sm: "center" }}
+          justifyContent="space-between"
+        >
+          <Typography variant="body2" color="text.secondary">
+            Загружено {displayedTasksCount} задач из {totalTasksCount}
+          </Typography>
+          <Button
+            variant="outlined"
+            onClick={() => {
+              if (!hasMoreTasks || isFetching) return;
+              loadNextTasksPage();
+            }}
+            disabled={!hasMoreTasks || isFetching}
+          >
+            {isFetching ? "Загрузка..." : "Загрузить еще"}
+          </Button>
+        </Stack>
 
         <Divider />
 
