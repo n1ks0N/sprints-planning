@@ -18,8 +18,10 @@ import {
   useGetQuartersQuery,
   useGetSprintsQuery,
   useGetTasksQuery,
+  useUpsertTaskAllocationMutation,
 } from "../app/api";
-import type { Sprint, BacklogItem } from "../types";
+import EditableNumberCell from "../components/EditableNumberCell";
+import type { Sprint, BacklogItem, Allocations } from "../types";
 import { setParticipantWorkloadFilters } from "../app/uiSlice";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAppDispatch, useAppSelector } from "./hooks";
@@ -41,6 +43,8 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
 export default function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
   const ui = useAppSelector((s) => s.ui.participantWorkload);
+  const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
+  const [allocations, setAllocations] = React.useState<Allocations>({});
 
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: participants = [] } = useGetParticipantsQuery();
@@ -123,7 +127,9 @@ export default function ParticipantWorkloadPage() {
 
   const handleRolesFilterChange = React.useCallback(
     (values: string[]) => {
-      const next = Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
+      const next = Array.from(
+        new Set(values.map((v) => v.trim()).filter(Boolean))
+      );
       if (shallowArrayEqual(next, ui.rolesFilter)) return;
       dispatch(setParticipantWorkloadFilters({ rolesFilter: next }));
     },
@@ -132,7 +138,9 @@ export default function ParticipantWorkloadPage() {
 
   const handleUserStreamsFilterChange = React.useCallback(
     (values: string[]) => {
-      const next = Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
+      const next = Array.from(
+        new Set(values.map((v) => v.trim()).filter(Boolean))
+      );
       if (shallowArrayEqual(next, ui.userStreamsFilter)) return;
       dispatch(setParticipantWorkloadFilters({ userStreamsFilter: next }));
     },
@@ -176,7 +184,102 @@ export default function ParticipantWorkloadPage() {
       );
     }
     return list;
-  }, [participants, selectedParticipants, ui.rolesFilter, ui.userStreamsFilter]);
+  }, [
+    participants,
+    selectedParticipants,
+    ui.rolesFilter,
+    ui.userStreamsFilter,
+  ]);
+
+  React.useEffect(() => {
+    setAllocations((prev) => {
+      const next: Allocations = { ...prev };
+      let changed = false;
+      const taskIdSet = new Set(tasks.map((t) => t.id));
+
+      Object.keys(next).forEach((taskId) => {
+        if (!taskIdSet.has(taskId)) {
+          delete next[taskId];
+          changed = true;
+        }
+      });
+
+      for (const t of tasks) {
+        if (!next[t.id]) {
+          next[t.id] = {};
+          changed = true;
+        }
+        const taskAllocations = next[t.id];
+        const pids = t.participantIds || [];
+
+        Object.keys(taskAllocations).forEach((pid) => {
+          if (!pids.includes(pid)) {
+            delete taskAllocations[pid];
+            changed = true;
+          }
+        });
+
+        for (const pid of pids) {
+          if (!taskAllocations[pid]) {
+            taskAllocations[pid] = {};
+            changed = true;
+          }
+          const participantAllocations = taskAllocations[pid];
+          for (const s of sprintsInScope) {
+            const existing = participantAllocations[s.id];
+            const incoming = t.allocations?.[pid]?.[s.id];
+            const value = Number(incoming ?? existing ?? 0) || 0;
+            if (participantAllocations[s.id] !== value) {
+              participantAllocations[s.id] = value;
+              changed = true;
+            }
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [tasks, sprintsInScope]);
+
+  const handleAllocChange = React.useCallback(
+    (
+      taskId: string,
+      participantId: string,
+      sprintId: string,
+      value: number
+    ) => {
+      setAllocations((prev) => {
+        const prevTask = prev[taskId] || {};
+        const prevRow = prevTask[participantId] || {};
+        const current = prevRow[sprintId] ?? 0;
+        if (current === value) return prev;
+        const nextRow = { ...prevRow, [sprintId]: value };
+        const nextTask = { ...prevTask, [participantId]: nextRow };
+        return { ...prev, [taskId]: nextTask };
+      });
+    },
+    []
+  );
+
+  const commitCell = React.useCallback(
+    (
+      taskId: string,
+      participantId: string,
+      sprintId: string,
+      value: number
+    ) => {
+      upsertTaskAllocation({
+        taskId,
+        participantId,
+        sprintId,
+        days: toInt(Number(value) || 0),
+      })
+        .unwrap()
+        .catch((error) => {
+          console.error("Failed to save allocation", error);
+        });
+    },
+    [upsertTaskAllocation]
+  );
 
   const getRowsForParticipant = (pid: string) => {
     const rows = tasks
@@ -188,7 +291,11 @@ export default function ParticipantWorkloadPage() {
       .map((t) => ({
         task: t,
         perSprint: sprintsInScope.map((s) =>
-          toInt(t.allocations?.[pid]?.[s.id] ?? 0)
+          toInt(
+            allocations[t.id]?.[pid]?.[s.id] ??
+              t.allocations?.[pid]?.[s.id] ??
+              0
+          )
         ),
       }));
     return rows as { task: BacklogItem; perSprint: number[] }[];
@@ -294,143 +401,170 @@ export default function ParticipantWorkloadPage() {
         ]}
       />
 
-          <Stack spacing={2}>
-            {participantsInScope.map((p) => {
-              const rows = getRowsForParticipant(p.id);
-              const totalsBySprint = sprintsInScope.map((_, idx) =>
-                rows.reduce((sum, r) => sum + r.perSprint[idx], 0)
-              );
+      <Stack spacing={2}>
+        {participantsInScope.map((p) => {
+          const rows = getRowsForParticipant(p.id);
+          const totalsBySprint = sprintsInScope.map((_, idx) =>
+            rows.reduce((sum, r) => sum + r.perSprint[idx], 0)
+          );
 
-              return (
-                <Paper key={p.id} variant="outlined" sx={{ p: 2 }}>
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    spacing={1}
-                    sx={{ mb: 1 }}
-                  >
-                    <Chip label={p.role} size="small" />
-                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                      {p.fullName}
-                    </Typography>
-                  </Stack>
+          return (
+            <Paper key={p.id} variant="outlined" sx={{ p: 2 }}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={1}
+                sx={{ mb: 1 }}
+              >
+                <Chip label={p.role} size="small" />
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                  {p.fullName}
+                </Typography>
+              </Stack>
 
-                  <TableContainer component={Paper} variant="outlined">
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell sx={{ minWidth: 260, maxWidth: 360, width: 360 }}>
-                            Задача
-                          </TableCell>
-                          {sprintsInScope.map((s) => (
-                            <TableCell key={s.id} align="center">
-                              <Typography
-                                variant="caption"
-                                sx={{ fontWeight: 700 }}
+              <TableContainer component={Paper} variant="outlined">
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell
+                        sx={{ minWidth: 260, maxWidth: 360, width: 360 }}
+                      >
+                        Задача
+                      </TableCell>
+                      {sprintsInScope.map((s) => (
+                        <TableCell key={s.id} align="center">
+                          <Typography
+                            variant="caption"
+                            sx={{ fontWeight: 700 }}
+                          >
+                            {s.startDate} → {s.endDate}
+                          </Typography>
+                          <br />
+                          <Typography variant="caption" color="text.secondary">
+                            {s.name}
+                          </Typography>
+                        </TableCell>
+                      ))}
+                      <TableCell align="center" sx={{ fontWeight: 700 }}>
+                        Итого
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {rows.map((r) => {
+                      const total = r.perSprint.reduce((a, b) => a + b, 0);
+                      return (
+                        <TableRow key={`${p.id}-${r.task.id}`}>
+                          <TableCell>
+                            <Stack
+                              direction="row"
+                              spacing={1}
+                              alignItems="center"
+                            >
+                              <Chip
+                                size="small"
+                                label={r.task.priority}
+                                color="default"
+                                sx={{
+                                  bgcolor: "grey.200",
+                                  color: "text.primary",
+                                  borderColor: "grey.300",
+                                }}
+                              />
+                              <Tooltip
+                                title={r.task.title}
+                                placement="top"
+                                arrow
                               >
-                                {s.startDate} → {s.endDate}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {s.name}
-                              </Typography>
-                            </TableCell>
-                          ))}
+                                <Typography
+                                  sx={{
+                                    display: "-webkit-box",
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: "vertical",
+                                    overflow: "hidden",
+                                    wordBreak: "break-word",
+                                    maxWidth: 300,
+                                  }}
+                                >
+                                  {r.task.title}
+                                </Typography>
+                              </Tooltip>
+                            </Stack>
+                          </TableCell>
+                          {sprintsInScope.map((s, i) => {
+                            const v = r.perSprint[i] ?? 0;
+                            return (
+                              <TableCell
+                                key={`${p.id}-${r.task.id}-${s.id}`}
+                                align="center"
+                              >
+                                <EditableNumberCell
+                                  value={v}
+                                  onChange={(next) =>
+                                    handleAllocChange(
+                                      r.task.id,
+                                      p.id,
+                                      s.id,
+                                      next
+                                    )
+                                  }
+                                  onCommit={(next) =>
+                                    commitCell(r.task.id, p.id, s.id, next)
+                                  }
+                                  title={`${r.task.title} / ${s.name}`}
+                                />
+                              </TableCell>
+                            );
+                          })}
                           <TableCell align="center" sx={{ fontWeight: 700 }}>
-                            Итого
+                            {total}
                           </TableCell>
                         </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {rows.map((r) => {
-                          const total = r.perSprint.reduce((a, b) => a + b, 0);
-                          return (
-                            <TableRow key={`${p.id}-${r.task.id}`}>
-                              <TableCell>
-                                <Stack
-                                  direction="row"
-                                  spacing={1}
-                                  alignItems="center"
-                                >
-                                  <Chip
-                                    size="small"
-                                    label={r.task.priority}
-                                    color="default"
-                                    sx={{
-                                      bgcolor: "grey.200",
-                                      color: "text.primary",
-                                      borderColor: "grey.300",
-                                    }}
-                                  />
-                                  <Tooltip title={r.task.title} placement="top" arrow>
-                                    <Typography
-                                      sx={{
-                                        display: "-webkit-box",
-                                        WebkitLineClamp: 2,
-                                        WebkitBoxOrient: "vertical",
-                                        overflow: "hidden",
-                                        wordBreak: "break-word",
-                                        maxWidth: 300,
-                                      }}
-                                    >
-                                      {r.task.title}
-                                    </Typography>
-                                  </Tooltip>
-                                </Stack>
-                              </TableCell>
-                              {r.perSprint.map((v, i) => (
-                                <TableCell key={`${p.id}-${r.task.id}-${i}`} align="center">
-                                  {v}
-                                </TableCell>
-                              ))}
-                              <TableCell align="center" sx={{ fontWeight: 700 }}>
-                                {total}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                        {rows.length > 0 && (
-                          <TableRow>
-                            <TableCell sx={{ fontWeight: 700 }}>
-                              Итого по спринтам
-                            </TableCell>
-                            {totalsBySprint.map((v, i) => (
-                              <TableCell
-                                key={i}
-                                align="center"
-                                sx={{ fontWeight: 700 }}
-                              >
-                                {v}
-                              </TableCell>
-                            ))}
-                            <TableCell align="center" sx={{ fontWeight: 700 }}>
-                              {totalsBySprint.reduce((a, b) => a + b, 0)}
-                            </TableCell>
-                          </TableRow>
-                        )}
-                        {rows.length === 0 && (
-                          <TableRow>
-                            <TableCell
-                              colSpan={sprintsInScope.length + 2}
-                              align="center"
-                              sx={{ color: "text.secondary" }}
-                            >
-                              Нет задач по выбранным фильтрам
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </Paper>
-              );
-            })}
+                      );
+                    })}
+                    {rows.length > 0 && (
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 700 }}>
+                          Итого по спринтам
+                        </TableCell>
+                        {totalsBySprint.map((v, i) => (
+                          <TableCell
+                            key={i}
+                            align="center"
+                            sx={{ fontWeight: 700 }}
+                          >
+                            {v}
+                          </TableCell>
+                        ))}
+                        <TableCell align="center" sx={{ fontWeight: 700 }}>
+                          {totalsBySprint.reduce((a, b) => a + b, 0)}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {rows.length === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={sprintsInScope.length + 2}
+                          align="center"
+                          sx={{ color: "text.secondary" }}
+                        >
+                          Нет задач по выбранным фильтрам
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Paper>
+          );
+        })}
 
-            {!participantsInScope.length && (
-              <Typography sx={{ color: "text.secondary" }}>
-                Нет участников по выбранным фильтрам
-              </Typography>
-            )}
-          </Stack>
+        {!participantsInScope.length && (
+          <Typography sx={{ color: "text.secondary" }}>
+            Нет участников по выбранным фильтрам
+          </Typography>
+        )}
+      </Stack>
     </Paper>
   );
 }

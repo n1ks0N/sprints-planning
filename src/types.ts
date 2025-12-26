@@ -76,6 +76,11 @@ export type BacklogItem = {
   updatedAt: string;
 };
 
+export type Allocations = Record<
+  string,
+  Record<string, Record<string, number>>
+>;
+
 export type PageInfo = {
   size: number;
   number: number;
