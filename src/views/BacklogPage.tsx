@@ -1531,11 +1531,26 @@ export default function BacklogPage() {
   );
 
   const totalPages = fetchedTasksPage?.page?.totalPages;
+  const totalTasksCount = fetchedTasksPage?.page?.totalElements ?? 0;
 
-  const hasMoreTasks = React.useMemo(() => {
-    if (!totalPages || !Number.isFinite(totalPages)) return true;
-    return effectiveTasksPageNumber + 1 < totalPages;
-  }, [effectiveTasksPageNumber, totalPages]);
+  const hasMoreTasks = React.useMemo(
+    () => fetchedTasks.length < totalTasksCount,
+    [fetchedTasks.length, totalTasksCount]
+  );
+
+  const loadNextTasksPage = React.useCallback(
+    (page: number) => {
+      setTasksPageNumber(() => {
+        if (typeof totalPages === "number") {
+          const maxPage = Math.max(0, totalPages - 1);
+          return page < maxPage ? page + 1 : page;
+        }
+
+        return page + 1;
+      });
+    },
+    [totalPages]
+  );
 
   React.useEffect(() => {
     const handleScroll = () => {
@@ -1547,19 +1562,17 @@ export default function BacklogPage() {
         return;
       }
 
-      setTasksPageNumber((prev) => {
-        if (typeof totalPages === "number") {
-          const maxPage = Math.max(0, totalPages - 1);
-          return prev < maxPage ? prev + 1 : prev;
-        }
-
-        return prev + 1;
-      });
+      loadNextTasksPage(effectiveTasksPageNumber);
     };
 
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [hasMoreTasks, isFetching, fetchedTasksPage, totalPages]);
+  }, [
+    effectiveTasksPageNumber,
+    hasMoreTasks,
+    isFetching,
+    loadNextTasksPage,
+  ]);
 
   const allTasks = React.useMemo(
     () =>
@@ -1914,6 +1927,7 @@ export default function BacklogPage() {
     return withOrder;
   }, [deferredTasks, deferredStatusFilter, pinnedTaskId]);
 
+  const displayedTasksCount = filteredTasks.length;
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
@@ -2685,6 +2699,27 @@ export default function BacklogPage() {
             ) : null}
           </DragOverlay>
         </DndContext>
+
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1}
+          alignItems={{ xs: "flex-start", sm: "center" }}
+          justifyContent="space-between"
+        >
+          <Typography variant="body2" color="text.secondary">
+            Загружено {displayedTasksCount} задач из {totalTasksCount}
+          </Typography>
+          <Button
+            variant="outlined"
+            onClick={() => {
+              if (fetchedTasks.length >= totalTasksCount || isFetching) return;
+              loadNextTasksPage(effectiveTasksPageNumber);
+            }}
+            disabled={fetchedTasks.length >= totalTasksCount || isFetching}
+          >
+            {isFetching ? "Загрузка..." : "Загрузить еще"}
+          </Button>
+        </Stack>
 
         <Divider />
 
