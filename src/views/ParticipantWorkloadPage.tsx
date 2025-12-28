@@ -22,9 +22,22 @@ import {
 } from "../app/api";
 import EditableNumberCell from "../components/EditableNumberCell";
 import type { Sprint, BacklogItem, Allocations } from "../types";
-import { setParticipantWorkloadFilters } from "../app/uiSlice";
+import {
+  getDefaultUIState,
+  setParticipantWorkloadFilters,
+} from "../app/uiSlice";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAppDispatch, useAppSelector } from "./hooks";
+import {
+  hasAnyParams,
+  parseNumberArrayParam,
+  parseStringArrayParam,
+  parseStringParam,
+  setNumberArrayParam,
+  setStringArrayParam,
+  setStringParam,
+} from "./filterUrl";
+import { useSearchParams } from "react-router-dom";
 
 function byStart(a: Sprint, b: Sprint) {
   return a.startDate.localeCompare(b.startDate);
@@ -42,7 +55,196 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
 
 export default function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
+  const [searchParams, setSearchParams] = useSearchParams();
   const ui = useAppSelector((s) => s.ui.participantWorkload);
+  const defaultFilters = React.useMemo(
+    () => getDefaultUIState().participantWorkload,
+    []
+  );
+  const filterParamKeys = React.useMemo(
+    () => [
+      "selectedQuarterIds",
+      "selectedParticipantIds",
+      "rolesFilter",
+      "userStreamsFilter",
+      "priorityFilter",
+      "taskStreamFilter",
+    ],
+    []
+  );
+  const hasInitializedUrlSync = React.useRef(false);
+
+  const buildDefaultFilters = React.useCallback(() => {
+    const defaults = getDefaultUIState().participantWorkload;
+    return {
+      selectedQuarterIds: defaults.selectedQuarterIds.slice(),
+      selectedParticipantIds: defaults.selectedParticipantIds.slice(),
+      rolesFilter: defaults.rolesFilter.slice(),
+      userStreamsFilter: defaults.userStreamsFilter.slice(),
+      priorityFilter: defaults.priorityFilter.slice(),
+      taskStreamFilter: defaults.taskStreamFilter,
+    };
+  }, []);
+
+  const applyFiltersFromParams = React.useCallback(
+    (params: URLSearchParams) => {
+      const nextSelectedQuarterIds = parseStringArrayParam(
+        params,
+        "selectedQuarterIds"
+      );
+      const nextSelectedParticipantIds = parseStringArrayParam(
+        params,
+        "selectedParticipantIds"
+      );
+      const nextRoles = parseStringArrayParam(params, "rolesFilter");
+      const nextUserStreams = parseStringArrayParam(params, "userStreamsFilter");
+      const parsedPriority = parseNumberArrayParam(params, "priorityFilter").filter(
+        (n): n is number => [1, 2, 3].includes(n)
+      );
+      const nextPriority =
+        parsedPriority.length > 0
+          ? parsedPriority
+          : defaultFilters.priorityFilter;
+      const nextTaskStream = parseStringParam(
+        params,
+        "taskStreamFilter",
+        defaultFilters.taskStreamFilter
+      );
+
+      if (
+        shallowArrayEqual(nextSelectedQuarterIds, ui.selectedQuarterIds) &&
+        shallowArrayEqual(
+          nextSelectedParticipantIds,
+          ui.selectedParticipantIds
+        ) &&
+        shallowArrayEqual(nextRoles, ui.rolesFilter) &&
+        shallowArrayEqual(nextUserStreams, ui.userStreamsFilter) &&
+        shallowArrayEqual(nextPriority, ui.priorityFilter) &&
+        nextTaskStream === ui.taskStreamFilter
+      ) {
+        return;
+      }
+
+      dispatch(
+        setParticipantWorkloadFilters({
+          selectedQuarterIds: nextSelectedQuarterIds,
+          selectedParticipantIds: nextSelectedParticipantIds,
+          rolesFilter: nextRoles,
+          userStreamsFilter: nextUserStreams,
+          priorityFilter: nextPriority,
+          taskStreamFilter: nextTaskStream,
+        })
+      );
+    },
+    [defaultFilters, dispatch, ui]
+  );
+
+  const syncFiltersToUrl = React.useCallback(
+    (params: URLSearchParams) => {
+      setStringArrayParam(
+        params,
+        "selectedQuarterIds",
+        ui.selectedQuarterIds,
+        defaultFilters.selectedQuarterIds
+      );
+      setStringArrayParam(
+        params,
+        "selectedParticipantIds",
+        ui.selectedParticipantIds,
+        defaultFilters.selectedParticipantIds
+      );
+      setStringArrayParam(
+        params,
+        "rolesFilter",
+        ui.rolesFilter,
+        defaultFilters.rolesFilter
+      );
+      setStringArrayParam(
+        params,
+        "userStreamsFilter",
+        ui.userStreamsFilter,
+        defaultFilters.userStreamsFilter
+      );
+      setNumberArrayParam(
+        params,
+        "priorityFilter",
+        ui.priorityFilter,
+        defaultFilters.priorityFilter
+      );
+      setStringParam(
+        params,
+        "taskStreamFilter",
+        ui.taskStreamFilter,
+        defaultFilters.taskStreamFilter
+      );
+    },
+    [defaultFilters, ui]
+  );
+
+  React.useEffect(() => {
+    if (hasInitializedUrlSync.current) return;
+    if (hasAnyParams(searchParams, filterParamKeys)) {
+      applyFiltersFromParams(searchParams);
+    } else {
+      const nextParams = new URLSearchParams(searchParams);
+      syncFiltersToUrl(nextParams);
+      if (nextParams.toString() !== searchParams.toString()) {
+        setSearchParams(nextParams, { replace: true });
+      }
+    }
+    hasInitializedUrlSync.current = true;
+  }, [
+    applyFiltersFromParams,
+    filterParamKeys,
+    searchParams,
+    setSearchParams,
+    syncFiltersToUrl,
+  ]);
+
+  React.useEffect(() => {
+    if (!hasInitializedUrlSync.current) return;
+    if (!hasAnyParams(searchParams, filterParamKeys)) {
+      const defaults = buildDefaultFilters();
+      if (
+        !shallowArrayEqual(
+          ui.selectedQuarterIds,
+          defaults.selectedQuarterIds
+        ) ||
+        !shallowArrayEqual(
+          ui.selectedParticipantIds,
+          defaults.selectedParticipantIds
+        ) ||
+        !shallowArrayEqual(ui.rolesFilter, defaults.rolesFilter) ||
+        !shallowArrayEqual(ui.userStreamsFilter, defaults.userStreamsFilter) ||
+        !shallowArrayEqual(ui.priorityFilter, defaults.priorityFilter) ||
+        ui.taskStreamFilter !== defaults.taskStreamFilter
+      ) {
+        dispatch(setParticipantWorkloadFilters(defaults));
+      }
+      return;
+    }
+    applyFiltersFromParams(searchParams);
+  }, [
+    applyFiltersFromParams,
+    buildDefaultFilters,
+    dispatch,
+    filterParamKeys,
+    searchParams,
+    ui,
+  ]);
+
+  React.useEffect(() => {
+    if (!hasInitializedUrlSync.current) return;
+    const nextParams = new URLSearchParams(searchParams);
+    syncFiltersToUrl(nextParams);
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams, syncFiltersToUrl]);
+
+  const handleResetFilters = React.useCallback(() => {
+    dispatch(setParticipantWorkloadFilters(buildDefaultFilters()));
+  }, [buildDefaultFilters, dispatch]);
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [allocations, setAllocations] = React.useState<Allocations>({});
 
@@ -310,6 +512,7 @@ export default function ParticipantWorkloadPage() {
       <FiltersPanel
         withPaper={false}
         containerSx={{ mb: 2 }}
+        onReset={handleResetFilters}
         filters={[
           {
             type: "autocomplete",

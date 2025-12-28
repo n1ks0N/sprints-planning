@@ -23,7 +23,17 @@ import {
 import type { Participant, Quarter, Sprint, CapacityCell } from "../types";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAppDispatch, useAppSelector } from "./hooks";
-import { setCapacityFilters, setCapacitySelectedQuarterIds } from "../app/uiSlice";
+import {
+  getDefaultUIState,
+  setCapacityFilters,
+  setCapacitySelectedQuarterIds,
+} from "../app/uiSlice";
+import {
+  hasAnyParams,
+  parseStringArrayParam,
+  setStringArrayParam,
+} from "./filterUrl";
+import { useSearchParams } from "react-router-dom";
 
 moment.locale("ru");
 
@@ -88,6 +98,7 @@ export default function CapacityPage() {
     useGetSprintsQuery(undefined);
   const { data: participantList = [] } = useGetParticipantsQuery();
   const dispatch = useAppDispatch();
+  const [searchParams, setSearchParams] = useSearchParams();
   const capacityFilters = useAppSelector((state) => state.ui.capacity);
   const {
     selectedQuarterIds,
@@ -95,6 +106,166 @@ export default function CapacityPage() {
     rolesFilter,
     userStreamsFilter,
   } = capacityFilters;
+  const defaultFilters = React.useMemo(() => getDefaultUIState().capacity, []);
+  const filterParamKeys = React.useMemo(
+    () => [
+      "selectedQuarterIds",
+      "selectedParticipantIds",
+      "rolesFilter",
+      "userStreamsFilter",
+    ],
+    []
+  );
+  const hasInitializedUrlSync = React.useRef(false);
+
+  const buildDefaultFilters = React.useCallback(() => {
+    const defaults = getDefaultUIState().capacity;
+    return {
+      selectedQuarterIds: defaults.selectedQuarterIds.slice(),
+      selectedParticipantIds: defaults.selectedParticipantIds.slice(),
+      rolesFilter: defaults.rolesFilter.slice(),
+      userStreamsFilter: defaults.userStreamsFilter.slice(),
+    };
+  }, []);
+
+  const applyFiltersFromParams = React.useCallback(
+    (params: URLSearchParams) => {
+      const nextQuarterIds = parseStringArrayParam(params, "selectedQuarterIds");
+      const nextParticipantIds = parseStringArrayParam(
+        params,
+        "selectedParticipantIds"
+      );
+      const nextRoles = parseStringArrayParam(params, "rolesFilter");
+      const nextUserStreams = parseStringArrayParam(params, "userStreamsFilter");
+
+      if (
+        shallowStringArrayEqual(nextQuarterIds, selectedQuarterIds) &&
+        shallowStringArrayEqual(nextParticipantIds, selectedParticipantIds) &&
+        shallowStringArrayEqual(nextRoles, rolesFilter) &&
+        shallowStringArrayEqual(nextUserStreams, userStreamsFilter)
+      ) {
+        return;
+      }
+
+      dispatch(
+        setCapacityFilters({
+          selectedQuarterIds: nextQuarterIds,
+          selectedParticipantIds: nextParticipantIds,
+          rolesFilter: nextRoles,
+          userStreamsFilter: nextUserStreams,
+        })
+      );
+    },
+    [
+      dispatch,
+      rolesFilter,
+      selectedParticipantIds,
+      selectedQuarterIds,
+      userStreamsFilter,
+    ]
+  );
+
+  const syncFiltersToUrl = React.useCallback(
+    (params: URLSearchParams) => {
+      setStringArrayParam(
+        params,
+        "selectedQuarterIds",
+        selectedQuarterIds,
+        defaultFilters.selectedQuarterIds
+      );
+      setStringArrayParam(
+        params,
+        "selectedParticipantIds",
+        selectedParticipantIds,
+        defaultFilters.selectedParticipantIds
+      );
+      setStringArrayParam(
+        params,
+        "rolesFilter",
+        rolesFilter,
+        defaultFilters.rolesFilter
+      );
+      setStringArrayParam(
+        params,
+        "userStreamsFilter",
+        userStreamsFilter,
+        defaultFilters.userStreamsFilter
+      );
+    },
+    [
+      defaultFilters,
+      rolesFilter,
+      selectedParticipantIds,
+      selectedQuarterIds,
+      userStreamsFilter,
+    ]
+  );
+
+  React.useEffect(() => {
+    if (hasInitializedUrlSync.current) return;
+    if (hasAnyParams(searchParams, filterParamKeys)) {
+      applyFiltersFromParams(searchParams);
+    } else {
+      const nextParams = new URLSearchParams(searchParams);
+      syncFiltersToUrl(nextParams);
+      if (nextParams.toString() !== searchParams.toString()) {
+        setSearchParams(nextParams, { replace: true });
+      }
+    }
+    hasInitializedUrlSync.current = true;
+  }, [
+    applyFiltersFromParams,
+    filterParamKeys,
+    searchParams,
+    setSearchParams,
+    syncFiltersToUrl,
+  ]);
+
+  React.useEffect(() => {
+    if (!hasInitializedUrlSync.current) return;
+    if (!hasAnyParams(searchParams, filterParamKeys)) {
+      const defaults = buildDefaultFilters();
+      if (
+        !shallowStringArrayEqual(selectedQuarterIds, defaults.selectedQuarterIds) ||
+        !shallowStringArrayEqual(
+          selectedParticipantIds,
+          defaults.selectedParticipantIds
+        ) ||
+        !shallowStringArrayEqual(rolesFilter, defaults.rolesFilter) ||
+        !shallowStringArrayEqual(
+          userStreamsFilter,
+          defaults.userStreamsFilter
+        )
+      ) {
+        dispatch(setCapacityFilters(defaults));
+      }
+      return;
+    }
+    applyFiltersFromParams(searchParams);
+  }, [
+    applyFiltersFromParams,
+    buildDefaultFilters,
+    dispatch,
+    filterParamKeys,
+    rolesFilter,
+    searchParams,
+    selectedParticipantIds,
+    selectedQuarterIds,
+    userStreamsFilter,
+  ]);
+
+  React.useEffect(() => {
+    if (!hasInitializedUrlSync.current) return;
+    const nextParams = new URLSearchParams(searchParams);
+    syncFiltersToUrl(nextParams);
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams, syncFiltersToUrl]);
+
+  const handleResetFilters = React.useCallback(() => {
+    dispatch(setCapacityFilters(buildDefaultFilters()));
+  }, [buildDefaultFilters, dispatch]);
 
   const { data: capacityRows = [], isLoading: isCapacityLoading } =
     useGetCapacityQuery({
@@ -248,6 +419,7 @@ export default function CapacityPage() {
           <FiltersPanel
             withPaper={false}
             containerSx={{ mb: 1 }}
+            onReset={handleResetFilters}
             gridSx={{
               gridTemplateColumns: {
                 xs: "repeat(auto-fit, minmax(240px, 1fr))",

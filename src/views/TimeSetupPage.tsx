@@ -34,7 +34,9 @@ import {
 import type { Quarter, Sprint } from "../types";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 import { useAppDispatch, useAppSelector } from "./hooks";
-import { setTimeSelectedQuarterIds } from "../app/uiSlice";
+import { getDefaultUIState, setTimeSelectedQuarterIds } from "../app/uiSlice";
+import { hasAnyParams, parseStringArrayParam, setStringArrayParam } from "./filterUrl";
+import { useSearchParams } from "react-router-dom";
 
 moment.locale("ru");
 
@@ -138,9 +140,13 @@ export default function TimeSetupPage() {
   const [deleteSprint] = useDeleteSprintMutation();
 
   const dispatch = useAppDispatch();
+  const [searchParams, setSearchParams] = useSearchParams();
   const selectedQuarterIds = useAppSelector(
     (state) => state.ui.time.selectedQuarterIds
   );
+  const defaultFilters = React.useMemo(() => getDefaultUIState().time, []);
+  const filterParamKeys = React.useMemo(() => ["selectedQuarterIds"], []);
+  const hasInitializedUrlSync = React.useRef(false);
   const [hidePast, setHidePast] = React.useState<boolean>(() => {
     try {
       const hpRaw = localStorage.getItem(LS_HIDE_PAST);
@@ -150,6 +156,86 @@ export default function TimeSetupPage() {
       return true;
     }
   });
+
+  const buildDefaultFilters = React.useCallback(() => {
+    const defaults = getDefaultUIState().time;
+    return {
+      selectedQuarterIds: defaults.selectedQuarterIds.slice(),
+    };
+  }, []);
+
+  const applyFiltersFromParams = React.useCallback(
+    (params: URLSearchParams) => {
+      const nextSelected = parseStringArrayParam(params, "selectedQuarterIds");
+      if (shallowStringArrayEqual(nextSelected, selectedQuarterIds)) return;
+      dispatch(setTimeSelectedQuarterIds(nextSelected));
+    },
+    [dispatch, selectedQuarterIds]
+  );
+
+  const syncFiltersToUrl = React.useCallback(
+    (params: URLSearchParams) => {
+      setStringArrayParam(
+        params,
+        "selectedQuarterIds",
+        selectedQuarterIds,
+        defaultFilters.selectedQuarterIds
+      );
+    },
+    [defaultFilters, selectedQuarterIds]
+  );
+
+  React.useEffect(() => {
+    if (hasInitializedUrlSync.current) return;
+    if (hasAnyParams(searchParams, filterParamKeys)) {
+      applyFiltersFromParams(searchParams);
+    } else {
+      const nextParams = new URLSearchParams(searchParams);
+      syncFiltersToUrl(nextParams);
+      if (nextParams.toString() !== searchParams.toString()) {
+        setSearchParams(nextParams, { replace: true });
+      }
+    }
+    hasInitializedUrlSync.current = true;
+  }, [
+    applyFiltersFromParams,
+    filterParamKeys,
+    searchParams,
+    setSearchParams,
+    syncFiltersToUrl,
+  ]);
+
+  React.useEffect(() => {
+    if (!hasInitializedUrlSync.current) return;
+    if (!hasAnyParams(searchParams, filterParamKeys)) {
+      const defaults = buildDefaultFilters();
+      if (!shallowStringArrayEqual(selectedQuarterIds, defaults.selectedQuarterIds)) {
+        dispatch(setTimeSelectedQuarterIds(defaults.selectedQuarterIds));
+      }
+      return;
+    }
+    applyFiltersFromParams(searchParams);
+  }, [
+    applyFiltersFromParams,
+    buildDefaultFilters,
+    dispatch,
+    filterParamKeys,
+    searchParams,
+    selectedQuarterIds,
+  ]);
+
+  React.useEffect(() => {
+    if (!hasInitializedUrlSync.current) return;
+    const nextParams = new URLSearchParams(searchParams);
+    syncFiltersToUrl(nextParams);
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams, syncFiltersToUrl]);
+
+  const handleResetFilters = React.useCallback(() => {
+    dispatch(setTimeSelectedQuarterIds(buildDefaultFilters().selectedQuarterIds));
+  }, [buildDefaultFilters, dispatch]);
 
   React.useEffect(() => {
     if (!quarters.length) return;
@@ -1002,6 +1088,20 @@ export default function TimeSetupPage() {
           label="Скрыть прошедшие"
           sx={{ whiteSpace: "nowrap" }}
         />
+
+        <Button
+          size="small"
+          variant="text"
+          color="inherit"
+          onClick={handleResetFilters}
+          sx={{
+            color: "text.secondary",
+            textTransform: "none",
+            ml: { xs: 0, md: "auto" },
+          }}
+        >
+          Сбросить фильтр
+        </Button>
       </Stack>
 
       <Stack spacing={2}>

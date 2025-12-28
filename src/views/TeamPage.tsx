@@ -29,9 +29,14 @@ import {
   useReorderParticipantsMutation,
 } from "../app/api";
 import type { Participant } from "../types";
-import { setTeamFilters } from "../app/uiSlice";
+import { getDefaultUIState, setTeamFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import FiltersPanel from "../components/filters/FiltersPanel";
+import {
+  hasAnyParams,
+  parseStringArrayParam,
+  setStringArrayParam,
+} from "./filterUrl";
 
 import {
   DndContext,
@@ -48,6 +53,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useSearchParams } from "react-router-dom";
 
 const PRESET_ROLES = ["UI", "FE", "BE", "QA", "BA", "CA", "PY"];
 const PRESET_RATES = [1, 0.75, 0.5, 0.25];
@@ -122,9 +128,132 @@ export default function TeamPage() {
   const [deleteParticipant] = useDeleteParticipantMutation();
   const [reorderParticipants] = useReorderParticipantsMutation();
   const dispatch = useAppDispatch();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { filterRoles, filterRates, filterUserStreams } = useAppSelector(
     (s) => s.ui.team
   );
+  const defaultFilters = React.useMemo(() => getDefaultUIState().team, []);
+  const filterParamKeys = React.useMemo(
+    () => ["filterRoles", "filterRates", "filterUserStreams"],
+    []
+  );
+  const hasInitializedUrlSync = React.useRef(false);
+
+  const buildDefaultFilters = React.useCallback(() => {
+    const defaults = getDefaultUIState().team;
+    return {
+      filterRoles: defaults.filterRoles.slice(),
+      filterRates: defaults.filterRates.slice(),
+      filterUserStreams: defaults.filterUserStreams.slice(),
+    };
+  }, []);
+
+  const applyFiltersFromParams = React.useCallback(
+    (params: URLSearchParams) => {
+      const nextRoles = parseStringArrayParam(params, "filterRoles");
+      const nextRates = parseStringArrayParam(params, "filterRates");
+      const nextStreams = parseStringArrayParam(params, "filterUserStreams");
+
+      if (
+        shallowArrayEqual(nextRoles, filterRoles) &&
+        shallowArrayEqual(nextRates, filterRates) &&
+        shallowArrayEqual(nextStreams, filterUserStreams)
+      ) {
+        return;
+      }
+
+      dispatch(
+        setTeamFilters({
+          filterRoles: nextRoles,
+          filterRates: nextRates,
+          filterUserStreams: nextStreams,
+        })
+      );
+    },
+    [dispatch, filterRates, filterRoles, filterUserStreams]
+  );
+
+  const syncFiltersToUrl = React.useCallback(
+    (params: URLSearchParams) => {
+      setStringArrayParam(
+        params,
+        "filterRoles",
+        filterRoles,
+        defaultFilters.filterRoles
+      );
+      setStringArrayParam(
+        params,
+        "filterRates",
+        filterRates,
+        defaultFilters.filterRates
+      );
+      setStringArrayParam(
+        params,
+        "filterUserStreams",
+        filterUserStreams,
+        defaultFilters.filterUserStreams
+      );
+    },
+    [defaultFilters, filterRates, filterRoles, filterUserStreams]
+  );
+
+  React.useEffect(() => {
+    if (hasInitializedUrlSync.current) return;
+    if (hasAnyParams(searchParams, filterParamKeys)) {
+      applyFiltersFromParams(searchParams);
+    } else {
+      const nextParams = new URLSearchParams(searchParams);
+      syncFiltersToUrl(nextParams);
+      if (nextParams.toString() !== searchParams.toString()) {
+        setSearchParams(nextParams, { replace: true });
+      }
+    }
+    hasInitializedUrlSync.current = true;
+  }, [
+    applyFiltersFromParams,
+    filterParamKeys,
+    searchParams,
+    setSearchParams,
+    syncFiltersToUrl,
+  ]);
+
+  React.useEffect(() => {
+    if (!hasInitializedUrlSync.current) return;
+    if (!hasAnyParams(searchParams, filterParamKeys)) {
+      const defaults = buildDefaultFilters();
+      if (
+        !shallowArrayEqual(filterRoles, defaults.filterRoles) ||
+        !shallowArrayEqual(filterRates, defaults.filterRates) ||
+        !shallowArrayEqual(filterUserStreams, defaults.filterUserStreams)
+      ) {
+        dispatch(setTeamFilters(defaults));
+      }
+      return;
+    }
+    applyFiltersFromParams(searchParams);
+  }, [
+    applyFiltersFromParams,
+    buildDefaultFilters,
+    dispatch,
+    filterParamKeys,
+    filterRates,
+    filterRoles,
+    filterUserStreams,
+    searchParams,
+  ]);
+
+  React.useEffect(() => {
+    if (!hasInitializedUrlSync.current) return;
+    const nextParams = new URLSearchParams(searchParams);
+    syncFiltersToUrl(nextParams);
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams, syncFiltersToUrl]);
+
+  const handleResetFilters = React.useCallback(() => {
+    dispatch(setTeamFilters(buildDefaultFilters()));
+  }, [buildDefaultFilters, dispatch]);
 
   // Добавление
   const [newName, setNewName] = React.useState("");
@@ -546,6 +675,7 @@ export default function TeamPage() {
       {/* Фильтры */}
       <FiltersPanel
         containerSx={{ mb: 2 }}
+        onReset={handleResetFilters}
         filters={[
           {
             type: "autocomplete",
