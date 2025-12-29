@@ -144,9 +144,8 @@ export default function TimeSetupPage() {
   const selectedQuarterIds = useAppSelector(
     (state) => state.ui.time.selectedQuarterIds
   );
-  const defaultFilters = React.useMemo(() => getDefaultUIState().time, []);
   const filterParamKeys = React.useMemo(() => ["selectedQuarterIds"], []);
-  const hasInitializedUrlSync = React.useRef(false);
+  const lastSyncedQueryRef = React.useRef<string | null>(null);
   const [hidePast, setHidePast] = React.useState<boolean>(() => {
     try {
       const hpRaw = localStorage.getItem(LS_HIDE_PAST);
@@ -175,62 +174,27 @@ export default function TimeSetupPage() {
 
   const syncFiltersToUrl = React.useCallback(
     (params: URLSearchParams) => {
-      setStringArrayParam(
-        params,
-        "selectedQuarterIds",
-        selectedQuarterIds,
-        defaultFilters.selectedQuarterIds
-      );
+      setStringArrayParam(params, "selectedQuarterIds", selectedQuarterIds);
     },
-    [defaultFilters, selectedQuarterIds]
+    [selectedQuarterIds]
   );
 
   React.useEffect(() => {
-    if (hasInitializedUrlSync.current) return;
+    const currentQuery = searchParams.toString();
+    if (lastSyncedQueryRef.current === currentQuery) return;
     if (hasAnyParams(searchParams, filterParamKeys)) {
       applyFiltersFromParams(searchParams);
-    } else {
-      const nextParams = new URLSearchParams(searchParams);
-      syncFiltersToUrl(nextParams);
-      if (nextParams.toString() !== searchParams.toString()) {
-        setSearchParams(nextParams, { replace: true });
-      }
     }
-    hasInitializedUrlSync.current = true;
-  }, [
-    applyFiltersFromParams,
-    filterParamKeys,
-    searchParams,
-    setSearchParams,
-    syncFiltersToUrl,
-  ]);
+    lastSyncedQueryRef.current = currentQuery;
+  }, [applyFiltersFromParams, filterParamKeys, searchParams]);
 
   React.useEffect(() => {
-    if (!hasInitializedUrlSync.current) return;
-    if (!hasAnyParams(searchParams, filterParamKeys)) {
-      const defaults = buildDefaultFilters();
-      if (!shallowStringArrayEqual(selectedQuarterIds, defaults.selectedQuarterIds)) {
-        dispatch(setTimeSelectedQuarterIds(defaults.selectedQuarterIds));
-      }
-      return;
-    }
-    applyFiltersFromParams(searchParams);
-  }, [
-    applyFiltersFromParams,
-    buildDefaultFilters,
-    dispatch,
-    filterParamKeys,
-    searchParams,
-    selectedQuarterIds,
-  ]);
-
-  React.useEffect(() => {
-    if (!hasInitializedUrlSync.current) return;
-    const nextParams = new URLSearchParams(searchParams);
+    const nextParams = new URLSearchParams();
     syncFiltersToUrl(nextParams);
-    if (nextParams.toString() !== searchParams.toString()) {
-      setSearchParams(nextParams, { replace: true });
-    }
+    const nextQuery = nextParams.toString();
+    if (nextQuery === searchParams.toString()) return;
+    lastSyncedQueryRef.current = nextQuery;
+    setSearchParams(nextParams, { replace: true });
   }, [searchParams, setSearchParams, syncFiltersToUrl]);
 
   const handleResetFilters = React.useCallback(() => {

@@ -106,7 +106,6 @@ export default function CapacityPage() {
     rolesFilter,
     userStreamsFilter,
   } = capacityFilters;
-  const defaultFilters = React.useMemo(() => getDefaultUIState().capacity, []);
   const filterParamKeys = React.useMemo(
     () => [
       "selectedQuarterIds",
@@ -116,7 +115,7 @@ export default function CapacityPage() {
     ],
     []
   );
-  const hasInitializedUrlSync = React.useRef(false);
+  const lastSyncedQueryRef = React.useRef<string | null>(null);
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().capacity;
@@ -167,100 +166,34 @@ export default function CapacityPage() {
 
   const syncFiltersToUrl = React.useCallback(
     (params: URLSearchParams) => {
-      setStringArrayParam(
-        params,
-        "selectedQuarterIds",
-        selectedQuarterIds,
-        defaultFilters.selectedQuarterIds
-      );
+      setStringArrayParam(params, "selectedQuarterIds", selectedQuarterIds);
       setStringArrayParam(
         params,
         "selectedParticipantIds",
-        selectedParticipantIds,
-        defaultFilters.selectedParticipantIds
+        selectedParticipantIds
       );
-      setStringArrayParam(
-        params,
-        "rolesFilter",
-        rolesFilter,
-        defaultFilters.rolesFilter
-      );
-      setStringArrayParam(
-        params,
-        "userStreamsFilter",
-        userStreamsFilter,
-        defaultFilters.userStreamsFilter
-      );
+      setStringArrayParam(params, "rolesFilter", rolesFilter);
+      setStringArrayParam(params, "userStreamsFilter", userStreamsFilter);
     },
-    [
-      defaultFilters,
-      rolesFilter,
-      selectedParticipantIds,
-      selectedQuarterIds,
-      userStreamsFilter,
-    ]
+    [rolesFilter, selectedParticipantIds, selectedQuarterIds, userStreamsFilter]
   );
 
   React.useEffect(() => {
-    if (hasInitializedUrlSync.current) return;
+    const currentQuery = searchParams.toString();
+    if (lastSyncedQueryRef.current === currentQuery) return;
     if (hasAnyParams(searchParams, filterParamKeys)) {
       applyFiltersFromParams(searchParams);
-    } else {
-      const nextParams = new URLSearchParams(searchParams);
-      syncFiltersToUrl(nextParams);
-      if (nextParams.toString() !== searchParams.toString()) {
-        setSearchParams(nextParams, { replace: true });
-      }
     }
-    hasInitializedUrlSync.current = true;
-  }, [
-    applyFiltersFromParams,
-    filterParamKeys,
-    searchParams,
-    setSearchParams,
-    syncFiltersToUrl,
-  ]);
+    lastSyncedQueryRef.current = currentQuery;
+  }, [applyFiltersFromParams, filterParamKeys, searchParams]);
 
   React.useEffect(() => {
-    if (!hasInitializedUrlSync.current) return;
-    if (!hasAnyParams(searchParams, filterParamKeys)) {
-      const defaults = buildDefaultFilters();
-      if (
-        !shallowStringArrayEqual(selectedQuarterIds, defaults.selectedQuarterIds) ||
-        !shallowStringArrayEqual(
-          selectedParticipantIds,
-          defaults.selectedParticipantIds
-        ) ||
-        !shallowStringArrayEqual(rolesFilter, defaults.rolesFilter) ||
-        !shallowStringArrayEqual(
-          userStreamsFilter,
-          defaults.userStreamsFilter
-        )
-      ) {
-        dispatch(setCapacityFilters(defaults));
-      }
-      return;
-    }
-    applyFiltersFromParams(searchParams);
-  }, [
-    applyFiltersFromParams,
-    buildDefaultFilters,
-    dispatch,
-    filterParamKeys,
-    rolesFilter,
-    searchParams,
-    selectedParticipantIds,
-    selectedQuarterIds,
-    userStreamsFilter,
-  ]);
-
-  React.useEffect(() => {
-    if (!hasInitializedUrlSync.current) return;
-    const nextParams = new URLSearchParams(searchParams);
+    const nextParams = new URLSearchParams();
     syncFiltersToUrl(nextParams);
-    if (nextParams.toString() !== searchParams.toString()) {
-      setSearchParams(nextParams, { replace: true });
-    }
+    const nextQuery = nextParams.toString();
+    if (nextQuery === searchParams.toString()) return;
+    lastSyncedQueryRef.current = nextQuery;
+    setSearchParams(nextParams, { replace: true });
   }, [searchParams, setSearchParams, syncFiltersToUrl]);
 
   const handleResetFilters = React.useCallback(() => {

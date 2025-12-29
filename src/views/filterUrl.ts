@@ -36,11 +36,10 @@ export function parseNumberArrayParam(params: URLSearchParams, key: string) {
 export function setStringParam(
   params: URLSearchParams,
   key: string,
-  value: string,
-  defaultValue = ""
+  value: string
 ) {
   const normalized = value.trim();
-  if (!normalized || normalized === defaultValue) {
+  if (!normalized) {
     params.delete(key);
   } else {
     params.set(key, normalized);
@@ -50,14 +49,10 @@ export function setStringParam(
 export function setStringArrayParam(
   params: URLSearchParams,
   key: string,
-  values: string[],
-  defaultValues: string[] = []
+  values: string[]
 ) {
   const normalized = Array.from(new Set(normalizeStringArray(values)));
-  if (
-    normalized.length === 0 ||
-    shallowArrayEqual(normalized, defaultValues)
-  ) {
+  if (normalized.length === 0) {
     params.delete(key);
   } else {
     params.set(key, normalized.join(","));
@@ -67,16 +62,12 @@ export function setStringArrayParam(
 export function setNumberArrayParam(
   params: URLSearchParams,
   key: string,
-  values: number[],
-  defaultValues: number[] = []
+  values: number[]
 ) {
   const normalized = Array.from(
     new Set(values.filter((value) => Number.isFinite(value)))
   );
-  if (
-    normalized.length === 0 ||
-    shallowArrayEqual(normalized, defaultValues)
-  ) {
+  if (normalized.length === 0) {
     params.delete(key);
   } else {
     params.set(key, normalized.join(","));

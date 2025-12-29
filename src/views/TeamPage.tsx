@@ -137,7 +137,7 @@ export default function TeamPage() {
     () => ["filterRoles", "filterRates", "filterUserStreams"],
     []
   );
-  const hasInitializedUrlSync = React.useRef(false);
+  const lastSyncedQueryRef = React.useRef<string | null>(null);
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().team;
@@ -175,80 +175,29 @@ export default function TeamPage() {
 
   const syncFiltersToUrl = React.useCallback(
     (params: URLSearchParams) => {
-      setStringArrayParam(
-        params,
-        "filterRoles",
-        filterRoles,
-        defaultFilters.filterRoles
-      );
-      setStringArrayParam(
-        params,
-        "filterRates",
-        filterRates,
-        defaultFilters.filterRates
-      );
-      setStringArrayParam(
-        params,
-        "filterUserStreams",
-        filterUserStreams,
-        defaultFilters.filterUserStreams
-      );
+      setStringArrayParam(params, "filterRoles", filterRoles);
+      setStringArrayParam(params, "filterRates", filterRates);
+      setStringArrayParam(params, "filterUserStreams", filterUserStreams);
     },
-    [defaultFilters, filterRates, filterRoles, filterUserStreams]
+    [filterRates, filterRoles, filterUserStreams]
   );
 
   React.useEffect(() => {
-    if (hasInitializedUrlSync.current) return;
+    const currentQuery = searchParams.toString();
+    if (lastSyncedQueryRef.current === currentQuery) return;
     if (hasAnyParams(searchParams, filterParamKeys)) {
       applyFiltersFromParams(searchParams);
-    } else {
-      const nextParams = new URLSearchParams(searchParams);
-      syncFiltersToUrl(nextParams);
-      if (nextParams.toString() !== searchParams.toString()) {
-        setSearchParams(nextParams, { replace: true });
-      }
     }
-    hasInitializedUrlSync.current = true;
-  }, [
-    applyFiltersFromParams,
-    filterParamKeys,
-    searchParams,
-    setSearchParams,
-    syncFiltersToUrl,
-  ]);
+    lastSyncedQueryRef.current = currentQuery;
+  }, [applyFiltersFromParams, filterParamKeys, searchParams]);
 
   React.useEffect(() => {
-    if (!hasInitializedUrlSync.current) return;
-    if (!hasAnyParams(searchParams, filterParamKeys)) {
-      const defaults = buildDefaultFilters();
-      if (
-        !shallowArrayEqual(filterRoles, defaults.filterRoles) ||
-        !shallowArrayEqual(filterRates, defaults.filterRates) ||
-        !shallowArrayEqual(filterUserStreams, defaults.filterUserStreams)
-      ) {
-        dispatch(setTeamFilters(defaults));
-      }
-      return;
-    }
-    applyFiltersFromParams(searchParams);
-  }, [
-    applyFiltersFromParams,
-    buildDefaultFilters,
-    dispatch,
-    filterParamKeys,
-    filterRates,
-    filterRoles,
-    filterUserStreams,
-    searchParams,
-  ]);
-
-  React.useEffect(() => {
-    if (!hasInitializedUrlSync.current) return;
-    const nextParams = new URLSearchParams(searchParams);
+    const nextParams = new URLSearchParams();
     syncFiltersToUrl(nextParams);
-    if (nextParams.toString() !== searchParams.toString()) {
-      setSearchParams(nextParams, { replace: true });
-    }
+    const nextQuery = nextParams.toString();
+    if (nextQuery === searchParams.toString()) return;
+    lastSyncedQueryRef.current = nextQuery;
+    setSearchParams(nextParams, { replace: true });
   }, [searchParams, setSearchParams, syncFiltersToUrl]);
 
   const handleResetFilters = React.useCallback(() => {
