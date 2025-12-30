@@ -115,7 +115,7 @@ export default function CapacityPage() {
     ],
     []
   );
-  const lastSyncedQueryRef = React.useRef<string | null>(null);
+  const lastAppliedQueryRef = React.useRef<string | null>(null);
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().capacity;
@@ -178,23 +178,42 @@ export default function CapacityPage() {
     [rolesFilter, selectedParticipantIds, selectedQuarterIds, userStreamsFilter]
   );
 
-  React.useEffect(() => {
-    const currentQuery = searchParams.toString();
-    if (lastSyncedQueryRef.current === currentQuery) return;
-    if (hasAnyParams(searchParams, filterParamKeys)) {
-      applyFiltersFromParams(searchParams);
-    }
-    lastSyncedQueryRef.current = currentQuery;
-  }, [applyFiltersFromParams, filterParamKeys, searchParams]);
+  const hasUrlFilters = hasAnyParams(searchParams, filterParamKeys);
+  const hasStoredFilters =
+    selectedQuarterIds.length > 0 ||
+    selectedParticipantIds.length > 0 ||
+    rolesFilter.length > 0 ||
+    userStreamsFilter.length > 0;
 
   React.useEffect(() => {
+    if (!hasUrlFilters) return;
+    const currentQuery = searchParams.toString();
+    if (lastAppliedQueryRef.current === currentQuery) return;
+    applyFiltersFromParams(searchParams);
+    lastAppliedQueryRef.current = currentQuery;
+  }, [applyFiltersFromParams, hasUrlFilters, searchParams]);
+
+  React.useEffect(() => {
+    const currentQuery = searchParams.toString();
+    if (!hasUrlFilters && !hasStoredFilters) {
+      if (!currentQuery) return;
+      lastAppliedQueryRef.current = "";
+      setSearchParams(new URLSearchParams(), { replace: true });
+      return;
+    }
     const nextParams = new URLSearchParams();
     syncFiltersToUrl(nextParams);
     const nextQuery = nextParams.toString();
-    if (nextQuery === searchParams.toString()) return;
-    lastSyncedQueryRef.current = nextQuery;
+    if (nextQuery === currentQuery) return;
+    lastAppliedQueryRef.current = nextQuery;
     setSearchParams(nextParams, { replace: true });
-  }, [searchParams, setSearchParams, syncFiltersToUrl]);
+  }, [
+    hasStoredFilters,
+    hasUrlFilters,
+    searchParams,
+    setSearchParams,
+    syncFiltersToUrl,
+  ]);
 
   const handleResetFilters = React.useCallback(() => {
     dispatch(setCapacityFilters(buildDefaultFilters()));
