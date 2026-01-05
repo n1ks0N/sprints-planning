@@ -73,7 +73,7 @@ export default function ParticipantWorkloadPage() {
     []
   );
   const hasInitializedFiltersRef = React.useRef(false);
-  const pendingUrlSyncRef = React.useRef<string | null>(null);
+  const lastAppliedQueryRef = React.useRef<string | null>(null);
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().participantWorkload;
@@ -172,23 +172,29 @@ export default function ParticipantWorkloadPage() {
 
   React.useEffect(() => {
     const currentQuery = searchParams.toString();
-    if (hasUrlFilters) {
-      pendingUrlSyncRef.current = currentQuery;
-      applyFiltersFromParams(searchParams);
-      hasInitializedFiltersRef.current = true;
-      return;
-    }
+    if (!hasUrlFilters) return;
+    if (lastAppliedQueryRef.current === currentQuery) return;
+    applyFiltersFromParams(searchParams);
+    lastAppliedQueryRef.current = currentQuery;
+    hasInitializedFiltersRef.current = true;
+  }, [
+    applyFiltersFromParams,
+    hasUrlFilters,
+    searchParams,
+  ]);
 
+  React.useEffect(() => {
+    const currentQuery = searchParams.toString();
     if (hasInitializedFiltersRef.current) return;
     hasInitializedFiltersRef.current = true;
+    if (hasUrlFilters) return;
     if (!hasStoredFilters) return;
     const nextParams = buildSearchParams();
     const nextQuery = nextParams.toString();
     if (nextQuery === currentQuery) return;
-    pendingUrlSyncRef.current = nextQuery;
+    lastAppliedQueryRef.current = nextQuery;
     setSearchParams(nextParams, { replace: true });
   }, [
-    applyFiltersFromParams,
     buildSearchParams,
     hasStoredFilters,
     hasUrlFilters,
@@ -199,19 +205,16 @@ export default function ParticipantWorkloadPage() {
   React.useEffect(() => {
     if (!hasInitializedFiltersRef.current) return;
     const currentQuery = searchParams.toString();
-    const nextParams = buildSearchParams();
-    const nextQuery = nextParams.toString();
-    if (nextQuery === currentQuery) {
-      if (pendingUrlSyncRef.current === currentQuery) {
-        pendingUrlSyncRef.current = null;
-      }
+    if (hasUrlFilters && lastAppliedQueryRef.current !== currentQuery) {
       return;
     }
-    if (pendingUrlSyncRef.current === currentQuery) return;
-    pendingUrlSyncRef.current = nextQuery;
+    const nextParams = buildSearchParams();
+    const nextQuery = nextParams.toString();
+    if (nextQuery === currentQuery) return;
     setSearchParams(nextParams, { replace: true });
   }, [
     buildSearchParams,
+    hasUrlFilters,
     searchParams,
     setSearchParams,
   ]);
