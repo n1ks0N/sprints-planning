@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Box, Paper, TextField } from "@mui/material";
+import { Box, Button, Paper, TextField } from "@mui/material";
 import type { PaperProps } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material/styles";
 import FilterAutocomplete from "./FilterAutocomplete";
@@ -34,6 +34,8 @@ export type FiltersPanelProps = {
   paperProps?: PaperProps;
   containerSx?: SxProps<Theme>;
   gridSx?: SxProps<Theme>;
+  onReset?: () => void;
+  resetLabel?: string;
 };
 
 const baseGridSx: SxProps<Theme> = {
@@ -63,52 +65,71 @@ export default function FiltersPanel({
   paperProps,
   containerSx,
   gridSx,
+  onReset,
+  resetLabel = "Сбросить фильтр",
 }: FiltersPanelProps) {
   const content = (
-    <Box sx={mergeSx(baseGridSx, gridSx)}>
-      {filters.map((filter) => {
-        if (filter.type === "autocomplete") {
+    <>
+      <Box sx={mergeSx(baseGridSx, gridSx)}>
+        {filters.map((filter) => {
+          if (filter.type === "autocomplete") {
+            const baseSx = filter.minWidth
+              ? { minWidth: filter.minWidth }
+              : undefined;
+            const sx = baseSx
+              ? mergeSx(baseSx, filter.props.sx)
+              : filter.props.sx;
+            return (
+              <FilterAutocomplete
+                key={filter.key}
+                {...filter.props}
+                sx={sx}
+              />
+            );
+          }
+
+          const { label, value, onChange, onCommit, placeholder, sx } =
+            filter.props;
           const baseSx = filter.minWidth
             ? { minWidth: filter.minWidth }
             : undefined;
-          const sx = baseSx
-            ? mergeSx(baseSx, filter.props.sx)
-            : filter.props.sx;
+          const mergedSx = baseSx ? mergeSx(baseSx, sx) : sx;
+
           return (
-            <FilterAutocomplete
+            <TextField
               key={filter.key}
-              {...filter.props}
-              sx={sx}
+              label={label}
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              onBlur={() => onCommit?.()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                }
+              }}
+              placeholder={placeholder}
+              size="small"
+              fullWidth
+              sx={mergedSx}
             />
           );
-        }
-
-        const { label, value, onChange, onCommit, placeholder, sx } =
-          filter.props;
-        const baseSx = filter.minWidth ? { minWidth: filter.minWidth } : undefined;
-        const mergedSx = baseSx ? mergeSx(baseSx, sx) : sx;
-
-        return (
-          <TextField
-            key={filter.key}
-            label={label}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onBlur={() => onCommit?.()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                e.currentTarget.blur();
-              }
-            }}
-            placeholder={placeholder}
+        })}
+      </Box>
+      {onReset && (
+        <Box sx={{ mt: 1, display: "flex", justifyContent: "flex-end" }}>
+          <Button
             size="small"
-            fullWidth
-            sx={mergedSx}
-          />
-        );
-      })}
-    </Box>
+            variant="text"
+            color="inherit"
+            onClick={onReset}
+            sx={{ color: "text.secondary", textTransform: "none" }}
+          >
+            {resetLabel}
+          </Button>
+        </Box>
+      )}
+    </>
   );
 
   if (!withPaper) {

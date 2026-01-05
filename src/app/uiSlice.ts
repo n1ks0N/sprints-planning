@@ -76,6 +76,10 @@ function defaultState(): UIState {
   };
 }
 
+export function getDefaultUIState(): UIState {
+  return defaultState();
+}
+
 function sanitizeBacklog(
   input: any,
   defaults: UIState["backlog"]
