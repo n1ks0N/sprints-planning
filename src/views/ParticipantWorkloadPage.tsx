@@ -27,9 +27,9 @@ import {
   setParticipantWorkloadFilters,
 } from "../app/uiSlice";
 import FiltersPanel from "../components/filters/FiltersPanel";
+import useFilterUrlSync from "../components/filters/useFilterUrlSync";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import {
-  hasAnyParams,
   parseNumberArrayParam,
   parseStringArrayParam,
   parseStringParam,
@@ -37,7 +37,6 @@ import {
   setStringArrayParam,
   setStringParam,
 } from "./filterUrl";
-import { useSearchParams } from "react-router-dom";
 
 function byStart(a: Sprint, b: Sprint) {
   return a.startDate.localeCompare(b.startDate);
@@ -55,7 +54,6 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
 
 export default function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
-  const [searchParams, setSearchParams] = useSearchParams();
   const ui = useAppSelector((s) => s.ui.participantWorkload);
   const defaultFilters = React.useMemo(
     () => getDefaultUIState().participantWorkload,
@@ -72,8 +70,6 @@ export default function ParticipantWorkloadPage() {
     ],
     []
   );
-  const lastSyncedQueryRef = React.useRef<string | null>(null);
-  const isApplyingUrlRef = React.useRef(false);
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().participantWorkload;
@@ -156,7 +152,6 @@ export default function ParticipantWorkloadPage() {
     [ui]
   );
 
-  const hasUrlFilters = hasAnyParams(searchParams, filterParamKeys);
   const hasStoredFilters =
     ui.selectedQuarterIds.length > 0 ||
     ui.selectedParticipantIds.length > 0 ||
@@ -170,49 +165,12 @@ export default function ParticipantWorkloadPage() {
     return params;
   }, [syncFiltersToUrl]);
 
-  React.useEffect(() => {
-    const currentQuery = searchParams.toString();
-    if (lastSyncedQueryRef.current === currentQuery) return;
-    if (hasUrlFilters) {
-      isApplyingUrlRef.current = true;
-      applyFiltersFromParams(searchParams);
-      isApplyingUrlRef.current = false;
-      lastSyncedQueryRef.current = currentQuery;
-      return;
-    }
-    if (hasStoredFilters) {
-      const nextParams = buildSearchParams();
-      const nextQuery = nextParams.toString();
-      if (nextQuery === currentQuery) {
-        lastSyncedQueryRef.current = currentQuery;
-        return;
-      }
-      lastSyncedQueryRef.current = nextQuery;
-      setSearchParams(nextParams, { replace: true });
-      return;
-    }
-    lastSyncedQueryRef.current = currentQuery;
-  }, [
-    applyFiltersFromParams,
-    buildSearchParams,
+  useFilterUrlSync({
+    filterParamKeys,
     hasStoredFilters,
-    hasUrlFilters,
-    searchParams,
-    setSearchParams,
-  ]);
-
-  React.useEffect(() => {
-    if (isApplyingUrlRef.current) return;
-    const currentQuery = searchParams.toString();
-    const nextParams = buildSearchParams();
-    const nextQuery = nextParams.toString();
-    if (nextQuery === currentQuery) {
-      lastSyncedQueryRef.current = currentQuery;
-      return;
-    }
-    lastSyncedQueryRef.current = nextQuery;
-    setSearchParams(nextParams, { replace: true });
-  }, [buildSearchParams, searchParams, setSearchParams]);
+    buildSearchParams,
+    applyFiltersFromParams,
+  });
 
   const handleResetFilters = React.useCallback(() => {
     dispatch(setParticipantWorkloadFilters(buildDefaultFilters()));

@@ -32,11 +32,8 @@ import type { Participant } from "../types";
 import { getDefaultUIState, setTeamFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import FiltersPanel from "../components/filters/FiltersPanel";
-import {
-  hasAnyParams,
-  parseStringArrayParam,
-  setStringArrayParam,
-} from "./filterUrl";
+import useFilterUrlSync from "../components/filters/useFilterUrlSync";
+import { parseStringArrayParam, setStringArrayParam } from "./filterUrl";
 
 import {
   DndContext,
@@ -53,7 +50,6 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useSearchParams } from "react-router-dom";
 
 const PRESET_ROLES = ["UI", "FE", "BE", "QA", "BA", "CA", "PY"];
 const PRESET_RATES = [1, 0.75, 0.5, 0.25];
@@ -128,7 +124,6 @@ export default function TeamPage() {
   const [deleteParticipant] = useDeleteParticipantMutation();
   const [reorderParticipants] = useReorderParticipantsMutation();
   const dispatch = useAppDispatch();
-  const [searchParams, setSearchParams] = useSearchParams();
   const { filterRoles, filterRates, filterUserStreams } = useAppSelector(
     (s) => s.ui.team
   );
@@ -136,8 +131,6 @@ export default function TeamPage() {
     () => ["filterRoles", "filterRates", "filterUserStreams"],
     []
   );
-  const lastSyncedQueryRef = React.useRef<string | null>(null);
-  const isApplyingUrlRef = React.useRef(false);
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().team;
@@ -182,7 +175,6 @@ export default function TeamPage() {
     [filterRates, filterRoles, filterUserStreams]
   );
 
-  const hasUrlFilters = hasAnyParams(searchParams, filterParamKeys);
   const hasStoredFilters =
     filterRoles.length > 0 || filterRates.length > 0 || filterUserStreams.length > 0;
   const buildSearchParams = React.useCallback(() => {
@@ -191,49 +183,12 @@ export default function TeamPage() {
     return params;
   }, [syncFiltersToUrl]);
 
-  React.useEffect(() => {
-    const currentQuery = searchParams.toString();
-    if (lastSyncedQueryRef.current === currentQuery) return;
-    if (hasUrlFilters) {
-      isApplyingUrlRef.current = true;
-      applyFiltersFromParams(searchParams);
-      isApplyingUrlRef.current = false;
-      lastSyncedQueryRef.current = currentQuery;
-      return;
-    }
-    if (hasStoredFilters) {
-      const nextParams = buildSearchParams();
-      const nextQuery = nextParams.toString();
-      if (nextQuery === currentQuery) {
-        lastSyncedQueryRef.current = currentQuery;
-        return;
-      }
-      lastSyncedQueryRef.current = nextQuery;
-      setSearchParams(nextParams, { replace: true });
-      return;
-    }
-    lastSyncedQueryRef.current = currentQuery;
-  }, [
-    applyFiltersFromParams,
-    buildSearchParams,
+  useFilterUrlSync({
+    filterParamKeys,
     hasStoredFilters,
-    hasUrlFilters,
-    searchParams,
-    setSearchParams,
-  ]);
-
-  React.useEffect(() => {
-    if (isApplyingUrlRef.current) return;
-    const currentQuery = searchParams.toString();
-    const nextParams = buildSearchParams();
-    const nextQuery = nextParams.toString();
-    if (nextQuery === currentQuery) {
-      lastSyncedQueryRef.current = currentQuery;
-      return;
-    }
-    lastSyncedQueryRef.current = nextQuery;
-    setSearchParams(nextParams, { replace: true });
-  }, [buildSearchParams, searchParams, setSearchParams]);
+    buildSearchParams,
+    applyFiltersFromParams,
+  });
 
   const handleResetFilters = React.useCallback(() => {
     dispatch(setTeamFilters(buildDefaultFilters()));

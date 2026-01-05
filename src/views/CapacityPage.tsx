@@ -22,18 +22,14 @@ import {
 } from "../app/api";
 import type { Participant, Quarter, Sprint, CapacityCell } from "../types";
 import FiltersPanel from "../components/filters/FiltersPanel";
+import useFilterUrlSync from "../components/filters/useFilterUrlSync";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import {
   getDefaultUIState,
   setCapacityFilters,
   setCapacitySelectedQuarterIds,
 } from "../app/uiSlice";
-import {
-  hasAnyParams,
-  parseStringArrayParam,
-  setStringArrayParam,
-} from "./filterUrl";
-import { useSearchParams } from "react-router-dom";
+import { parseStringArrayParam, setStringArrayParam } from "./filterUrl";
 
 moment.locale("ru");
 
@@ -98,7 +94,6 @@ export default function CapacityPage() {
     useGetSprintsQuery(undefined);
   const { data: participantList = [] } = useGetParticipantsQuery();
   const dispatch = useAppDispatch();
-  const [searchParams, setSearchParams] = useSearchParams();
   const capacityFilters = useAppSelector((state) => state.ui.capacity);
   const {
     selectedQuarterIds,
@@ -115,8 +110,6 @@ export default function CapacityPage() {
     ],
     []
   );
-  const lastSyncedQueryRef = React.useRef<string | null>(null);
-  const isApplyingUrlRef = React.useRef(false);
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().capacity;
@@ -179,7 +172,6 @@ export default function CapacityPage() {
     [rolesFilter, selectedParticipantIds, selectedQuarterIds, userStreamsFilter]
   );
 
-  const hasUrlFilters = hasAnyParams(searchParams, filterParamKeys);
   const hasStoredFilters =
     selectedQuarterIds.length > 0 ||
     selectedParticipantIds.length > 0 ||
@@ -191,49 +183,12 @@ export default function CapacityPage() {
     return params;
   }, [syncFiltersToUrl]);
 
-  React.useEffect(() => {
-    const currentQuery = searchParams.toString();
-    if (lastSyncedQueryRef.current === currentQuery) return;
-    if (hasUrlFilters) {
-      isApplyingUrlRef.current = true;
-      applyFiltersFromParams(searchParams);
-      isApplyingUrlRef.current = false;
-      lastSyncedQueryRef.current = currentQuery;
-      return;
-    }
-    if (hasStoredFilters) {
-      const nextParams = buildSearchParams();
-      const nextQuery = nextParams.toString();
-      if (nextQuery === currentQuery) {
-        lastSyncedQueryRef.current = currentQuery;
-        return;
-      }
-      lastSyncedQueryRef.current = nextQuery;
-      setSearchParams(nextParams, { replace: true });
-      return;
-    }
-    lastSyncedQueryRef.current = currentQuery;
-  }, [
-    applyFiltersFromParams,
-    buildSearchParams,
+  useFilterUrlSync({
+    filterParamKeys,
     hasStoredFilters,
-    hasUrlFilters,
-    searchParams,
-    setSearchParams,
-  ]);
-
-  React.useEffect(() => {
-    if (isApplyingUrlRef.current) return;
-    const currentQuery = searchParams.toString();
-    const nextParams = buildSearchParams();
-    const nextQuery = nextParams.toString();
-    if (nextQuery === currentQuery) {
-      lastSyncedQueryRef.current = currentQuery;
-      return;
-    }
-    lastSyncedQueryRef.current = nextQuery;
-    setSearchParams(nextParams, { replace: true });
-  }, [buildSearchParams, searchParams, setSearchParams]);
+    buildSearchParams,
+    applyFiltersFromParams,
+  });
 
   const handleResetFilters = React.useCallback(() => {
     dispatch(setCapacityFilters(buildDefaultFilters()));
