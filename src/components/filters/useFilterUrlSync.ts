@@ -14,10 +14,18 @@ export default function useFilterUrlSync({
   const [, setSearchParams] = useSearchParams();
   const lastSyncedQueryRef = React.useRef<string | null>(null);
   const isApplyingUrlRef = React.useRef(false);
+  const pendingQueryRef = React.useRef<string | null>(null);
   const urlQuery = useSyncExternalStore(subscribeToLocation, getLocationSearch);
 
   React.useEffect(() => {
     const currentQuery = urlQuery;
+    if (pendingQueryRef.current) {
+      if (pendingQueryRef.current === currentQuery) {
+        pendingQueryRef.current = null;
+        lastSyncedQueryRef.current = currentQuery;
+      }
+      return;
+    }
     if (lastSyncedQueryRef.current === currentQuery) return;
     lastSyncedQueryRef.current = currentQuery;
     isApplyingUrlRef.current = true;
@@ -38,6 +46,7 @@ export default function useFilterUrlSync({
       return;
     }
     lastSyncedQueryRef.current = nextQuery;
+    pendingQueryRef.current = nextQuery;
     setSearchParams(nextParams, { replace: true });
   }, [buildSearchParams, setSearchParams, urlQuery]);
 }
