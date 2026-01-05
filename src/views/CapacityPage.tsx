@@ -195,6 +195,9 @@ export default function CapacityPage() {
 
   React.useEffect(() => {
     const currentQuery = searchParams.toString();
+    if (hasUrlFilters && lastAppliedQueryRef.current !== currentQuery) {
+      return;
+    }
     if (!hasUrlFilters && !hasStoredFilters) {
       if (!currentQuery) return;
       lastAppliedQueryRef.current = "";
