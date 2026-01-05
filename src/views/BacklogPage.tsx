@@ -1366,8 +1366,8 @@ export default function BacklogPage() {
     ],
     []
   );
-  const hasInitializedFiltersRef = React.useRef(false);
-  const lastAppliedQueryRef = React.useRef<string | null>(null);
+  const lastSyncedQueryRef = React.useRef<string | null>(null);
+  const isApplyingUrlRef = React.useRef(false);
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().backlog;
@@ -1480,29 +1480,28 @@ export default function BacklogPage() {
 
   React.useEffect(() => {
     const currentQuery = searchParams.toString();
-    if (!hasUrlFilters) return;
-    if (lastAppliedQueryRef.current === currentQuery) return;
-    applyFiltersFromParams(searchParams);
-    lastAppliedQueryRef.current = currentQuery;
-    hasInitializedFiltersRef.current = true;
+    if (lastSyncedQueryRef.current === currentQuery) return;
+    if (hasUrlFilters) {
+      isApplyingUrlRef.current = true;
+      applyFiltersFromParams(searchParams);
+      isApplyingUrlRef.current = false;
+      lastSyncedQueryRef.current = currentQuery;
+      return;
+    }
+    if (hasStoredFilters) {
+      const nextParams = buildSearchParams();
+      const nextQuery = nextParams.toString();
+      if (nextQuery === currentQuery) {
+        lastSyncedQueryRef.current = currentQuery;
+        return;
+      }
+      lastSyncedQueryRef.current = nextQuery;
+      setSearchParams(nextParams, { replace: true });
+      return;
+    }
+    lastSyncedQueryRef.current = currentQuery;
   }, [
     applyFiltersFromParams,
-    hasUrlFilters,
-    searchParams,
-  ]);
-
-  React.useEffect(() => {
-    const currentQuery = searchParams.toString();
-    if (hasInitializedFiltersRef.current) return;
-    hasInitializedFiltersRef.current = true;
-    if (hasUrlFilters) return;
-    if (!hasStoredFilters) return;
-    const nextParams = buildSearchParams();
-    const nextQuery = nextParams.toString();
-    if (nextQuery === currentQuery) return;
-    lastAppliedQueryRef.current = nextQuery;
-    setSearchParams(nextParams, { replace: true });
-  }, [
     buildSearchParams,
     hasStoredFilters,
     hasUrlFilters,
@@ -1511,21 +1510,17 @@ export default function BacklogPage() {
   ]);
 
   React.useEffect(() => {
-    if (!hasInitializedFiltersRef.current) return;
+    if (isApplyingUrlRef.current) return;
     const currentQuery = searchParams.toString();
-    if (hasUrlFilters && lastAppliedQueryRef.current !== currentQuery) {
-      return;
-    }
     const nextParams = buildSearchParams();
     const nextQuery = nextParams.toString();
-    if (nextQuery === currentQuery) return;
+    if (nextQuery === currentQuery) {
+      lastSyncedQueryRef.current = currentQuery;
+      return;
+    }
+    lastSyncedQueryRef.current = nextQuery;
     setSearchParams(nextParams, { replace: true });
-  }, [
-    buildSearchParams,
-    hasUrlFilters,
-    searchParams,
-    setSearchParams,
-  ]);
+  }, [buildSearchParams, searchParams, setSearchParams]);
 
   const handleResetFilters = React.useCallback(() => {
     dispatch(setBacklogFilters(buildDefaultFilters()));
