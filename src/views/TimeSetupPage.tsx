@@ -143,7 +143,6 @@ export default function TimeSetupPage() {
   const selectedQuarterIds = useAppSelector(
     (state) => state.ui.time.selectedQuarterIds
   );
-  const filterParamKeys = React.useMemo(() => ["selectedQuarterIds"], []);
   const [hidePast, setHidePast] = React.useState<boolean>(() => {
     try {
       const hpRaw = localStorage.getItem(LS_HIDE_PAST);
@@ -177,7 +176,6 @@ export default function TimeSetupPage() {
     [selectedQuarterIds]
   );
 
-  const hasStoredFilters = selectedQuarterIds.length > 0;
   const buildSearchParams = React.useCallback(() => {
     const params = new URLSearchParams();
     syncFiltersToUrl(params);
@@ -185,8 +183,6 @@ export default function TimeSetupPage() {
   }, [syncFiltersToUrl]);
 
   useFilterUrlSync({
-    filterParamKeys,
-    hasStoredFilters,
     buildSearchParams,
     applyFiltersFromParams,
   });

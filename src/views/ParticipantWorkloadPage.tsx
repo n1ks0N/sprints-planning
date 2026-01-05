@@ -59,17 +59,6 @@ export default function ParticipantWorkloadPage() {
     () => getDefaultUIState().participantWorkload,
     []
   );
-  const filterParamKeys = React.useMemo(
-    () => [
-      "selectedQuarterIds",
-      "selectedParticipantIds",
-      "rolesFilter",
-      "userStreamsFilter",
-      "priorityFilter",
-      "taskStreamFilter",
-    ],
-    []
-  );
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().participantWorkload;
@@ -152,13 +141,6 @@ export default function ParticipantWorkloadPage() {
     [ui]
   );
 
-  const hasStoredFilters =
-    ui.selectedQuarterIds.length > 0 ||
-    ui.selectedParticipantIds.length > 0 ||
-    ui.rolesFilter.length > 0 ||
-    ui.userStreamsFilter.length > 0 ||
-    ui.taskStreamFilter.trim().length > 0 ||
-    !shallowArrayEqual(ui.priorityFilter, defaultFilters.priorityFilter);
   const buildSearchParams = React.useCallback(() => {
     const params = new URLSearchParams();
     syncFiltersToUrl(params);
@@ -166,8 +148,6 @@ export default function ParticipantWorkloadPage() {
   }, [syncFiltersToUrl]);
 
   useFilterUrlSync({
-    filterParamKeys,
-    hasStoredFilters,
     buildSearchParams,
     applyFiltersFromParams,
   });

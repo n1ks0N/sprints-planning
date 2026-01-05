@@ -127,10 +127,6 @@ export default function TeamPage() {
   const { filterRoles, filterRates, filterUserStreams } = useAppSelector(
     (s) => s.ui.team
   );
-  const filterParamKeys = React.useMemo(
-    () => ["filterRoles", "filterRates", "filterUserStreams"],
-    []
-  );
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().team;
@@ -175,8 +171,6 @@ export default function TeamPage() {
     [filterRates, filterRoles, filterUserStreams]
   );
 
-  const hasStoredFilters =
-    filterRoles.length > 0 || filterRates.length > 0 || filterUserStreams.length > 0;
   const buildSearchParams = React.useCallback(() => {
     const params = new URLSearchParams();
     syncFiltersToUrl(params);
@@ -184,8 +178,6 @@ export default function TeamPage() {
   }, [syncFiltersToUrl]);
 
   useFilterUrlSync({
-    filterParamKeys,
-    hasStoredFilters,
     buildSearchParams,
     applyFiltersFromParams,
   });

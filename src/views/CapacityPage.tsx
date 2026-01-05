@@ -101,15 +101,6 @@ export default function CapacityPage() {
     rolesFilter,
     userStreamsFilter,
   } = capacityFilters;
-  const filterParamKeys = React.useMemo(
-    () => [
-      "selectedQuarterIds",
-      "selectedParticipantIds",
-      "rolesFilter",
-      "userStreamsFilter",
-    ],
-    []
-  );
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().capacity;
@@ -172,11 +163,6 @@ export default function CapacityPage() {
     [rolesFilter, selectedParticipantIds, selectedQuarterIds, userStreamsFilter]
   );
 
-  const hasStoredFilters =
-    selectedQuarterIds.length > 0 ||
-    selectedParticipantIds.length > 0 ||
-    rolesFilter.length > 0 ||
-    userStreamsFilter.length > 0;
   const buildSearchParams = React.useCallback(() => {
     const params = new URLSearchParams();
     syncFiltersToUrl(params);
@@ -184,8 +170,6 @@ export default function CapacityPage() {
   }, [syncFiltersToUrl]);
 
   useFilterUrlSync({
-    filterParamKeys,
-    hasStoredFilters,
     buildSearchParams,
     applyFiltersFromParams,
   });

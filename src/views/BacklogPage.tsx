@@ -1353,17 +1353,6 @@ export default function BacklogPage() {
     selectedQuarterIds,
   } = useAppSelector((s) => s.ui.backlog);
   const defaultFilters = React.useMemo(() => getDefaultUIState().backlog, []);
-  const filterParamKeys = React.useMemo(
-    () => [
-      "selectedQuarterIds",
-      "priorityFilter",
-      "statusFilter",
-      "releaseSprintFilter",
-      "streamFilter",
-      "searchQuery",
-    ],
-    []
-  );
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().backlog;
@@ -1460,13 +1449,6 @@ export default function BacklogPage() {
     ]
   );
 
-  const hasStoredFilters =
-    selectedQuarterIds.length > 0 ||
-    priorityFilter.length > 0 ||
-    statusFilter.length > 0 ||
-    releaseSprintFilter !== defaultFilters.releaseSprintFilter ||
-    streamFilter.trim().length > 0 ||
-    searchQuery.trim().length > 0;
   const buildSearchParams = React.useCallback(() => {
     const params = new URLSearchParams();
     syncFiltersToUrl(params);
@@ -1474,8 +1456,6 @@ export default function BacklogPage() {
   }, [syncFiltersToUrl]);
 
   useFilterUrlSync({
-    filterParamKeys,
-    hasStoredFilters,
     buildSearchParams,
     applyFiltersFromParams,
   });
