@@ -33,10 +33,10 @@ import {
 } from "../app/api";
 import type { Quarter, Sprint } from "../types";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import useFilterUrlSync from "../components/filters/useFilterUrlSync";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import { getDefaultUIState, setTimeSelectedQuarterIds } from "../app/uiSlice";
-import { hasAnyParams, parseStringArrayParam, setStringArrayParam } from "./filterUrl";
-import { useSearchParams } from "react-router-dom";
+import { parseStringArrayParam, setStringArrayParam } from "./filterUrl";
 
 moment.locale("ru");
 
@@ -140,12 +140,9 @@ export default function TimeSetupPage() {
   const [deleteSprint] = useDeleteSprintMutation();
 
   const dispatch = useAppDispatch();
-  const [searchParams, setSearchParams] = useSearchParams();
   const selectedQuarterIds = useAppSelector(
     (state) => state.ui.time.selectedQuarterIds
   );
-  const filterParamKeys = React.useMemo(() => ["selectedQuarterIds"], []);
-  const lastAppliedQueryRef = React.useRef<string | null>(null);
   const [hidePast, setHidePast] = React.useState<boolean>(() => {
     try {
       const hpRaw = localStorage.getItem(LS_HIDE_PAST);
@@ -179,41 +176,16 @@ export default function TimeSetupPage() {
     [selectedQuarterIds]
   );
 
-  const hasUrlFilters = hasAnyParams(searchParams, filterParamKeys);
-  const hasStoredFilters = selectedQuarterIds.length > 0;
+  const buildSearchParams = React.useCallback(() => {
+    const params = new URLSearchParams();
+    syncFiltersToUrl(params);
+    return params;
+  }, [syncFiltersToUrl]);
 
-  React.useEffect(() => {
-    if (!hasUrlFilters) return;
-    const currentQuery = searchParams.toString();
-    if (lastAppliedQueryRef.current === currentQuery) return;
-    applyFiltersFromParams(searchParams);
-    lastAppliedQueryRef.current = currentQuery;
-  }, [applyFiltersFromParams, hasUrlFilters, searchParams]);
-
-  React.useEffect(() => {
-    const currentQuery = searchParams.toString();
-    if (hasUrlFilters && lastAppliedQueryRef.current !== currentQuery) {
-      return;
-    }
-    if (!hasUrlFilters && !hasStoredFilters) {
-      if (!currentQuery) return;
-      lastAppliedQueryRef.current = "";
-      setSearchParams(new URLSearchParams(), { replace: true });
-      return;
-    }
-    const nextParams = new URLSearchParams();
-    syncFiltersToUrl(nextParams);
-    const nextQuery = nextParams.toString();
-    if (nextQuery === currentQuery) return;
-    lastAppliedQueryRef.current = nextQuery;
-    setSearchParams(nextParams, { replace: true });
-  }, [
-    hasStoredFilters,
-    hasUrlFilters,
-    searchParams,
-    setSearchParams,
-    syncFiltersToUrl,
-  ]);
+  useFilterUrlSync({
+    buildSearchParams,
+    applyFiltersFromParams,
+  });
 
   const handleResetFilters = React.useCallback(() => {
     dispatch(setTimeSelectedQuarterIds(buildDefaultFilters().selectedQuarterIds));

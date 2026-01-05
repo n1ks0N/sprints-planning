@@ -69,8 +69,8 @@ import { getDefaultUIState, setBacklogFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 import FiltersPanel from "../components/filters/FiltersPanel";
+import useFilterUrlSync from "../components/filters/useFilterUrlSync";
 import {
-  hasAnyParams,
   parseNumberArrayParam,
   parseStringArrayParam,
   parseStringParam,
@@ -96,7 +96,6 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useSearchParams } from "react-router-dom";
 
 moment.locale("ru");
 
@@ -1345,7 +1344,6 @@ export default function BacklogPage() {
   }, [quarters]);
 
   const dispatch = useAppDispatch();
-  const [searchParams, setSearchParams] = useSearchParams();
   const {
     priorityFilter,
     streamFilter,
@@ -1355,18 +1353,6 @@ export default function BacklogPage() {
     selectedQuarterIds,
   } = useAppSelector((s) => s.ui.backlog);
   const defaultFilters = React.useMemo(() => getDefaultUIState().backlog, []);
-  const filterParamKeys = React.useMemo(
-    () => [
-      "selectedQuarterIds",
-      "priorityFilter",
-      "statusFilter",
-      "releaseSprintFilter",
-      "streamFilter",
-      "searchQuery",
-    ],
-    []
-  );
-  const lastAppliedQueryRef = React.useRef<string | null>(null);
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().backlog;
@@ -1463,47 +1449,16 @@ export default function BacklogPage() {
     ]
   );
 
-  const hasUrlFilters = hasAnyParams(searchParams, filterParamKeys);
-  const hasStoredFilters =
-    selectedQuarterIds.length > 0 ||
-    priorityFilter.length > 0 ||
-    statusFilter.length > 0 ||
-    releaseSprintFilter !== defaultFilters.releaseSprintFilter ||
-    streamFilter.trim().length > 0 ||
-    searchQuery.trim().length > 0;
+  const buildSearchParams = React.useCallback(() => {
+    const params = new URLSearchParams();
+    syncFiltersToUrl(params);
+    return params;
+  }, [syncFiltersToUrl]);
 
-  React.useEffect(() => {
-    if (!hasUrlFilters) return;
-    const currentQuery = searchParams.toString();
-    if (lastAppliedQueryRef.current === currentQuery) return;
-    applyFiltersFromParams(searchParams);
-    lastAppliedQueryRef.current = currentQuery;
-  }, [applyFiltersFromParams, hasUrlFilters, searchParams]);
-
-  React.useEffect(() => {
-    const currentQuery = searchParams.toString();
-    if (hasUrlFilters && lastAppliedQueryRef.current !== currentQuery) {
-      return;
-    }
-    if (!hasUrlFilters && !hasStoredFilters) {
-      if (!currentQuery) return;
-      lastAppliedQueryRef.current = "";
-      setSearchParams(new URLSearchParams(), { replace: true });
-      return;
-    }
-    const nextParams = new URLSearchParams();
-    syncFiltersToUrl(nextParams);
-    const nextQuery = nextParams.toString();
-    if (nextQuery === currentQuery) return;
-    lastAppliedQueryRef.current = nextQuery;
-    setSearchParams(nextParams, { replace: true });
-  }, [
-    hasStoredFilters,
-    hasUrlFilters,
-    searchParams,
-    setSearchParams,
-    syncFiltersToUrl,
-  ]);
+  useFilterUrlSync({
+    buildSearchParams,
+    applyFiltersFromParams,
+  });
 
   const handleResetFilters = React.useCallback(() => {
     dispatch(setBacklogFilters(buildDefaultFilters()));

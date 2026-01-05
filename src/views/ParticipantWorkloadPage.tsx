@@ -27,9 +27,9 @@ import {
   setParticipantWorkloadFilters,
 } from "../app/uiSlice";
 import FiltersPanel from "../components/filters/FiltersPanel";
+import useFilterUrlSync from "../components/filters/useFilterUrlSync";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import {
-  hasAnyParams,
   parseNumberArrayParam,
   parseStringArrayParam,
   parseStringParam,
@@ -37,7 +37,6 @@ import {
   setStringArrayParam,
   setStringParam,
 } from "./filterUrl";
-import { useSearchParams } from "react-router-dom";
 
 function byStart(a: Sprint, b: Sprint) {
   return a.startDate.localeCompare(b.startDate);
@@ -55,24 +54,11 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
 
 export default function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
-  const [searchParams, setSearchParams] = useSearchParams();
   const ui = useAppSelector((s) => s.ui.participantWorkload);
   const defaultFilters = React.useMemo(
     () => getDefaultUIState().participantWorkload,
     []
   );
-  const filterParamKeys = React.useMemo(
-    () => [
-      "selectedQuarterIds",
-      "selectedParticipantIds",
-      "rolesFilter",
-      "userStreamsFilter",
-      "priorityFilter",
-      "taskStreamFilter",
-    ],
-    []
-  );
-  const lastAppliedQueryRef = React.useRef<string | null>(null);
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().participantWorkload;
@@ -155,47 +141,16 @@ export default function ParticipantWorkloadPage() {
     [ui]
   );
 
-  const hasUrlFilters = hasAnyParams(searchParams, filterParamKeys);
-  const hasStoredFilters =
-    ui.selectedQuarterIds.length > 0 ||
-    ui.selectedParticipantIds.length > 0 ||
-    ui.rolesFilter.length > 0 ||
-    ui.userStreamsFilter.length > 0 ||
-    ui.taskStreamFilter.trim().length > 0 ||
-    !shallowArrayEqual(ui.priorityFilter, defaultFilters.priorityFilter);
+  const buildSearchParams = React.useCallback(() => {
+    const params = new URLSearchParams();
+    syncFiltersToUrl(params);
+    return params;
+  }, [syncFiltersToUrl]);
 
-  React.useEffect(() => {
-    if (!hasUrlFilters) return;
-    const currentQuery = searchParams.toString();
-    if (lastAppliedQueryRef.current === currentQuery) return;
-    applyFiltersFromParams(searchParams);
-    lastAppliedQueryRef.current = currentQuery;
-  }, [applyFiltersFromParams, hasUrlFilters, searchParams]);
-
-  React.useEffect(() => {
-    const currentQuery = searchParams.toString();
-    if (hasUrlFilters && lastAppliedQueryRef.current !== currentQuery) {
-      return;
-    }
-    if (!hasUrlFilters && !hasStoredFilters) {
-      if (!currentQuery) return;
-      lastAppliedQueryRef.current = "";
-      setSearchParams(new URLSearchParams(), { replace: true });
-      return;
-    }
-    const nextParams = new URLSearchParams();
-    syncFiltersToUrl(nextParams);
-    const nextQuery = nextParams.toString();
-    if (nextQuery === currentQuery) return;
-    lastAppliedQueryRef.current = nextQuery;
-    setSearchParams(nextParams, { replace: true });
-  }, [
-    hasStoredFilters,
-    hasUrlFilters,
-    searchParams,
-    setSearchParams,
-    syncFiltersToUrl,
-  ]);
+  useFilterUrlSync({
+    buildSearchParams,
+    applyFiltersFromParams,
+  });
 
   const handleResetFilters = React.useCallback(() => {
     dispatch(setParticipantWorkloadFilters(buildDefaultFilters()));
