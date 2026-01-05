@@ -1366,7 +1366,8 @@ export default function BacklogPage() {
     ],
     []
   );
-  const lastAppliedQueryRef = React.useRef<string | null>(null);
+  const hasInitializedFiltersRef = React.useRef(false);
+  const pendingUrlSyncRef = React.useRef<string | null>(null);
 
   const buildDefaultFilters = React.useCallback(() => {
     const defaults = getDefaultUIState().backlog;
@@ -1471,38 +1472,56 @@ export default function BacklogPage() {
     releaseSprintFilter !== defaultFilters.releaseSprintFilter ||
     streamFilter.trim().length > 0 ||
     searchQuery.trim().length > 0;
-
-  React.useEffect(() => {
-    if (!hasUrlFilters) return;
-    const currentQuery = searchParams.toString();
-    if (lastAppliedQueryRef.current === currentQuery) return;
-    applyFiltersFromParams(searchParams);
-    lastAppliedQueryRef.current = currentQuery;
-  }, [applyFiltersFromParams, hasUrlFilters, searchParams]);
+  const buildSearchParams = React.useCallback(() => {
+    const params = new URLSearchParams();
+    syncFiltersToUrl(params);
+    return params;
+  }, [syncFiltersToUrl]);
 
   React.useEffect(() => {
     const currentQuery = searchParams.toString();
-    if (hasUrlFilters && lastAppliedQueryRef.current !== currentQuery) {
+    if (hasUrlFilters) {
+      pendingUrlSyncRef.current = currentQuery;
+      applyFiltersFromParams(searchParams);
+      hasInitializedFiltersRef.current = true;
       return;
     }
-    if (!hasUrlFilters && !hasStoredFilters) {
-      if (!currentQuery) return;
-      lastAppliedQueryRef.current = "";
-      setSearchParams(new URLSearchParams(), { replace: true });
-      return;
-    }
-    const nextParams = new URLSearchParams();
-    syncFiltersToUrl(nextParams);
+
+    if (hasInitializedFiltersRef.current) return;
+    hasInitializedFiltersRef.current = true;
+    if (!hasStoredFilters) return;
+    const nextParams = buildSearchParams();
     const nextQuery = nextParams.toString();
     if (nextQuery === currentQuery) return;
-    lastAppliedQueryRef.current = nextQuery;
+    pendingUrlSyncRef.current = nextQuery;
     setSearchParams(nextParams, { replace: true });
   }, [
+    applyFiltersFromParams,
+    buildSearchParams,
     hasStoredFilters,
     hasUrlFilters,
     searchParams,
     setSearchParams,
-    syncFiltersToUrl,
+  ]);
+
+  React.useEffect(() => {
+    if (!hasInitializedFiltersRef.current) return;
+    const currentQuery = searchParams.toString();
+    const nextParams = buildSearchParams();
+    const nextQuery = nextParams.toString();
+    if (nextQuery === currentQuery) {
+      if (pendingUrlSyncRef.current === currentQuery) {
+        pendingUrlSyncRef.current = null;
+      }
+      return;
+    }
+    if (pendingUrlSyncRef.current === currentQuery) return;
+    pendingUrlSyncRef.current = nextQuery;
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    buildSearchParams,
+    searchParams,
+    setSearchParams,
   ]);
 
   const handleResetFilters = React.useCallback(() => {
