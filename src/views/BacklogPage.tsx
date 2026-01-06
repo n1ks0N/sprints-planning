@@ -15,6 +15,10 @@ import {
   Chip,
   Autocomplete,
   Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Tooltip,
   Divider,
   InputBase,
@@ -35,6 +39,7 @@ import {
   ArrowUpward,
   ArrowDownward,
   DragIndicator,
+  EditNote,
   Visibility,
   VisibilityOff,
 } from "@mui/icons-material";
@@ -598,6 +603,9 @@ const TaskCard = React.memo(function TaskCard({
 
   const [customerDraft, setCustomerDraft] = React.useState(task.customer || "");
   const [streamDraft, setStreamDraft] = React.useState(task.stream || "");
+  const [noteParticipant, setNoteParticipant] =
+    React.useState<Participant | null>(null);
+  const [noteDraft, setNoteDraft] = React.useState("");
 
   React.useEffect(() => {
     setCustomerDraft(task.customer || "");
@@ -606,6 +614,32 @@ const TaskCard = React.memo(function TaskCard({
   React.useEffect(() => {
     setStreamDraft(task.stream || "");
   }, [task.stream]);
+
+  const handleOpenNote = React.useCallback(
+    (participant: Participant) => {
+      setNoteParticipant(participant);
+      setNoteDraft(task.notes?.[participant.id] ?? "");
+    },
+    [task.notes]
+  );
+
+  const handleCloseNote = React.useCallback(() => {
+    setNoteParticipant(null);
+    setNoteDraft("");
+  }, []);
+
+  const handleSaveNote = React.useCallback(() => {
+    if (!noteParticipant) return;
+    const trimmed = noteDraft.trim();
+    const nextNotes = { ...(task.notes ?? {}) };
+    if (trimmed) {
+      nextNotes[noteParticipant.id] = trimmed;
+    } else {
+      delete nextNotes[noteParticipant.id];
+    }
+    onUpdateTaskPatch(task, { notes: nextNotes });
+    handleCloseNote();
+  }, [handleCloseNote, noteDraft, noteParticipant, onUpdateTaskPatch, task]);
 
   const tooltipContent = (
     <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
@@ -1055,6 +1089,8 @@ const TaskCard = React.memo(function TaskCard({
                       candidate.id === p.id ||
                       !assignedParticipantIds.includes(candidate.id)
                   );
+                  const participantNote = task.notes?.[p.id] ?? "";
+                  const hasNote = participantNote.trim().length > 0;
 
                   return (
                     <SortableParticipantRow key={p.id} participant={p}>
@@ -1162,6 +1198,21 @@ const TaskCard = React.memo(function TaskCard({
                               spacing={0.5}
                               justifyContent="flex-end"
                             >
+                              <Tooltip
+                                title={
+                                  hasNote
+                                    ? "Просмотреть или изменить заметку"
+                                    : "Добавить заметку"
+                                }
+                              >
+                                <IconButton
+                                  size="small"
+                                  color={hasNote ? "primary" : "default"}
+                                  onClick={() => handleOpenNote(p)}
+                                >
+                                  <EditNote fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
                               <Tooltip title="Сдвинуть влево (по всем спринтам)">
                                 <IconButton
                                   size="small"
@@ -1270,6 +1321,29 @@ const TaskCard = React.memo(function TaskCard({
         </TableContainer>
         </DndContext>
       )}
+
+      <Dialog open={Boolean(noteParticipant)} onClose={handleCloseNote} fullWidth>
+        <DialogTitle>
+          Заметка: {noteParticipant?.fullName ?? "Участник"}
+        </DialogTitle>
+        <DialogContent>
+          <TextField
+            fullWidth
+            multiline
+            minRows={4}
+            maxRows={10}
+            label="Заметка"
+            value={noteDraft}
+            onChange={(event) => setNoteDraft(event.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseNote}>Отмена</Button>
+          <Button variant="contained" onClick={handleSaveNote}>
+            Сохранить
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Paper>
   );
 });
