@@ -634,9 +634,11 @@ const TaskCard = React.memo(function TaskCard({
   };
 
   const assignedParticipantIds = task.participantIds || [];
-  const availableParticipants = participants.filter(
-    (p) => !assignedParticipantIds.includes(p.id)
-  );
+  const availableParticipants = participants
+    .filter((p) => !assignedParticipantIds.includes(p.id))
+    .sort((a, b) =>
+      a.fullName.localeCompare(b.fullName, "ru", { sensitivity: "base" })
+    );
 
   React.useEffect(() => {
     if (
