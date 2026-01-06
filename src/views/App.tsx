@@ -39,6 +39,7 @@ import {
 import { useGetTeamsQuery } from "../app/api";
 import { DEFAULT_TEAM_KEY } from "../teams";
 import TeamsPage from "./TeamsPage";
+import { PAGE_TITLES, buildTabTitle } from "../constants/pageTitles";
 
 function Hotkeys() {
   const dispatch = useDispatch();
@@ -72,10 +73,32 @@ function TeamScopedApp() {
     () => location.pathname.replace(/^\/[A-Za-z0-9_-]+/, "") || "/",
     [location.pathname]
   );
+  const normalizedPathSuffix = React.useMemo(() => {
+    const trimmed = currentPathSuffix.replace(/\/$/, "");
+    return trimmed === "" ? "/" : trimmed;
+  }, [currentPathSuffix]);
+
+  const teamScopedPageTitle = React.useMemo(() => {
+    const titleMap: Record<string, string> = {
+      "/": PAGE_TITLES.backlog,
+      "/capacity": PAGE_TITLES.capacity,
+      "/participant-work": PAGE_TITLES.participantWork,
+      "/time": PAGE_TITLES.timeSetup,
+      "/team": PAGE_TITLES.team,
+      "/releases": PAGE_TITLES.releases,
+      "/history": PAGE_TITLES.history,
+    };
+
+    return titleMap[normalizedPathSuffix] ?? PAGE_TITLES.backlog;
+  }, [normalizedPathSuffix]);
 
   React.useEffect(() => {
     dispatch(setCurrentTeam(teamKey));
   }, [dispatch, teamKey]);
+
+  React.useEffect(() => {
+    document.title = buildTabTitle(teamScopedPageTitle);
+  }, [teamScopedPageTitle]);
 
   const [exportExcel, { isFetching: isExporting }] = useLazyExportExcelQuery();
 
@@ -187,6 +210,7 @@ export default function App() {
   const currentTeam = useSelector(selectCurrentTeamKey);
   const dispatch = useDispatch();
   const { data: teams } = useGetTeamsQuery();
+  const location = useLocation();
 
   React.useEffect(() => {
     if (teams) {
@@ -197,6 +221,12 @@ export default function App() {
       );
     }
   }, [dispatch, teams]);
+
+  React.useEffect(() => {
+    if (location.pathname === "/teams") {
+      document.title = buildTabTitle(PAGE_TITLES.teams);
+    }
+  }, [location.pathname]);
 
   return (
     <Routes>
