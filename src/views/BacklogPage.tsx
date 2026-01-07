@@ -1430,6 +1430,7 @@ export default function BacklogPage() {
     releaseSprintFilter,
     searchQuery,
     selectedQuarterIds,
+    tasksPageSize,
   } = useAppSelector((s) => s.ui.backlog);
 
   const [, startFiltersTransition] = React.useTransition();
@@ -1491,7 +1492,12 @@ export default function BacklogPage() {
     return m;
   }, [participants]);
 
-  const TASKS_PAGE_SIZE = 20;
+  const TASKS_PAGE_SIZE = React.useMemo(() => {
+    const sanitized = tasksPageSize.replace(/\D/g, "");
+    const parsed = Number(sanitized);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 20;
+    return Math.floor(parsed);
+  }, [tasksPageSize]);
   const normalizedSearch = React.useMemo(() => searchQuery.trim(), [searchQuery]);
   const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
   const [pinnedTaskId, setPinnedTaskId] = React.useState<string | null>(null);
@@ -1506,6 +1512,7 @@ export default function BacklogPage() {
         streamFilter,
         normalizedSearch,
         pinnedTaskId,
+        tasksPageSize: TASKS_PAGE_SIZE,
       }),
     [
       normalizedSearch,
@@ -1515,6 +1522,7 @@ export default function BacklogPage() {
       statusFilter,
       streamFilter,
       pinnedTaskId,
+      TASKS_PAGE_SIZE,
     ]
   );
 
@@ -1548,6 +1556,7 @@ export default function BacklogPage() {
       normalizedSearch,
       pinnedTaskId,
       effectiveTasksPageNumber,
+      TASKS_PAGE_SIZE,
     ]
   );
 
@@ -1909,6 +1918,15 @@ export default function BacklogPage() {
       }));
   }, [promReleases]);
 
+  const tasksPageSizeOptions = React.useMemo(
+    () =>
+      [20, 50, 100].map((size) => ({
+        value: String(size),
+        label: String(size),
+      })),
+    []
+  );
+
   const handleQuarterFilterChange = React.useCallback(
     (ids: string[]) => {
       const existing = new Set(quarters.map((q) => q.id));
@@ -1967,6 +1985,18 @@ export default function BacklogPage() {
       });
     },
     [dispatch, streamFilter, startFiltersTransition]
+  );
+
+  const handleTasksPageSizeChange = React.useCallback(
+    (value: string) => {
+      const sanitized = value.replace(/\D/g, "");
+      const normalized = sanitized.replace(/^0+(?=\d)/, "");
+      if (normalized === tasksPageSize) return;
+      startFiltersTransition(() => {
+        dispatch(setBacklogFilters({ tasksPageSize: normalized }));
+      });
+    },
+    [dispatch, startFiltersTransition, tasksPageSize]
   );
 
   const handleSearchCommit = React.useCallback(() => {
@@ -2675,6 +2705,19 @@ export default function BacklogPage() {
                 options: streamOptions,
                 value: streamFilter,
                 onChange: handleStreamFilterChange,
+              },
+            },
+            {
+              type: "autocomplete",
+              key: "tasks-page-size",
+              minWidth: 200,
+              props: {
+                allowCustom: true,
+                label: "Количество задач",
+                options: tasksPageSizeOptions,
+                value: tasksPageSize,
+                onChange: handleTasksPageSizeChange,
+                placeholder: "20",
               },
             },
             {

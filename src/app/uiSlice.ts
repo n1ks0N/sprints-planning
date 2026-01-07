@@ -10,6 +10,7 @@ export type UIState = {
     streamFilter: string;
     statusFilter: TaskStatus[];
     searchQuery: string;
+    tasksPageSize: string;
   };
   capacity: {
     selectedQuarterIds: string[];
@@ -56,6 +57,7 @@ function defaultState(): UIState {
       streamFilter: "",
       statusFilter: [],
       searchQuery: "",
+      tasksPageSize: "20",
     },
     capacity: {
       selectedQuarterIds: [],
@@ -91,6 +93,10 @@ function sanitizeBacklog(
         typeof s === "string" ? BACKLOG_STATUSES.includes(s as TaskStatus) : false
       )
     : defaults.statusFilter.slice();
+  const tasksPageSize =
+    typeof input?.tasksPageSize === "string"
+      ? input.tasksPageSize
+      : defaults.tasksPageSize;
 
   return {
     quarterId:
@@ -111,6 +117,7 @@ function sanitizeBacklog(
       typeof input?.searchQuery === "string"
         ? input.searchQuery
         : defaults.searchQuery,
+    tasksPageSize,
     selectedQuarterIds: Array.isArray(input?.selectedQuarterIds)
       ? input.selectedQuarterIds.filter(
           (id: any): id is string => typeof id === "string"
