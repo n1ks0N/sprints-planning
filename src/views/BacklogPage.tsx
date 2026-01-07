@@ -1200,9 +1200,21 @@ const TaskCard = React.memo(function TaskCard({
                             >
                               <Tooltip
                                 title={
-                                  hasNote
-                                    ? "Просмотреть или изменить заметку"
-                                    : "Добавить заметку"
+                                  hasNote ? (
+                                    <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
+                                      <Typography
+                                        variant="subtitle2"
+                                        sx={{ fontWeight: 700 }}
+                                      >
+                                        Заметка участника
+                                      </Typography>
+                                      <Typography variant="body2">
+                                        {participantNote}
+                                      </Typography>
+                                    </Stack>
+                                  ) : (
+                                    "Добавить заметку"
+                                  )
                                 }
                               >
                                 <IconButton
