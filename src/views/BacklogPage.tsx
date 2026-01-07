@@ -440,42 +440,38 @@ type TaskCardProps = {
   streamOptions: string[];
   releaseOptions: { value: string; label: string }[];
   participantSensors: any;
-  onStatusChange: (task: BacklogItem, status: TaskStatus) => void;
-  onPriorityChange: (task: BacklogItem, priority: TaskPriority) => void;
-  onUpdateTaskPatch: (task: BacklogItem, patch: Partial<BacklogItem>) => void;
-  onDuplicateTask: (task: BacklogItem) => void;
-  onMoveTask: (id: string, dir: "up" | "down") => void;
-  onRemoveTask: (task: BacklogItem) => void;
-  onChangeTaskQuarters: (taskId: string, quarterIds: string[]) => void;
-  getTaskQuarters: (task: BacklogItem) => string[];
-  onAllocChange: (
-    taskId: string,
-    participantId: string,
-    sprintId: string,
-    value: number
-  ) => void;
-  onAllocCommit: (
-    taskId: string,
-    participantId: string,
-    sprintId: string,
-    value: number
-  ) => void;
-  onShiftRow: (
-    taskId: string,
-    participantId: string,
-    dir: "left" | "right"
-  ) => void;
-  onCopyRowToNextQuarter: (taskId: string, participantId: string) => void;
-  onAddParticipant: (task: BacklogItem, participantId: string) => void;
-  onRemoveParticipant: (task: BacklogItem, participantId: string) => void;
-  onChangeParticipant: (
-    task: BacklogItem,
-    fromParticipantId: string,
-    toParticipantId: string
-  ) => void;
-  onParticipantOrderChange: (taskId: string, nextOrder: string[]) => void;
   hiddenParticipants: boolean;
-  onToggleParticipantsVisibility: (taskId: string, hidden: boolean) => void;
+  actions: {
+    onStatusChange: (task: BacklogItem, status: TaskStatus) => void;
+    onPriorityChange: (task: BacklogItem, priority: TaskPriority) => void;
+    onUpdateTaskPatch: (task: BacklogItem, patch: Partial<BacklogItem>) => void;
+    onDuplicateTask: (task: BacklogItem) => void;
+    onMoveTask: (id: string, dir: "up" | "down") => void;
+    onRemoveTask: (task: BacklogItem) => void;
+    onChangeTaskQuarters: (taskId: string, quarterIds: string[]) => void;
+    getTaskQuarters: (task: BacklogItem) => string[];
+    onAllocCommit: (
+      taskId: string,
+      participantId: string,
+      sprintId: string,
+      allocation: number
+    ) => void;
+    onShiftRow: (
+      taskId: string,
+      participantId: string,
+      dir: "left" | "right"
+    ) => void;
+    onCopyRowToNextQuarter: (taskId: string, participantId: string) => void;
+    onAddParticipant: (task: BacklogItem, participantId: string) => void;
+    onRemoveParticipant: (task: BacklogItem, participantId: string) => void;
+    onChangeParticipant: (
+      task: BacklogItem,
+      fromParticipantId: string,
+      toParticipantId: string
+    ) => void;
+    onParticipantOrderChange: (taskId: string, nextOrder: string[]) => void;
+    onToggleParticipantsVisibility: (taskId: string, hidden: boolean) => void;
+  };
   dragHandle?: DragHandleProps;
 };
 
@@ -527,26 +523,28 @@ const TaskCard = React.memo(function TaskCard({
   streamOptions,
   releaseOptions,
   participantSensors,
-  onStatusChange,
-  onPriorityChange,
-  onUpdateTaskPatch,
-  onDuplicateTask,
-  onMoveTask,
-  onRemoveTask,
-  onChangeTaskQuarters,
-  getTaskQuarters,
-  onAllocChange,
-  onAllocCommit,
-  onShiftRow,
-  onCopyRowToNextQuarter,
-  onAddParticipant,
-  onRemoveParticipant,
-  onChangeParticipant,
-  onParticipantOrderChange,
   hiddenParticipants,
-  onToggleParticipantsVisibility,
+  actions,
   dragHandle,
 }: TaskCardProps) {
+  const {
+    onStatusChange,
+    onPriorityChange,
+    onUpdateTaskPatch,
+    onDuplicateTask,
+    onMoveTask,
+    onRemoveTask,
+    onChangeTaskQuarters,
+    getTaskQuarters,
+    onAllocCommit,
+    onShiftRow,
+    onCopyRowToNextQuarter,
+    onAddParticipant,
+    onRemoveParticipant,
+    onChangeParticipant,
+    onParticipantOrderChange,
+    onToggleParticipantsVisibility,
+  } = actions;
   const rows = allocationsByParticipant || {};
   const taskStatus = task.status ?? "inprogress";
   const taskQuarterIds = getTaskQuarters(task);
@@ -1170,9 +1168,6 @@ const TaskCard = React.memo(function TaskCard({
                             <TableCell key={s.id} align="center">
                               <EditableNumberCell
                                 value={Number(row[s.id] || 0)}
-                                onChange={(v) =>
-                                  onAllocChange(task.id, p.id, s.id, v)
-                                }
                                 onCommit={(next) =>
                                   onAllocCommit(task.id, p.id, s.id, next)
                                 }
@@ -1684,6 +1679,10 @@ export default function BacklogPage() {
   >(() => readLS<Record<string, string[]>>(LS_TASK_QUARTERS, {}));
 
   const [allocations, setAllocations] = React.useState<Allocations>({});
+  const allocationsRef = React.useRef(allocations);
+  React.useEffect(() => {
+    allocationsRef.current = allocations;
+  }, [allocations]);
   const [participantOrders, setParticipantOrders] = React.useState<
     Record<string, string[]>
   >({});
@@ -2130,7 +2129,7 @@ export default function BacklogPage() {
     [allTasks, applyTaskOrderOptimistic, updateTask]
   );
 
-  const createTask = async (quarterId?: string) => {
+  const createTask = React.useCallback(async (quarterId?: string) => {
     const created = await addTask({
       title: "Новая задача",
       description: "",
@@ -2149,9 +2148,9 @@ export default function BacklogPage() {
     if (quarterId) {
       setTaskQuartersMap((prev) => ({ ...prev, [created.id]: [quarterId] }));
     }
-  };
+  }, [addTask]);
 
-  const handleConfirmAddTask = async () => {
+  const handleConfirmAddTask = React.useCallback(async () => {
     if (!newTaskQuarterId) {
       setAddTaskQuarterError(true);
       return;
@@ -2162,11 +2161,11 @@ export default function BacklogPage() {
     } catch (error) {
       console.error("Не удалось создать задачу", error);
     }
-  };
+  }, [createTask, newTaskQuarterId]);
 
-  const duplicateTask = async (task: BacklogItem) => {
+  const duplicateTask = React.useCallback(async (task: BacklogItem) => {
     const taskQuarters = getTaskQuarters(task);
-    const taskAllocations = allocations[task.id] || {};
+    const taskAllocations = allocationsRef.current[task.id] || {};
     const allocationsPayload = Object.entries(taskAllocations).reduce<
       Record<string, Record<string, number>>
     >((acc, [pid, row]) => {
@@ -2215,9 +2214,9 @@ export default function BacklogPage() {
     }
 
     return copy;
-  };
+  }, [addTask, allTasks.length, getTaskQuarters]);
 
-  const removeTask = async (t: BacklogItem) => {
+  const removeTask = React.useCallback(async (t: BacklogItem) => {
     if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
     await deleteTask({ id: t.id }).unwrap();
 
@@ -2226,49 +2225,41 @@ export default function BacklogPage() {
       delete copy[t.id];
       return copy;
     });
-  };
+  }, [deleteTask]);
 
-  const commitCell = (
-    taskId: string,
-    participantId: string,
-    sprintId: string,
-    value: number
-  ) => {
-    startTaskTransition(() => {
-      upsertTaskAllocation({
-        taskId,
-        participantId,
-        sprintId,
-        days: toInt(Number(value) || 0),
-      })
-        .unwrap()
-        .catch((e) => {
-          console.error("Failed to save allocation", e);
-        });
-    });
-  };
-
-  const handleAllocChange = React.useCallback(
+  const commitCell = React.useCallback(
     (
       taskId: string,
       participantId: string,
       sprintId: string,
-      value: number
+      allocation: number
     ) => {
       setAllocations((prev) => {
         const prevTask = prev[taskId] || {};
         const prevRow = prevTask[participantId] || {};
         const current = prevRow[sprintId] ?? 0;
-        if (current === value) return prev;
-        const nextRow = { ...prevRow, [sprintId]: value };
+        if (current === allocation) return prev;
+        const nextRow = { ...prevRow, [sprintId]: allocation };
         const nextTask = { ...prevTask, [participantId]: nextRow };
         return { ...prev, [taskId]: nextTask };
       });
+      startTaskTransition(() => {
+        upsertTaskAllocation({
+          taskId,
+          participantId,
+          sprintId,
+          days: toInt(Number(allocation) || 0),
+        })
+          .unwrap()
+          .catch((e) => {
+            console.error("Failed to save allocation", e);
+          });
+      });
     },
-    []
+    [startTaskTransition, upsertTaskAllocation]
   );
 
-  const addParticipantToTask = (task: BacklogItem, pid: string) => {
+  const addParticipantToTask = React.useCallback((task: BacklogItem, pid: string) => {
     if (!pid) return;
     if (task.participantIds?.includes(pid)) return;
 
@@ -2292,9 +2283,9 @@ export default function BacklogPage() {
         },
       };
     });
-  };
+  }, [allSprints, updateField]);
 
-  const removeParticipantFromTask = async (task: BacklogItem, pid: string) => {
+  const removeParticipantFromTask = React.useCallback(async (task: BacklogItem, pid: string) => {
     setAllocations((prev) => {
       const prevTask = prev[task.id];
       if (!prevTask || !prevTask[pid]) return prev;
@@ -2322,9 +2313,9 @@ export default function BacklogPage() {
     } catch (error) {
       console.error("Failed to remove participant from task", error);
     }
-  };
+  }, [updateField]);
 
-  const replaceParticipantInTask = async (
+  const replaceParticipantInTask = React.useCallback(async (
     task: BacklogItem,
     fromPid: string,
     toPid: string
@@ -2336,7 +2327,7 @@ export default function BacklogPage() {
     const participantIds = task.participantIds.map((id) =>
       id === fromPid ? toPid : id
     );
-    const taskAllocations = allocations[task.id] || {};
+    const taskAllocations = allocationsRef.current[task.id] || {};
     const rowToMove = taskAllocations[fromPid] || {};
     const nextAllocations = Object.entries(taskAllocations).reduce<
       Record<string, Record<string, number>>
@@ -2383,14 +2374,14 @@ export default function BacklogPage() {
     } catch (error) {
       console.error("Failed to replace participant", error);
     }
-  };
+  }, [updateField]);
 
-  const shiftRow = (
+  const shiftRow = React.useCallback((
     taskId: string,
     participantId: string,
     dir: "left" | "right"
   ) => {
-    const row = allocations[taskId]?.[participantId] || {};
+    const row = allocationsRef.current[taskId]?.[participantId] || {};
     const ids = sprintsGlobalOrdered.map((s) => s.id);
     if (!ids.length) return;
 
@@ -2435,10 +2426,10 @@ export default function BacklogPage() {
         console.error("Failed to bulk save allocations", error);
       }
     })();
-  };
+  }, [sprintsGlobalOrdered, upsertTaskAllocationBulk]);
 
-  const copyRowToNextQuarter = (taskId: string, participantId: string) => {
-    const row = allocations[taskId]?.[participantId] || {};
+  const copyRowToNextQuarter = React.useCallback((taskId: string, participantId: string) => {
+    const row = allocationsRef.current[taskId]?.[participantId] || {};
     if (!Object.keys(row).length) return;
 
     const quartersWithLoad = new Set<string>();
@@ -2504,9 +2495,9 @@ export default function BacklogPage() {
         console.error("Failed to copy allocations to next quarter", error);
       }
     })();
-  };
+  }, [quartersSorted, sprintById, sprintsByQuarter, upsertTaskAllocationBulk]);
 
-  const moveTask = (id: string, dir: "up" | "down") => {
+  const moveTask = React.useCallback((id: string, dir: "up" | "down") => {
     const current = filteredTasks.map((t) => t.id);
     const idx = current.indexOf(id);
     if (idx < 0) return;
@@ -2517,7 +2508,7 @@ export default function BacklogPage() {
 
     const reordered = arrayMove(current, idx, swapIdx);
     void persistTaskOrder(reordered, id);
-  };
+  }, [filteredTasks, persistTaskOrder]);
 
   const toggleParticipantsVisibility = React.useCallback(
     (taskId: string, hidden: boolean) => {
@@ -2574,6 +2565,56 @@ export default function BacklogPage() {
       void persistTaskOrder(reordered, String(active.id));
     },
     [filteredTasks, persistTaskOrder]
+  );
+
+  const handleParticipantOrderChange = React.useCallback(
+    (taskId: string, order: string[]) => {
+      setParticipantOrders((prev) => ({
+        ...prev,
+        [taskId]: order,
+      }));
+      applyParticipantOrderOptimistic(taskId, order);
+    },
+    [applyParticipantOrderOptimistic]
+  );
+
+  const taskCardActions = React.useMemo(
+    () => ({
+      onStatusChange: handleStatusChange,
+      onPriorityChange: handlePriorityChange,
+      onUpdateTaskPatch: handleUpdateTaskPatch,
+      onDuplicateTask: duplicateTask,
+      onMoveTask: moveTask,
+      onRemoveTask: removeTask,
+      onChangeTaskQuarters: updateTaskQuarters,
+      getTaskQuarters,
+      onAllocCommit: commitCell,
+      onShiftRow: shiftRow,
+      onCopyRowToNextQuarter: copyRowToNextQuarter,
+      onAddParticipant: addParticipantToTask,
+      onRemoveParticipant: removeParticipantFromTask,
+      onChangeParticipant: replaceParticipantInTask,
+      onParticipantOrderChange: handleParticipantOrderChange,
+      onToggleParticipantsVisibility: toggleParticipantsVisibility,
+    }),
+    [
+      addParticipantToTask,
+      commitCell,
+      copyRowToNextQuarter,
+      duplicateTask,
+      getTaskQuarters,
+      handleParticipantOrderChange,
+      handlePriorityChange,
+      handleStatusChange,
+      handleUpdateTaskPatch,
+      moveTask,
+      removeParticipantFromTask,
+      removeTask,
+      replaceParticipantInTask,
+      shiftRow,
+      toggleParticipantsVisibility,
+      updateTaskQuarters,
+    ]
   );
 
   return (
@@ -2771,32 +2812,8 @@ export default function BacklogPage() {
                         streamOptions={streamOptions}
                         releaseOptions={releaseFilterOptions}
                         participantSensors={participantSensors}
-                        onStatusChange={handleStatusChange}
-                        onPriorityChange={handlePriorityChange}
-                        onUpdateTaskPatch={handleUpdateTaskPatch}
-                        onDuplicateTask={duplicateTask}
-                        onMoveTask={moveTask}
-                        onRemoveTask={removeTask}
-                        onChangeTaskQuarters={updateTaskQuarters}
-                        getTaskQuarters={getTaskQuarters}
-                        onAllocChange={handleAllocChange}
-                        onAllocCommit={commitCell}
-                        onShiftRow={shiftRow}
-                        onCopyRowToNextQuarter={copyRowToNextQuarter}
-                        onAddParticipant={addParticipantToTask}
-                        onRemoveParticipant={removeParticipantFromTask}
-                        onChangeParticipant={replaceParticipantInTask}
-                        onParticipantOrderChange={(taskId, order) => {
-                          setParticipantOrders((prev) => ({
-                            ...prev,
-                            [taskId]: order,
-                          }));
-                          applyParticipantOrderOptimistic(taskId, order);
-                        }}
                         hiddenParticipants={hiddenParticipantsTaskIds.has(t.id)}
-                        onToggleParticipantsVisibility={
-                          toggleParticipantsVisibility
-                        }
+                        actions={taskCardActions}
                         dragHandle={dragProps}
                       />
                     )}

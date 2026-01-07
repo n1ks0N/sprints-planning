@@ -3,7 +3,6 @@ import { Box, InputBase, Typography } from "@mui/material";
 
 export type EditableNumberCellProps = {
   value: number;
-  onChange: (next: number) => void;
   onCommit?: (next: number) => void;
   title?: string;
 };
@@ -13,19 +12,20 @@ const toInt = (value: number) =>
 
 export default function EditableNumberCell({
   value,
-  onChange,
   onCommit,
   title,
 }: EditableNumberCellProps) {
   const [editing, setEditing] = React.useState(false);
-  const [draft, setDraft] = React.useState(value ?? 0);
+  const [draft, setDraft] = React.useState<string>(
+    Number.isFinite(value) ? String(value) : "0"
+  );
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const prevEditingRef = React.useRef(editing);
   const inputId = React.useId();
 
   React.useEffect(() => {
     if (!editing) {
-      setDraft(value ?? 0);
+      setDraft(Number.isFinite(value) ? String(value) : "0");
     }
   }, [editing, value]);
 
@@ -41,15 +41,24 @@ export default function EditableNumberCell({
     setEditing(true);
   }, []);
 
+  const commitDraft = React.useCallback(() => {
+    const parsed = Number(draft);
+    const next = Number.isFinite(parsed) ? parsed : 0;
+    if (next !== value) {
+      onCommit?.(next);
+    }
+  }, [draft, onCommit, value]);
+
   const handleClose = React.useCallback(() => {
     if (!editing) return;
     setEditing(false);
-    const next = Number.isFinite(draft) ? draft : 0;
-    if (next !== value) {
-      onChange(next);
-      onCommit?.(next);
-    }
-  }, [draft, editing, onChange, onCommit, value]);
+    commitDraft();
+  }, [commitDraft, editing]);
+
+  const handleCancel = React.useCallback(() => {
+    setDraft(Number.isFinite(value) ? String(value) : "0");
+    setEditing(false);
+  }, [value]);
 
   if (!editing) {
     return (
@@ -72,15 +81,20 @@ export default function EditableNumberCell({
       inputRef={inputRef}
       type="number"
       autoFocus
-      value={Number.isFinite(draft) ? draft : 0}
+      value={draft}
       onChange={(e) => {
-        const v = Number(e.target.value);
-        setDraft(Number.isFinite(v) ? v : 0);
+        setDraft(e.target.value);
       }}
       onBlur={handleClose}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === "Escape") {
-          (e.currentTarget as HTMLInputElement).blur();
+        if (e.key === "Enter") {
+          e.preventDefault();
+          handleClose();
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          handleCancel();
         }
       }}
       sx={{
