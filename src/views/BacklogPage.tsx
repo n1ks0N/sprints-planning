@@ -450,12 +450,6 @@ type TaskCardProps = {
     onRemoveTask: (task: BacklogItem) => void;
     onChangeTaskQuarters: (taskId: string, quarterIds: string[]) => void;
     getTaskQuarters: (task: BacklogItem) => string[];
-    onAllocChange: (
-      taskId: string,
-      participantId: string,
-      sprintId: string,
-      value: number
-    ) => void;
     onAllocCommit: (
       taskId: string,
       participantId: string,
@@ -542,7 +536,6 @@ const TaskCard = React.memo(function TaskCard({
     onRemoveTask,
     onChangeTaskQuarters,
     getTaskQuarters,
-    onAllocChange,
     onAllocCommit,
     onShiftRow,
     onCopyRowToNextQuarter,
@@ -1175,9 +1168,6 @@ const TaskCard = React.memo(function TaskCard({
                             <TableCell key={s.id} align="center">
                               <EditableNumberCell
                                 value={Number(row[s.id] || 0)}
-                                onChange={(v) =>
-                                  onAllocChange(task.id, p.id, s.id, v)
-                                }
                                 onCommit={(next) =>
                                   onAllocCommit(task.id, p.id, s.id, next)
                                 }
@@ -2244,6 +2234,15 @@ export default function BacklogPage() {
       sprintId: string,
       value: number
     ) => {
+      setAllocations((prev) => {
+        const prevTask = prev[taskId] || {};
+        const prevRow = prevTask[participantId] || {};
+        const current = prevRow[sprintId] ?? 0;
+        if (current === value) return prev;
+        const nextRow = { ...prevRow, [sprintId]: value };
+        const nextTask = { ...prevTask, [participantId]: nextRow };
+        return { ...prev, [taskId]: nextTask };
+      });
       startTaskTransition(() => {
         upsertTaskAllocation({
           taskId,
@@ -2258,26 +2257,6 @@ export default function BacklogPage() {
       });
     },
     [startTaskTransition, upsertTaskAllocation]
-  );
-
-  const handleAllocChange = React.useCallback(
-    (
-      taskId: string,
-      participantId: string,
-      sprintId: string,
-      value: number
-    ) => {
-      setAllocations((prev) => {
-        const prevTask = prev[taskId] || {};
-        const prevRow = prevTask[participantId] || {};
-        const current = prevRow[sprintId] ?? 0;
-        if (current === value) return prev;
-        const nextRow = { ...prevRow, [sprintId]: value };
-        const nextTask = { ...prevTask, [participantId]: nextRow };
-        return { ...prev, [taskId]: nextTask };
-      });
-    },
-    []
   );
 
   const addParticipantToTask = React.useCallback((task: BacklogItem, pid: string) => {
@@ -2609,7 +2588,6 @@ export default function BacklogPage() {
       onRemoveTask: removeTask,
       onChangeTaskQuarters: updateTaskQuarters,
       getTaskQuarters,
-      onAllocChange: handleAllocChange,
       onAllocCommit: commitCell,
       onShiftRow: shiftRow,
       onCopyRowToNextQuarter: copyRowToNextQuarter,
@@ -2625,7 +2603,6 @@ export default function BacklogPage() {
       copyRowToNextQuarter,
       duplicateTask,
       getTaskQuarters,
-      handleAllocChange,
       handleParticipantOrderChange,
       handlePriorityChange,
       handleStatusChange,

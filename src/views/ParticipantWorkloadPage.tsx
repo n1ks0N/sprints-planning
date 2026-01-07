@@ -240,7 +240,7 @@ export default function ParticipantWorkloadPage() {
     });
   }, [tasks, sprintsInScope]);
 
-  const handleAllocChange = React.useCallback(
+  const commitCell = React.useCallback(
     (
       taskId: string,
       participantId: string,
@@ -256,17 +256,6 @@ export default function ParticipantWorkloadPage() {
         const nextTask = { ...prevTask, [participantId]: nextRow };
         return { ...prev, [taskId]: nextTask };
       });
-    },
-    []
-  );
-
-  const commitCell = React.useCallback(
-    (
-      taskId: string,
-      participantId: string,
-      sprintId: string,
-      value: number
-    ) => {
       upsertTaskAllocation({
         taskId,
         participantId,
@@ -500,14 +489,6 @@ export default function ParticipantWorkloadPage() {
                               >
                                 <EditableNumberCell
                                   value={v}
-                                  onChange={(next) =>
-                                    handleAllocChange(
-                                      r.task.id,
-                                      p.id,
-                                      s.id,
-                                      next
-                                    )
-                                  }
                                   onCommit={(next) =>
                                     commitCell(r.task.id, p.id, s.id, next)
                                   }
