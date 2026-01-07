@@ -454,7 +454,7 @@ type TaskCardProps = {
       taskId: string,
       participantId: string,
       sprintId: string,
-      value: number
+      allocation: number
     ) => void;
     onShiftRow: (
       taskId: string,
@@ -2232,14 +2232,14 @@ export default function BacklogPage() {
       taskId: string,
       participantId: string,
       sprintId: string,
-      value: number
+      allocation: number
     ) => {
       setAllocations((prev) => {
         const prevTask = prev[taskId] || {};
         const prevRow = prevTask[participantId] || {};
         const current = prevRow[sprintId] ?? 0;
-        if (current === value) return prev;
-        const nextRow = { ...prevRow, [sprintId]: value };
+        if (current === allocation) return prev;
+        const nextRow = { ...prevRow, [sprintId]: allocation };
         const nextTask = { ...prevTask, [participantId]: nextRow };
         return { ...prev, [taskId]: nextTask };
       });
@@ -2248,7 +2248,7 @@ export default function BacklogPage() {
           taskId,
           participantId,
           sprintId,
-          days: toInt(Number(value) || 0),
+          days: toInt(Number(allocation) || 0),
         })
           .unwrap()
           .catch((e) => {
