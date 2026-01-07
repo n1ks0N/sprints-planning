@@ -43,8 +43,6 @@ import {
   Visibility,
   VisibilityOff,
 } from "@mui/icons-material";
-import moment from "moment";
-import "moment/locale/ru";
 
 import {
   api,
@@ -94,8 +92,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-moment.locale("ru");
-
 // ---------- Utils ----------
 
 function byEnd(a: Sprint, b: Sprint) {
@@ -123,6 +119,11 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
 }
 
 type TasksPage = Page<BacklogItem>;
+
+type SprintDecorated = Sprint & {
+  startLabel: string;
+  endLabel: string;
+};
 
 function syncTasksPageMeta(draft: TasksPage) {
   const size = Math.max(1, (draft.page?.size ?? draft.content.length) || 1);
@@ -429,7 +430,7 @@ type TaskCardProps = {
   participants: Participant[];
   participantMap: Map<string, Participant>;
   participantOrder: string[];
-  sprintsGlobalOrdered: Sprint[];
+  sprintsGlobalOrdered: SprintDecorated[];
   sprintsByQuarter: Map<string, Sprint[]>;
   quartersSorted: Quarter[];
   selectedQuarterIds: string[];
@@ -704,8 +705,7 @@ const TaskCard = React.memo(function TaskCard({
         }}
       >
         <Box sx={{ fontWeight: 700 }}>
-          {moment(s.startDate).format("DD.MM.YYYY")} —{" "}
-          {moment(s.endDate).format("DD.MM.YYYY")}
+          {s.startLabel} — {s.endLabel}
         </Box>
         <Box sx={{ color: "text.secondary" }}>{s.name}</Box>
       </TableCell>
@@ -1433,6 +1433,15 @@ export default function BacklogPage() {
     const today = todayISO();
     return quarters.find((q) => isISOWithin(today, q.startDate, q.endDate));
   }, [quarters]);
+  const dateFmt = React.useMemo(
+    () =>
+      new Intl.DateTimeFormat("ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      }),
+    []
+  );
 
   const dispatch = useAppDispatch();
   const {
@@ -1472,6 +1481,15 @@ export default function BacklogPage() {
   const sprintsGlobalOrdered = React.useMemo(
     () => allSprints.slice().sort(byEnd),
     [allSprints]
+  );
+  const sprintsDecorated = React.useMemo(
+    () =>
+      sprintsGlobalOrdered.map((s) => ({
+        ...s,
+        startLabel: dateFmt.format(new Date(s.startDate)),
+        endLabel: dateFmt.format(new Date(s.endDate)),
+      })),
+    [dateFmt, sprintsGlobalOrdered]
   );
 
   const sprintsByQuarter = React.useMemo(() => {
@@ -1923,9 +1941,9 @@ export default function BacklogPage() {
       .sort((a, b) => a.localeCompare(b))
       .map((iso) => ({
         value: iso,
-        label: moment(iso).format("DD.MM.YYYY"),
+        label: dateFmt.format(new Date(iso)),
       }));
-  }, [promReleases]);
+  }, [dateFmt, promReleases]);
 
   const tasksPageSizeOptions = React.useMemo(
     () =>
@@ -2893,7 +2911,7 @@ export default function BacklogPage() {
                         participants={participants}
                         participantMap={participantMap}
                         participantOrder={participantOrder}
-                        sprintsGlobalOrdered={sprintsGlobalOrdered}
+                        sprintsGlobalOrdered={sprintsDecorated}
                         sprintsByQuarter={sprintsByQuarter}
                         quartersSorted={quartersSorted}
                         selectedQuarterIds={selectedQuarterIds}
