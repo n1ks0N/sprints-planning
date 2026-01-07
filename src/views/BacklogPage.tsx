@@ -420,14 +420,11 @@ function deriveTaskQuarters(
   return currentQuarterId ? [currentQuarterId] : [];
 }
 
-// taskId -> participantId -> sprintId -> days
-const EMPTY_ALLOCATIONS_ROW: Record<string, Record<string, number>> = {};
-
 // ---------- TaskCard (карточка задачи + таблица нагрузок) ----------
 
 type TaskCardProps = {
   task: BacklogItem;
-  allocationsByParticipant: Record<string, Record<string, number>>;
+  getCellValueForTask: (participantId: string, sprintId: string) => number;
   participants: Participant[];
   participantMap: Map<string, Participant>;
   participantOrder: string[];
@@ -510,7 +507,7 @@ const SortableParticipantRow = ({
 
 const TaskCard = React.memo(function TaskCard({
   task,
-  allocationsByParticipant,
+  getCellValueForTask,
   participants,
   participantMap,
   participantOrder,
@@ -545,7 +542,6 @@ const TaskCard = React.memo(function TaskCard({
     onParticipantOrderChange,
     onToggleParticipantsVisibility,
   } = actions;
-  const rows = allocationsByParticipant || {};
   const taskStatus = task.status ?? "inprogress";
   const taskQuarterIds = getTaskQuarters(task);
   const [selectedParticipantToAdd, setSelectedParticipantToAdd] =
@@ -579,7 +575,7 @@ const TaskCard = React.memo(function TaskCard({
   const sumBySprint: Record<string, number> = {};
   for (const s of effectiveSprints) {
     sumBySprint[s.id] = participantRows.reduce((a, p) => {
-      const v = Number(rows[p.id]?.[s.id] || 0);
+      const v = Number(getCellValueForTask(p.id, s.id) || 0);
       return a + toInt(v);
     }, 0);
   }
@@ -1076,9 +1072,9 @@ const TaskCard = React.memo(function TaskCard({
                 strategy={verticalListSortingStrategy}
               >
                 {participantRows.map((p) => {
-                  const row = rows[p.id] || {};
                   const rowSum = effectiveSprints.reduce(
-                    (acc, s) => acc + toInt(Number(row[s.id] || 0)),
+                    (acc, s) =>
+                      acc + toInt(Number(getCellValueForTask(p.id, s.id) || 0)),
                     0
                   );
                   const isLeader = leaderPid === p.id;
@@ -1167,7 +1163,7 @@ const TaskCard = React.memo(function TaskCard({
                           {effectiveSprints.map((s) => (
                             <TableCell key={s.id} align="center">
                               <EditableNumberCell
-                                value={Number(row[s.id] || 0)}
+                                value={Number(getCellValueForTask(p.id, s.id))}
                                 onCommit={(next) =>
                                   onAllocCommit(task.id, p.id, s.id, next)
                                 }
@@ -1678,11 +1674,12 @@ export default function BacklogPage() {
     Record<string, string[]>
   >(() => readLS<Record<string, string[]>>(LS_TASK_QUARTERS, {}));
 
-  const [allocations, setAllocations] = React.useState<Allocations>({});
-  const allocationsRef = React.useRef(allocations);
+  const [allocationOverrides, setAllocationOverrides] =
+    React.useState<Allocations>({});
+  const allocationOverridesRef = React.useRef(allocationOverrides);
   React.useEffect(() => {
-    allocationsRef.current = allocations;
-  }, [allocations]);
+    allocationOverridesRef.current = allocationOverrides;
+  }, [allocationOverrides]);
   const [participantOrders, setParticipantOrders] = React.useState<
     Record<string, string[]>
   >({});
@@ -1766,41 +1763,33 @@ export default function BacklogPage() {
     });
   }, [allTasks, allSprints, selectedQuarterIds, currentQ]);
 
-  // Синхронизация локального состояния allocations с данными задач
-  React.useEffect(() => {
-    setAllocations((prev) => {
-      const next: Allocations = { ...prev };
-      let changed = false;
-      for (const t of allTasks) {
-        const taskAllocations: Record<string, Record<string, number>> = next[
-          t.id
-        ] ?? (next[t.id] = {});
-        const pids = t.participantIds || [];
+  const taskById = React.useMemo(
+    () => new Map(allTasks.map((task) => [task.id, task])),
+    [allTasks]
+  );
 
-        Object.keys(taskAllocations).forEach((pid) => {
-          if (!pids.includes(pid)) {
-            delete taskAllocations[pid];
-            changed = true;
-          }
-        });
+  const getCellValue = React.useCallback(
+    (task: BacklogItem, participantId: string, sprintId: string): number =>
+      allocationOverridesRef.current[task.id]?.[participantId]?.[sprintId] ??
+      task.allocations?.[participantId]?.[sprintId] ??
+      0,
+    []
+  );
 
-        for (const pid of pids) {
-          const participantAllocations: Record<string, number> =
-            taskAllocations[pid] ?? (taskAllocations[pid] = {});
-          for (const s of allSprints) {
-            const existing = participantAllocations[s.id];
-            const incoming = t.allocations?.[pid]?.[s.id];
-            const value = Number(incoming ?? existing ?? 0) || 0;
-            if (participantAllocations[s.id] !== value) {
-              participantAllocations[s.id] = value;
-              changed = true;
-            }
-          }
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [allTasks, allSprints]);
+  const getCellValueById = React.useCallback(
+    (taskId: string, participantId: string, sprintId: string): number => {
+      const task = taskById.get(taskId);
+      if (!task) return 0;
+      return getCellValue(task, participantId, sprintId);
+    },
+    [getCellValue, taskById]
+  );
+
+  const getRowValue = React.useCallback(
+    (task: BacklogItem, participantId: string): Record<string, number> =>
+      allocationOverridesRef.current[task.id]?.[participantId] ?? {},
+    []
+  );
 
   React.useEffect(() => {
     setParticipantOrders((prev) => {
@@ -2143,7 +2132,7 @@ export default function BacklogPage() {
       releaseSprintId: "",
     }).unwrap();
 
-    setAllocations((prev) => ({ ...prev, [created.id]: {} }));
+    setAllocationOverrides((prev) => ({ ...prev, [created.id]: {} }));
     setPinnedTaskId(created.id);
     if (quarterId) {
       setTaskQuartersMap((prev) => ({ ...prev, [created.id]: [quarterId] }));
@@ -2165,12 +2154,21 @@ export default function BacklogPage() {
 
   const duplicateTask = React.useCallback(async (task: BacklogItem) => {
     const taskQuarters = getTaskQuarters(task);
-    const taskAllocations = allocationsRef.current[task.id] || {};
-    const allocationsPayload = Object.entries(taskAllocations).reduce<
+    const participantIds = task.participantIds || [];
+    const allocationsPayload = participantIds.reduce<
       Record<string, Record<string, number>>
-    >((acc, [pid, row]) => {
-      const positive = Object.entries(row)
-        .map(([sid, value]) => [sid, toInt(Number(value) || 0)] as const)
+    >((acc, pid) => {
+      const baseRow = task.allocations?.[pid] ?? {};
+      const overrideRow = getRowValue(task, pid);
+      const sprintIds = new Set([
+        ...Object.keys(baseRow),
+        ...Object.keys(overrideRow),
+      ]);
+      const positive = Array.from(sprintIds)
+        .map(
+          (sid) =>
+            [sid, toInt(Number(getCellValue(task, pid, sid)) || 0)] as const
+        )
         .filter(([, days]) => days > 0);
       if (positive.length) {
         acc[pid] = Object.fromEntries(positive);
@@ -2214,13 +2212,13 @@ export default function BacklogPage() {
     }
 
     return copy;
-  }, [addTask, allTasks.length, getTaskQuarters]);
+  }, [addTask, allTasks.length, getCellValue, getRowValue, getTaskQuarters]);
 
   const removeTask = React.useCallback(async (t: BacklogItem) => {
     if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
     await deleteTask({ id: t.id }).unwrap();
 
-    setAllocations((prev) => {
+    setAllocationOverrides((prev) => {
       const copy = { ...prev };
       delete copy[t.id];
       return copy;
@@ -2234,15 +2232,18 @@ export default function BacklogPage() {
       sprintId: string,
       allocation: number
     ) => {
-      setAllocations((prev) => {
-        const prevTask = prev[taskId] || {};
-        const prevRow = prevTask[participantId] || {};
-        const current = prevRow[sprintId] ?? 0;
-        if (current === allocation) return prev;
-        const nextRow = { ...prevRow, [sprintId]: allocation };
-        const nextTask = { ...prevTask, [participantId]: nextRow };
-        return { ...prev, [taskId]: nextTask };
-      });
+      const current = getCellValueById(taskId, participantId, sprintId);
+      if (current === allocation) return;
+      setAllocationOverrides((prev) => ({
+        ...prev,
+        [taskId]: {
+          ...(prev[taskId] || {}),
+          [participantId]: {
+            ...((prev[taskId] || {})[participantId] || {}),
+            [sprintId]: allocation,
+          },
+        },
+      }));
       startTaskTransition(() => {
         upsertTaskAllocation({
           taskId,
@@ -2256,7 +2257,7 @@ export default function BacklogPage() {
           });
       });
     },
-    [startTaskTransition, upsertTaskAllocation]
+    [getCellValueById, startTaskTransition, upsertTaskAllocation]
   );
 
   const addParticipantToTask = React.useCallback((task: BacklogItem, pid: string) => {
@@ -2270,23 +2271,21 @@ export default function BacklogPage() {
       [task.id]: [...(prev[task.id] || task.participantIds), pid],
     }));
 
-    setAllocations((prev) => {
+    setAllocationOverrides((prev) => {
       const prevTask = prev[task.id] || {};
       if (prevTask[pid]) return prev;
-      const newRow: Record<string, number> = {};
-      for (const s of allSprints) newRow[s.id] = 0;
       return {
         ...prev,
         [task.id]: {
           ...prevTask,
-          [pid]: newRow,
+          [pid]: {},
         },
       };
     });
-  }, [allSprints, updateField]);
+  }, [updateField]);
 
   const removeParticipantFromTask = React.useCallback(async (task: BacklogItem, pid: string) => {
-    setAllocations((prev) => {
+    setAllocationOverrides((prev) => {
       const prevTask = prev[task.id];
       if (!prevTask || !prevTask[pid]) return prev;
       const { [pid]: _, ...restRows } = prevTask;
@@ -2327,21 +2326,28 @@ export default function BacklogPage() {
     const participantIds = task.participantIds.map((id) =>
       id === fromPid ? toPid : id
     );
-    const taskAllocations = allocationsRef.current[task.id] || {};
-    const rowToMove = taskAllocations[fromPid] || {};
-    const nextAllocations = Object.entries(taskAllocations).reduce<
+    const buildRow = (pid: string) => {
+      const row: Record<string, number> = {};
+      for (const sprint of sprintsGlobalOrdered) {
+        row[sprint.id] = toInt(Number(getCellValue(task, pid, sprint.id)) || 0);
+      }
+      return row;
+    };
+
+    const rowToMove = buildRow(fromPid);
+    const taskAllocations = (task.participantIds || []).reduce<
       Record<string, Record<string, number>>
-    >((acc, [pid, row]) => {
+    >((acc, pid) => {
       if (pid === fromPid) return acc;
-      acc[pid] = { ...row };
+      acc[pid] = buildRow(pid);
       return acc;
     }, {});
 
-    nextAllocations[toPid] = { ...rowToMove };
+    taskAllocations[toPid] = { ...rowToMove };
 
-    setAllocations((prev) => {
+    setAllocationOverrides((prev) => {
       const prevTask = prev[task.id] || {};
-      const movedRow = prevTask[fromPid] || rowToMove;
+      const movedRow = prevTask[fromPid] || {};
       const { [fromPid]: _, ...rest } = prevTask;
       return {
         ...prev,
@@ -2362,7 +2368,7 @@ export default function BacklogPage() {
 
     const patch: Partial<BacklogItem> = {
       participantIds,
-      allocations: nextAllocations,
+      allocations: taskAllocations,
     };
 
     if ((task as any).leaderId === fromPid) {
@@ -2374,16 +2380,17 @@ export default function BacklogPage() {
     } catch (error) {
       console.error("Failed to replace participant", error);
     }
-  }, [updateField]);
+  }, [getCellValue, sprintsGlobalOrdered, updateField]);
 
   const shiftRow = React.useCallback((
     taskId: string,
     participantId: string,
     dir: "left" | "right"
   ) => {
-    const row = allocationsRef.current[taskId]?.[participantId] || {};
     const ids = sprintsGlobalOrdered.map((s) => s.id);
     if (!ids.length) return;
+    const task = taskById.get(taskId);
+    if (!task) return;
 
     const next: Record<string, number> = {};
 
@@ -2392,20 +2399,42 @@ export default function BacklogPage() {
       const targetIdx = dir === "left" ? i - 1 : i + 1;
       const targetSid =
         targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
-      const val = Number(row[fromSid] || 0);
+      const val = Number(getCellValue(task, participantId, fromSid) || 0);
       next[targetSid] = (next[targetSid] || 0) + val;
     }
 
-    setAllocations((prev) => {
+    setAllocationOverrides((prev) => {
       const prevTask = prev[taskId] || {};
       const prevRow = prevTask[participantId] || {};
-      return {
-        ...prev,
-        [taskId]: {
-          ...prevTask,
-          [participantId]: { ...prevRow, ...next },
-        },
-      };
+      const nextRow = { ...prevRow };
+      let changed = false;
+
+      for (const sid of ids) {
+        const nextValue = toInt(Number(next[sid] || 0));
+        const currentValue = toInt(
+          Number(getCellValue(task, participantId, sid) || 0)
+        );
+        if (nextValue === currentValue) {
+          if (sid in nextRow) {
+            delete nextRow[sid];
+            changed = true;
+          }
+          continue;
+        }
+        if (nextRow[sid] !== nextValue) {
+          nextRow[sid] = nextValue;
+          changed = true;
+        }
+      }
+
+      if (!changed) return prev;
+      const nextTask = { ...prevTask };
+      if (Object.keys(nextRow).length) {
+        nextTask[participantId] = nextRow;
+      } else {
+        delete nextTask[participantId];
+      }
+      return { ...prev, [taskId]: nextTask };
     });
 
     (async () => {
@@ -2426,17 +2455,17 @@ export default function BacklogPage() {
         console.error("Failed to bulk save allocations", error);
       }
     })();
-  }, [sprintsGlobalOrdered, upsertTaskAllocationBulk]);
+  }, [getCellValue, sprintsGlobalOrdered, taskById, upsertTaskAllocationBulk]);
 
   const copyRowToNextQuarter = React.useCallback((taskId: string, participantId: string) => {
-    const row = allocationsRef.current[taskId]?.[participantId] || {};
-    if (!Object.keys(row).length) return;
+    const task = taskById.get(taskId);
+    if (!task) return;
 
     const quartersWithLoad = new Set<string>();
-    for (const [sid, days] of Object.entries(row)) {
-      if (Number(days) > 0) {
-        const sprint = sprintById.get(sid);
-        if (sprint) quartersWithLoad.add(sprint.quarterId);
+    for (const sprint of sprintsGlobalOrdered) {
+      const days = Number(getCellValue(task, participantId, sprint.id) || 0);
+      if (days > 0) {
+        quartersWithLoad.add(sprint.quarterId);
       }
     }
     if (!quartersWithLoad.size) return;
@@ -2459,23 +2488,56 @@ export default function BacklogPage() {
     if (!srcSprints.length || !dstSprints.length) return;
 
     const maxLen = Math.min(srcSprints.length, dstSprints.length);
-    const nextRow: Record<string, number> = { ...row };
+    const nextRow: Record<string, number> = {};
 
     for (let i = 0; i < maxLen; i++) {
       const srcSid = srcSprints[i].id;
       const dstSid = dstSprints[i].id;
-      const val = Number(row[srcSid] || 0);
+      const val = Number(getCellValue(task, participantId, srcSid) || 0);
       if (val > 0) {
-        nextRow[dstSid] = (nextRow[dstSid] || 0) + val;
+        const currentDst = Number(
+          getCellValue(task, participantId, dstSid) || 0
+        );
+        const nextValue = currentDst + val;
+        if (nextValue !== currentDst) {
+          nextRow[dstSid] = nextValue;
+        }
       }
     }
 
-    setAllocations((prev) => {
+    if (!Object.keys(nextRow).length) return;
+
+    setAllocationOverrides((prev) => {
       const prevTask = prev[taskId] || {};
-      return {
-        ...prev,
-        [taskId]: { ...prevTask, [participantId]: nextRow },
-      };
+      const prevRow = prevTask[participantId] || {};
+      const nextOverrides = { ...prevRow };
+      let changed = false;
+
+      for (const [sid, days] of Object.entries(nextRow)) {
+        const currentValue = Number(
+          getCellValue(task, participantId, sid) || 0
+        );
+        if (days === currentValue) {
+          if (sid in nextOverrides) {
+            delete nextOverrides[sid];
+            changed = true;
+          }
+          continue;
+        }
+        if (nextOverrides[sid] !== days) {
+          nextOverrides[sid] = days;
+          changed = true;
+        }
+      }
+
+      if (!changed) return prev;
+      const nextTask = { ...prevTask };
+      if (Object.keys(nextOverrides).length) {
+        nextTask[participantId] = nextOverrides;
+      } else {
+        delete nextTask[participantId];
+      }
+      return { ...prev, [taskId]: nextTask };
     });
 
     (async () => {
@@ -2495,7 +2557,14 @@ export default function BacklogPage() {
         console.error("Failed to copy allocations to next quarter", error);
       }
     })();
-  }, [quartersSorted, sprintById, sprintsByQuarter, upsertTaskAllocationBulk]);
+  }, [
+    getCellValue,
+    quartersSorted,
+    sprintsByQuarter,
+    sprintsGlobalOrdered,
+    taskById,
+    upsertTaskAllocationBulk,
+  ]);
 
   const moveTask = React.useCallback((id: string, dir: "up" | "down") => {
     const current = filteredTasks.map((t) => t.id);
@@ -2790,16 +2859,16 @@ export default function BacklogPage() {
           >
             <Stack spacing={2}>
               {filteredTasks.map((t) => {
-                const allocationsByParticipant =
-                  allocations[t.id] || EMPTY_ALLOCATIONS_ROW;
                 const participantOrder = participantOrders[t.id] || [];
+                const getCellValueForTask = (participantId: string, sprintId: string) =>
+                  getCellValue(t, participantId, sprintId);
 
                 return (
                   <SortableTaskCard key={t.id} task={t}>
                     {(dragProps) => (
                       <TaskCard
                         task={t}
-                        allocationsByParticipant={allocationsByParticipant}
+                        getCellValueForTask={getCellValueForTask}
                         participants={participants}
                         participantMap={participantMap}
                         participantOrder={participantOrder}
