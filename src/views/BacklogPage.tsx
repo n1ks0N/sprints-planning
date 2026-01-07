@@ -72,6 +72,7 @@ import type {
 } from "../types";
 import { setBacklogFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
+import useInView from "./hooks/useInView";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 import FiltersPanel from "../components/filters/FiltersPanel";
 
@@ -720,8 +721,20 @@ const TaskCard = React.memo(function TaskCard({
     ? "Показать участников"
     : "Скрыть участников";
 
+  const [inViewRef, inView] = useInView({ rootMargin: "600px" });
+  const [isPending, startTransition] = React.useTransition();
+  const [renderHeavy, setRenderHeavy] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!inView || renderHeavy) return;
+    startTransition(() => {
+      setRenderHeavy(true);
+    });
+  }, [inView, renderHeavy, startTransition]);
+
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
+      <Box ref={inViewRef}>
       {/* Верхняя часть карточки */}
       <Stack
         direction={{ xs: "column", md: "row" }}
@@ -1007,7 +1020,7 @@ const TaskCard = React.memo(function TaskCard({
       </Stack>
 
       {/* Таблица нагрузок по участникам */}
-      {!hiddenParticipants && (
+      {!hiddenParticipants && renderHeavy && (
         <DndContext
           sensors={participantSensors}
           collisionDetection={closestCenter}
@@ -1324,6 +1337,13 @@ const TaskCard = React.memo(function TaskCard({
         </TableContainer>
         </DndContext>
       )}
+      {!hiddenParticipants && !renderHeavy && (
+        <Box sx={{ mt: 1, p: 2 }}>
+          <Typography color="text.secondary">
+            {isPending ? "Таблица догружается…" : "Таблица догружается…"}
+          </Typography>
+        </Box>
+      )}
 
       <Dialog open={Boolean(noteParticipant)} onClose={handleCloseNote} fullWidth>
         <DialogTitle>
@@ -1347,6 +1367,7 @@ const TaskCard = React.memo(function TaskCard({
           </Button>
         </DialogActions>
       </Dialog>
+      </Box>
     </Paper>
   );
 });
