@@ -2421,7 +2421,13 @@ export default function BacklogPage() {
     const ids = sprintsGlobalOrdered.map((s) => s.id);
     if (!ids.length) return;
 
-    const next: Record<string, number> = {};
+    const next: Record<string, number> = ids.reduce<Record<string, number>>(
+      (acc, sid) => {
+        acc[sid] = 0;
+        return acc;
+      },
+      {}
+    );
 
     for (let i = 0; i < ids.length; i++) {
       const fromSid = ids[i];
@@ -2434,12 +2440,11 @@ export default function BacklogPage() {
 
     setAllocations((prev) => {
       const prevTask = prev[taskId] || {};
-      const prevRow = prevTask[participantId] || {};
       return {
         ...prev,
         [taskId]: {
           ...prevTask,
-          [participantId]: { ...prevRow, ...next },
+          [participantId]: next,
         },
       };
     });
@@ -2453,10 +2458,11 @@ export default function BacklogPage() {
           },
           {}
         );
-        await upsertTaskAllocationBulk({
+        await upsertTaskAllocationMulti({
           taskId,
-          participantId,
-          allocations: bulkAllocations,
+          allocations: {
+            [participantId]: bulkAllocations,
+          },
         }).unwrap();
       } catch (error) {
         console.error("Failed to bulk save allocations", error);
@@ -2522,7 +2528,7 @@ export default function BacklogPage() {
           allocations: bulkAllocations,
         }).unwrap();
       } catch (error) {
-        console.error("Failed to bulk shift task allocations", error);
+        console.error("Failed to bulk save allocations", error);
       }
     })();
   };
