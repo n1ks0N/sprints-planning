@@ -1326,8 +1326,12 @@ export const api = createApi({
     }),
 
     // ---- History ----
-    getHistory: b.query<ApiSessionHistory[], void>({
-      query: () => ({ url: "/history", method: "GET" }),
+    getHistory: b.query<ApiSessionHistory[], { page: number; size: number }>({
+      query: ({ page, size }) => ({
+        url: "/history",
+        method: "GET",
+        params: { page, size },
+      }),
       providesTags: [listTag("History")],
       keepUnusedDataFor: 0,
     }),

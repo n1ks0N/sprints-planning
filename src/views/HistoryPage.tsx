@@ -3,12 +3,15 @@ import {
   AccordionDetails,
   AccordionSummary,
   Alert,
+  Button,
   Divider,
   Stack,
   Typography,
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import { useEffect, useState } from "react";
 import { useGetHistoryQuery } from "../app/api";
+import type { ApiSessionHistory } from "../types";
 
 const formatDateTime = (value: string) =>
   new Date(value).toLocaleString("ru-RU", {
@@ -20,23 +23,50 @@ const formatDateTime = (value: string) =>
   });
 
 export default function HistoryPage() {
-  const { data, isLoading, isError } = useGetHistoryQuery(undefined, {
-    refetchOnMountOrArgChange: true,
-    refetchOnReconnect: true,
-    refetchOnFocus: true,
-  });
+  const pageSize = 10;
+  const [page, setPage] = useState(0);
+  const [sessions, setSessions] = useState<ApiSessionHistory[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+  const { data, isLoading, isError, isFetching } = useGetHistoryQuery(
+    { page, size: pageSize },
+    {
+      refetchOnMountOrArgChange: true,
+      refetchOnReconnect: true,
+      refetchOnFocus: true,
+    }
+  );
 
-  if (isError) {
+  useEffect(() => {
+    if (!data) return;
+    setSessions((prev) => (page === 0 ? data : [...prev, ...data]));
+    setHasMore(data.length === pageSize);
+  }, [data, page, pageSize]);
+
+  const handleLoadMore = () => {
+    if (isFetching || !hasMore) return;
+    setPage((prev) => prev + 1);
+  };
+
+  const isInitialLoading = isLoading && sessions.length === 0;
+  const isInitialError = isError && sessions.length === 0;
+
+  if (isInitialError) {
     return <Alert severity="error">Не удалось загрузить историю действий</Alert>;
   }
 
-  if (!data || data.length === 0) {
+  if (isInitialLoading) {
+    return <Alert severity="info">Загрузка истории...</Alert>;
+  }
+
+  if (sessions.length === 0) {
     return <Alert severity="info">История действий пока пуста</Alert>;
   }
 
+  const isLoadingMore = isFetching && page > 0;
+
   return (
     <Stack spacing={2}>
-      {data.map((session) => (
+      {sessions.map((session) => (
         <Accordion
           key={`${session.sessionId}-${session.lastActionAt}`}
           disableGutters
@@ -80,6 +110,16 @@ export default function HistoryPage() {
           </AccordionDetails>
         </Accordion>
       ))}
+      {hasMore && (
+        <Button
+          variant="outlined"
+          onClick={handleLoadMore}
+          disabled={isFetching}
+          sx={{ alignSelf: "center" }}
+        >
+          {isLoadingMore ? "Загрузка..." : "Загрузить еще"}
+        </Button>
+      )}
     </Stack>
   );
 }

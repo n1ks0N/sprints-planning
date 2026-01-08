@@ -65,7 +65,7 @@ public class ApiHistoryService {
     }
 
     @Transactional(readOnly = true)
-    public List<ApiSessionHistoryDto> getHistory(String teamKey) {
+    public List<ApiSessionHistoryDto> getHistory(String teamKey, int page, int size) {
         List<ApiCallHistoryEntity> items = historyRepository.findAllByTeamKey(teamKey,
             Sort.by(Sort.Direction.DESC, "createdAt"));
 
@@ -99,7 +99,7 @@ public class ApiHistoryService {
             result.add(toSessionDto(current));
         }
 
-        return result;
+        return paginate(result, page, size);
     }
 
     private String decodeUserName(String rawHeader) {
@@ -120,11 +120,67 @@ public class ApiHistoryService {
             .sorted(Comparator.comparing(ApiCallHistoryEntity::getCreatedAt).reversed())
             .toList();
         ApiCallHistoryEntity latest = sorted.get(0);
-        List<ApiCallHistoryDto> actions = sorted.stream()
+        List<ApiCallHistoryEntity> trimmed = collapseConsecutiveActions(sorted);
+        List<ApiCallHistoryDto> actions = trimmed.stream()
             .map(DtoMapper::toApiCallHistoryDto)
             .toList();
         return new ApiSessionHistoryDto(latest.getSessionId(), latest.getUserName(),
             latest.getCreatedAt(), actions);
+    }
+
+    private List<ApiCallHistoryEntity> collapseConsecutiveActions(List<ApiCallHistoryEntity> actions) {
+        if (actions.isEmpty()) {
+            return actions;
+        }
+
+        List<ApiCallHistoryEntity> result = new ArrayList<>();
+        ApiCallHistoryEntity runFirst = actions.get(0);
+        ApiCallHistoryEntity runLast = runFirst;
+        int runLength = 1;
+
+        for (int i = 1; i < actions.size(); i++) {
+            ApiCallHistoryEntity current = actions.get(i);
+            if (isSameAction(runLast, current)) {
+                runLast = current;
+                runLength++;
+                continue;
+            }
+
+            result.add(runFirst);
+            if (runLength > 1) {
+                result.add(runLast);
+            }
+
+            runFirst = current;
+            runLast = current;
+            runLength = 1;
+        }
+
+        result.add(runFirst);
+        if (runLength > 1) {
+            result.add(runLast);
+        }
+
+        return result;
+    }
+
+    private boolean isSameAction(ApiCallHistoryEntity left, ApiCallHistoryEntity right) {
+        if (left == null || right == null) {
+            return false;
+        }
+        return left.getHttpMethod().equalsIgnoreCase(right.getHttpMethod())
+            && left.getPath().equalsIgnoreCase(right.getPath());
+    }
+
+    private List<ApiSessionHistoryDto> paginate(List<ApiSessionHistoryDto> sessions, int page, int size) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, size);
+        int fromIndex = safePage * safeSize;
+        if (fromIndex >= sessions.size()) {
+            return List.of();
+        }
+        int toIndex = Math.min(sessions.size(), fromIndex + safeSize);
+        return new ArrayList<>(sessions.subList(fromIndex, toIndex));
     }
 
     private boolean isAction(ApiCallHistoryEntity entity) {
