@@ -57,6 +57,7 @@ import {
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
   useUpsertTaskAllocationBulkMutation,
+  useUpsertTaskAllocationMultiMutation,
   useGetReleasesQuery,
 } from "../app/api";
 import EditableNumberCell from "../components/EditableNumberCell";
@@ -2077,6 +2078,7 @@ export default function BacklogPage() {
   const [deleteTask] = useDeleteTaskMutation();
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
+  const [upsertTaskAllocationMulti] = useUpsertTaskAllocationMultiMutation();
 
   const updateField = React.useCallback(
     (t: BacklogItem, patch: Partial<BacklogItem>) => {
@@ -2471,7 +2473,13 @@ export default function BacklogPage() {
 
     for (const participantId of participantIds) {
       const row = taskAllocations[participantId] || {};
-      const nextRow: Record<string, number> = {};
+      const nextRow: Record<string, number> = ids.reduce<Record<string, number>>(
+        (acc, sid) => {
+          acc[sid] = 0;
+          return acc;
+        },
+        {}
+      );
 
       for (let i = 0; i < ids.length; i++) {
         const fromSid = ids[i];
@@ -2482,10 +2490,7 @@ export default function BacklogPage() {
         nextRow[targetSid] = (nextRow[targetSid] || 0) + val;
       }
 
-      nextTaskAllocations[participantId] = {
-        ...(taskAllocations[participantId] || {}),
-        ...nextRow,
-      };
+      nextTaskAllocations[participantId] = nextRow;
     }
 
     if (!Object.keys(nextTaskAllocations).length) return;
@@ -2500,23 +2505,22 @@ export default function BacklogPage() {
 
     (async () => {
       try {
-        await Promise.all(
-          participantIds.map(async (participantId) => {
-            const row = nextTaskAllocations[participantId] || {};
-            const bulkAllocations = ids.reduce<Record<string, number>>(
-              (acc, sid) => {
-                acc[sid] = toInt(Number(row[sid] || 0));
-                return acc;
-              },
-              {}
-            );
-            return upsertTaskAllocationBulk({
-              taskId: task.id,
-              participantId,
-              allocations: bulkAllocations,
-            }).unwrap();
-          })
-        );
+        const bulkAllocations = Object.entries(nextTaskAllocations).reduce<
+          Record<string, Record<string, number>>
+        >((acc, [participantId, row]) => {
+          acc[participantId] = ids.reduce<Record<string, number>>(
+            (inner, sid) => {
+              inner[sid] = toInt(Number(row[sid] || 0));
+              return inner;
+            },
+            {}
+          );
+          return acc;
+        }, {});
+        await upsertTaskAllocationMulti({
+          taskId: task.id,
+          allocations: bulkAllocations,
+        }).unwrap();
       } catch (error) {
         console.error("Failed to bulk shift task allocations", error);
       }
