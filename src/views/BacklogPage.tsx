@@ -980,6 +980,24 @@ const TaskCard = React.memo(function TaskCard({
               </IconButton>
             </Tooltip>
 
+            <Tooltip title="Сдвинуть всех участников влево (по всем спринтам)">
+              <IconButton
+                size="small"
+                onClick={() => shiftTaskAllocations(task, "left")}
+              >
+                <ArrowBack fontSize="small" />
+              </IconButton>
+            </Tooltip>
+
+            <Tooltip title="Сдвинуть всех участников вправо (по всем спринтам)">
+              <IconButton
+                size="small"
+                onClick={() => shiftTaskAllocations(task, "right")}
+              >
+                <ArrowForward fontSize="small" />
+              </IconButton>
+            </Tooltip>
+
             <Tooltip title="Дублировать">
               <IconButton size="small" onClick={() => onDuplicateTask(task)}>
                 <CopyAll fontSize="small" />
@@ -2438,6 +2456,67 @@ export default function BacklogPage() {
         }).unwrap();
       } catch (error) {
         console.error("Failed to bulk save allocations", error);
+      }
+    })();
+  };
+
+  const shiftTaskAllocations = (task: BacklogItem, dir: "left" | "right") => {
+    const ids = sprintsGlobalOrdered.map((s) => s.id);
+    if (!ids.length) return;
+    const taskAllocations = allocations[task.id] || {};
+    const participantIds = task.participantIds || [];
+    const nextTaskAllocations: Record<string, Record<string, number>> = {};
+
+    for (const participantId of participantIds) {
+      const row = taskAllocations[participantId] || {};
+      const nextRow: Record<string, number> = {};
+
+      for (let i = 0; i < ids.length; i++) {
+        const fromSid = ids[i];
+        const targetIdx = dir === "left" ? i - 1 : i + 1;
+        const targetSid =
+          targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
+        const val = Number(row[fromSid] || 0);
+        nextRow[targetSid] = (nextRow[targetSid] || 0) + val;
+      }
+
+      nextTaskAllocations[participantId] = {
+        ...(taskAllocations[participantId] || {}),
+        ...nextRow,
+      };
+    }
+
+    if (!Object.keys(nextTaskAllocations).length) return;
+
+    setAllocations((prev) => {
+      const prevTask = prev[task.id] || {};
+      return {
+        ...prev,
+        [task.id]: { ...prevTask, ...nextTaskAllocations },
+      };
+    });
+
+    (async () => {
+      try {
+        await Promise.all(
+          participantIds.map(async (participantId) => {
+            const row = nextTaskAllocations[participantId] || {};
+            const bulkAllocations = ids.reduce<Record<string, number>>(
+              (acc, sid) => {
+                acc[sid] = toInt(Number(row[sid] || 0));
+                return acc;
+              },
+              {}
+            );
+            return upsertTaskAllocationBulk({
+              taskId: task.id,
+              participantId,
+              allocations: bulkAllocations,
+            }).unwrap();
+          })
+        );
+      } catch (error) {
+        console.error("Failed to bulk shift task allocations", error);
       }
     })();
   };
