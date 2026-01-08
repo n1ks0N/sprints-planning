@@ -465,6 +465,7 @@ type TaskCardProps = {
     participantId: string,
     dir: "left" | "right"
   ) => void;
+  onShiftTaskAllocations: (task: BacklogItem, dir: "left" | "right") => void;
   onCopyRowToNextQuarter: (taskId: string, participantId: string) => void;
   onAddParticipant: (task: BacklogItem, participantId: string) => void;
   onRemoveParticipant: (task: BacklogItem, participantId: string) => void;
@@ -538,6 +539,7 @@ const TaskCard = React.memo(function TaskCard({
   onAllocChange,
   onAllocCommit,
   onShiftRow,
+  onShiftTaskAllocations,
   onCopyRowToNextQuarter,
   onAddParticipant,
   onRemoveParticipant,
@@ -983,7 +985,7 @@ const TaskCard = React.memo(function TaskCard({
             <Tooltip title="Сдвинуть всех участников влево (по всем спринтам)">
               <IconButton
                 size="small"
-                onClick={() => shiftTaskAllocations(task, "left")}
+                onClick={() => onShiftTaskAllocations(task, "left")}
               >
                 <ArrowBack fontSize="small" />
               </IconButton>
@@ -992,7 +994,7 @@ const TaskCard = React.memo(function TaskCard({
             <Tooltip title="Сдвинуть всех участников вправо (по всем спринтам)">
               <IconButton
                 size="small"
-                onClick={() => shiftTaskAllocations(task, "right")}
+                onClick={() => onShiftTaskAllocations(task, "right")}
               >
                 <ArrowForward fontSize="small" />
               </IconButton>
@@ -2866,6 +2868,7 @@ export default function BacklogPage() {
                         onAllocChange={handleAllocChange}
                         onAllocCommit={commitCell}
                         onShiftRow={shiftRow}
+                        onShiftTaskAllocations={shiftTaskAllocations}
                         onCopyRowToNextQuarter={copyRowToNextQuarter}
                         onAddParticipant={addParticipantToTask}
                         onRemoveParticipant={removeParticipantFromTask}
