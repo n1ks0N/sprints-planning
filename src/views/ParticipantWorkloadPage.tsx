@@ -310,6 +310,13 @@ export default function ParticipantWorkloadPage() {
       <FiltersPanel
         withPaper={false}
         containerSx={{ mb: 2 }}
+        gridSx={{
+          gridTemplateColumns: {
+            xs: "repeat(auto-fit, minmax(260px, 1fr))",
+            md: "repeat(auto-fit, minmax(240px, 1fr))",
+          },
+          alignItems: "start",
+        }}
         filters={[
           {
             type: "autocomplete",
