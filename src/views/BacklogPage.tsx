@@ -552,6 +552,7 @@ const TaskCard = React.memo(function TaskCard({
   const taskQuarterIds = getTaskQuarters(task);
   const [selectedParticipantToAdd, setSelectedParticipantToAdd] =
     React.useState<Participant | null>(null);
+  const addParticipantInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const allowedSprints = React.useMemo(
     () =>
@@ -1289,7 +1290,10 @@ const TaskCard = React.memo(function TaskCard({
                       }
                       onChange={(_, value) => {
                         setSelectedParticipantToAdd(value);
-                        if (value) onAddParticipant(task, value.id);
+                        if (value) {
+                          onAddParticipant(task, value.id);
+                          addParticipantInputRef.current?.blur();
+                        }
                         setSelectedParticipantToAdd(null);
                       }}
                       value={selectedParticipantToAdd}
@@ -1299,6 +1303,7 @@ const TaskCard = React.memo(function TaskCard({
                           size="small"
                           label="Добавить участника"
                           placeholder="Выберите участника"
+                          inputRef={addParticipantInputRef}
                         />
                       )}
                       noOptionsText="Свободных участников нет"
