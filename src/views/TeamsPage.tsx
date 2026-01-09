@@ -34,6 +34,9 @@ import {
   setCurrentTeam,
 } from "../app/teamSlice";
 import { DEFAULT_TEAM_KEY } from "../teams";
+import PageHelpDialog, {
+  PageHelpContent,
+} from "../components/PageHelpDialog";
 
 export default function TeamsPage() {
   const dispatch = useDispatch();
@@ -53,6 +56,18 @@ export default function TeamsPage() {
   const [error, setError] = React.useState<string | null>(null);
 
   const keyPattern = /^[a-z0-9_-]+$/;
+  const helpContent: PageHelpContent = {
+    title: "Справка: Управление командами",
+    description:
+      "Страница предназначена для создания, переименования и удаления команд.",
+    bullets: [
+      "Блок «Добавить команду» создает новую команду по ключу и названию.",
+      "Кнопка «Открыть» переходит в выбранную команду.",
+      "Кнопка «Редактировать» включает изменение названия, «Сохранить» фиксирует изменения.",
+      "Кнопка «Удалить» открывает подтверждение удаления команды.",
+      "Чекбокс в диалоге удаления позволяет удалить команду вместе со всеми данными.",
+    ],
+  };
 
   React.useEffect(() => {
     if (teams) {
@@ -180,6 +195,15 @@ export default function TeamsPage() {
 
   return (
     <Box sx={{ p: 3 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        sx={{ mb: 2 }}
+      >
+        <Typography variant="h4">Управление командами</Typography>
+        <PageHelpDialog content={helpContent} />
+      </Stack>
       {error && (
         <Paper sx={{ p: 2, mb: 2 }}>
           <Typography color="error" variant="body2">
@@ -187,9 +211,6 @@ export default function TeamsPage() {
           </Typography>
         </Paper>
       )}
-      <Typography variant="h4" gutterBottom>
-        Управление командами
-      </Typography>
       <Paper sx={{ p: 2, mb: 3 }}>
         <Typography variant="h6" gutterBottom>
           Добавить команду
