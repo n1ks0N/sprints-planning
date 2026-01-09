@@ -1,4 +1,5 @@
 import React from "react";
+import CloseIcon from "@mui/icons-material/Close";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import {
   Dialog,
@@ -37,7 +38,22 @@ export default function PageHelpDialog({ content }: PageHelpDialogProps) {
         </IconButton>
       </Tooltip>
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>{content.title}</DialogTitle>
+        <DialogTitle
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {content.title}
+          <IconButton
+            aria-label="Закрыть"
+            onClick={() => setOpen(false)}
+            edge="end"
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
         <DialogContent dividers>
           <DialogContentText sx={{ mb: 2 }}>
             {content.description}
