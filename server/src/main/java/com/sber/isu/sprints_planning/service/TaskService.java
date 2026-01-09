@@ -3,6 +3,7 @@ package com.sber.isu.sprints_planning.service;
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationBulkRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskAllocationMultiRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskLoadRequest;
@@ -302,6 +303,48 @@ public class TaskService {
     }
 
     @Transactional
+    public TaskDto upsertAllocationsMulti(String teamKey, TaskAllocationMultiRequest request) {
+        TaskEntity task = taskRepository.findByIdAndTeamKey(UUID.fromString(request.taskId()), teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Task not found"));
+        Map<String, Map<String, BigDecimal>> allocationsByParticipant = request.allocations();
+        if (allocationsByParticipant == null || allocationsByParticipant.isEmpty()) {
+            return DtoMapper.toTaskDto(task);
+        }
+        Map<UUID, SprintEntity> sprints = fetchSprintsForMulti(teamKey, allocationsByParticipant);
+        for (Map.Entry<String, Map<String, BigDecimal>> participantEntry : allocationsByParticipant.entrySet()) {
+            String participantId = participantEntry.getKey();
+            if (participantId == null || participantId.isBlank()) {
+                continue;
+            }
+            ParticipantEntity participant = participantRepository.findByIdAndTeamKey(UUID.fromString(participantId), teamKey)
+                .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
+            Map<String, BigDecimal> row = participantEntry.getValue();
+            if (row == null) {
+                continue;
+            }
+            for (Map.Entry<String, BigDecimal> allocationEntry : row.entrySet()) {
+                SprintEntity sprint = resolveSprint(teamKey, sprints, allocationEntry.getKey());
+                TaskAllocationId id = new TaskAllocationId(task.getId(), participant.getId(), sprint.getId());
+                TaskAllocationEntity allocation = taskAllocationRepository.findById(id)
+                    .orElseGet(() -> {
+                        TaskAllocationEntity created = new TaskAllocationEntity();
+                        created.setId(id);
+                        created.setTask(task);
+                        created.setParticipant(participant);
+                        created.setSprint(sprint);
+                        created.setDays(BigDecimal.ZERO);
+                        task.getAllocations().add(created);
+                        return created;
+                    });
+                allocation.setDays(maxOrZero(allocationEntry.getValue()));
+                recalcLoad(task, sprint);
+            }
+        }
+        task.setUpdatedAt(LocalDate.now());
+        return DtoMapper.toTaskDto(task);
+    }
+
+    @Transactional
     public TaskDto upsertLoad(String teamKey, TaskLoadRequest request) {
         TaskEntity task = taskRepository.findByIdAndTeamKey(UUID.fromString(request.taskId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
@@ -463,6 +506,23 @@ public class TaskService {
             return Map.of();
         }
         Set<UUID> sprintIds = loads.keySet().stream()
+            .filter(Objects::nonNull)
+            .filter(id -> !id.isBlank())
+            .map(UUID::fromString)
+            .collect(Collectors.toSet());
+        return fetchSprintsByIds(teamKey, sprintIds);
+    }
+
+    private Map<UUID, SprintEntity> fetchSprintsForMulti(
+        String teamKey,
+        Map<String, Map<String, BigDecimal>> loadsByParticipant
+    ) {
+        if (loadsByParticipant == null || loadsByParticipant.isEmpty()) {
+            return Map.of();
+        }
+        Set<UUID> sprintIds = loadsByParticipant.values().stream()
+            .filter(Objects::nonNull)
+            .flatMap(row -> row.keySet().stream())
             .filter(Objects::nonNull)
             .filter(id -> !id.isBlank())
             .map(UUID::fromString)

@@ -1161,6 +1161,57 @@ export const api = createApi({
       },
     }),
 
+    upsertTaskAllocationMulti: b.mutation<
+      BacklogItem,
+      { taskId: string; allocations: Record<string, Record<string, number>> }
+    >({
+      query: (body) => ({ url: "/taskalloc/bulk/multi", method: "POST", body }),
+      invalidatesTags: (result, error, arg) => [
+        { type: "Task" as const, id: arg.taskId },
+        { type: "Task" as const, id: "LIST" as const },
+        { type: "Capacity" as const, id: "LIST" as const },
+      ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
+          getState,
+          "getTasks",
+          [
+            { type: "Task", id: "LIST" },
+            { type: "Task", id: arg.taskId },
+          ]
+        );
+
+        const patches = applyPatches(
+          dispatch,
+          "getTasks",
+          cachedArgs,
+          (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const task = tasks.find((t: BacklogItem) => t.id === arg.taskId);
+              if (task) {
+                Object.entries(arg.allocations).forEach(([participantId, row]) =>
+                  applyBulkAllocation(task, participantId, row)
+                );
+              }
+            });
+          }
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const idx = tasks.findIndex((t: BacklogItem) => t.id === data.id);
+              if (idx >= 0) tasks[idx] = data;
+            });
+          });
+        } catch (error) {
+          patches.forEach((p) => p.undo());
+          notifyError("Не удалось сохранить распределение по спринтам", error);
+        }
+      },
+    }),
+
     // Легаси-алиас для совместимости с undoSlice и старым кодом
     upsertTaskLoad: b.mutation<
       BacklogItem,
@@ -1435,6 +1486,7 @@ export const {
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
   useUpsertTaskAllocationBulkMutation,
+  useUpsertTaskAllocationMultiMutation,
   useUpsertTaskLoadMutation,
 
   useGetReleasesQuery,

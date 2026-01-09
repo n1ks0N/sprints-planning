@@ -57,6 +57,7 @@ import {
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
   useUpsertTaskAllocationBulkMutation,
+  useUpsertTaskAllocationMultiMutation,
   useGetReleasesQuery,
 } from "../app/api";
 import EditableNumberCell from "../components/EditableNumberCell";
@@ -465,6 +466,7 @@ type TaskCardProps = {
     participantId: string,
     dir: "left" | "right"
   ) => void;
+  onShiftTaskAllocations: (task: BacklogItem, dir: "left" | "right") => void;
   onCopyRowToNextQuarter: (taskId: string, participantId: string) => void;
   onAddParticipant: (task: BacklogItem, participantId: string) => void;
   onRemoveParticipant: (task: BacklogItem, participantId: string) => void;
@@ -538,6 +540,7 @@ const TaskCard = React.memo(function TaskCard({
   onAllocChange,
   onAllocCommit,
   onShiftRow,
+  onShiftTaskAllocations,
   onCopyRowToNextQuarter,
   onAddParticipant,
   onRemoveParticipant,
@@ -977,6 +980,24 @@ const TaskCard = React.memo(function TaskCard({
                 ) : (
                   <VisibilityOff fontSize="small" />
                 )}
+              </IconButton>
+            </Tooltip>
+
+            <Tooltip title="Сдвинуть всех участников влево (по всем спринтам)">
+              <IconButton
+                size="small"
+                onClick={() => onShiftTaskAllocations(task, "left")}
+              >
+                <ArrowBack fontSize="small" />
+              </IconButton>
+            </Tooltip>
+
+            <Tooltip title="Сдвинуть всех участников вправо (по всем спринтам)">
+              <IconButton
+                size="small"
+                onClick={() => onShiftTaskAllocations(task, "right")}
+              >
+                <ArrowForward fontSize="small" />
               </IconButton>
             </Tooltip>
 
@@ -2057,6 +2078,7 @@ export default function BacklogPage() {
   const [deleteTask] = useDeleteTaskMutation();
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
+  const [upsertTaskAllocationMulti] = useUpsertTaskAllocationMultiMutation();
 
   const updateField = React.useCallback(
     (t: BacklogItem, patch: Partial<BacklogItem>) => {
@@ -2399,7 +2421,13 @@ export default function BacklogPage() {
     const ids = sprintsGlobalOrdered.map((s) => s.id);
     if (!ids.length) return;
 
-    const next: Record<string, number> = {};
+    const next: Record<string, number> = ids.reduce<Record<string, number>>(
+      (acc, sid) => {
+        acc[sid] = 0;
+        return acc;
+      },
+      {}
+    );
 
     for (let i = 0; i < ids.length; i++) {
       const fromSid = ids[i];
@@ -2412,12 +2440,11 @@ export default function BacklogPage() {
 
     setAllocations((prev) => {
       const prevTask = prev[taskId] || {};
-      const prevRow = prevTask[participantId] || {};
       return {
         ...prev,
         [taskId]: {
           ...prevTask,
-          [participantId]: { ...prevRow, ...next },
+          [participantId]: next,
         },
       };
     });
@@ -2431,9 +2458,73 @@ export default function BacklogPage() {
           },
           {}
         );
-        await upsertTaskAllocationBulk({
+        await upsertTaskAllocationMulti({
           taskId,
-          participantId,
+          allocations: {
+            [participantId]: bulkAllocations,
+          },
+        }).unwrap();
+      } catch (error) {
+        console.error("Failed to bulk save allocations", error);
+      }
+    })();
+  };
+
+  const shiftTaskAllocations = (task: BacklogItem, dir: "left" | "right") => {
+    const ids = sprintsGlobalOrdered.map((s) => s.id);
+    if (!ids.length) return;
+    const taskAllocations = allocations[task.id] || {};
+    const participantIds = task.participantIds || [];
+    const nextTaskAllocations: Record<string, Record<string, number>> = {};
+
+    for (const participantId of participantIds) {
+      const row = taskAllocations[participantId] || {};
+      const nextRow: Record<string, number> = ids.reduce<Record<string, number>>(
+        (acc, sid) => {
+          acc[sid] = 0;
+          return acc;
+        },
+        {}
+      );
+
+      for (let i = 0; i < ids.length; i++) {
+        const fromSid = ids[i];
+        const targetIdx = dir === "left" ? i - 1 : i + 1;
+        const targetSid =
+          targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
+        const val = Number(row[fromSid] || 0);
+        nextRow[targetSid] = (nextRow[targetSid] || 0) + val;
+      }
+
+      nextTaskAllocations[participantId] = nextRow;
+    }
+
+    if (!Object.keys(nextTaskAllocations).length) return;
+
+    setAllocations((prev) => {
+      const prevTask = prev[task.id] || {};
+      return {
+        ...prev,
+        [task.id]: { ...prevTask, ...nextTaskAllocations },
+      };
+    });
+
+    (async () => {
+      try {
+        const bulkAllocations = Object.entries(nextTaskAllocations).reduce<
+          Record<string, Record<string, number>>
+        >((acc, [participantId, row]) => {
+          acc[participantId] = ids.reduce<Record<string, number>>(
+            (inner, sid) => {
+              inner[sid] = toInt(Number(row[sid] || 0));
+              return inner;
+            },
+            {}
+          );
+          return acc;
+        }, {});
+        await upsertTaskAllocationMulti({
+          taskId: task.id,
           allocations: bulkAllocations,
         }).unwrap();
       } catch (error) {
@@ -2787,6 +2878,7 @@ export default function BacklogPage() {
                         onAllocChange={handleAllocChange}
                         onAllocCommit={commitCell}
                         onShiftRow={shiftRow}
+                        onShiftTaskAllocations={shiftTaskAllocations}
                         onCopyRowToNextQuarter={copyRowToNextQuarter}
                         onAddParticipant={addParticipantToTask}
                         onRemoveParticipant={removeParticipantFromTask}
