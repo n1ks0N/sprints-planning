@@ -165,7 +165,10 @@ export function FilterAutocomplete(props: FilterAutocompleteProps) {
     );
   }
 
-  const singleValue = props.value ? buildOption(props.value) : null;
+  const singleValue = React.useMemo(
+    () => (props.value ? buildOption(props.value) : null),
+    [props.value, buildOption]
+  );
   const shouldCommitOnBlur = allowCustom && props.commitOnBlur;
   const debounceMs = allowCustom ? props.debounceMs ?? 0 : 0;
 
