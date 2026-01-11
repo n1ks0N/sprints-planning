@@ -2815,7 +2815,6 @@ export default function BacklogPage() {
                 onChange: handleTasksPageSizeChange,
                 placeholder: "20",
                 commitOnBlur: true,
-                debounceMs: 1500,
               },
             },
             {
