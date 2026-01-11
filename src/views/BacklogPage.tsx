@@ -1593,11 +1593,6 @@ export default function BacklogPage() {
     }
   }, [filtersSignature]);
 
-  const [searchDraft, setSearchDraft] = React.useState(searchQuery);
-
-  React.useEffect(() => {
-    setSearchDraft(searchQuery);
-  }, [searchQuery]);
 
   const applyTaskOrderOptimistic = React.useCallback(
     (orderedIds: string[]) =>
@@ -2025,14 +2020,17 @@ export default function BacklogPage() {
     [dispatch, startFiltersTransition, tasksPageSize]
   );
 
-  const handleSearchCommit = React.useCallback(() => {
-    const normalized = searchDraft.trim();
-    if (normalized !== normalizedSearch) {
-      startFiltersTransition(() => {
-        dispatch(setBacklogFilters({ searchQuery: normalized }));
-      });
-    }
-  }, [dispatch, normalizedSearch, searchDraft, startFiltersTransition]);
+  const handleSearchCommit = React.useCallback(
+    (value: string) => {
+      const normalized = value.trim();
+      if (normalized !== normalizedSearch) {
+        startFiltersTransition(() => {
+          dispatch(setBacklogFilters({ searchQuery: normalized }));
+        });
+      }
+    },
+    [dispatch, normalizedSearch, startFiltersTransition]
+  );
   const deferredStatusFilter = React.useDeferredValue(statusFilter);
   const deferredTasks = React.useDeferredValue(allTasks);
 
@@ -2823,10 +2821,10 @@ export default function BacklogPage() {
               minWidth: 220,
               props: {
                 label: "Поиск по названию/описанию/DOD",
-                value: searchDraft,
-                onChange: setSearchDraft,
+                value: searchQuery,
                 onCommit: handleSearchCommit,
                 placeholder: "Введите текст",
+                commitOnBlurOnly: true,
               },
             },
           ]}
