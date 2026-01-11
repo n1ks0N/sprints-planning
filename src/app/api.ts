@@ -272,6 +272,14 @@ const updateTasksDraft = (
   recalcPageMeta(draft);
 };
 
+const updateTaskDetailDraft = (
+  draft: BacklogItem | undefined,
+  updater: (task: BacklogItem) => void
+) => {
+  if (!draft) return;
+  updater(draft);
+};
+
 const collectSprintsFromCache = (state: AnyState): Sprint[] => {
   const queries = api.util
     .selectInvalidatedBy(state as any, [listTag("Sprint")])
@@ -1006,6 +1014,13 @@ export const api = createApi({
               });
             }
           );
+          const detailPatch = dispatch(
+            api.util.updateQueryData("getTask", arg.id, (draft) => {
+              updateTaskDetailDraft(draft, (task) => {
+                Object.assign(task, arg);
+              });
+            })
+          );
 
           try {
             const { data } = await queryFulfilled;
@@ -1015,8 +1030,15 @@ export const api = createApi({
                 if (idx >= 0) tasks[idx] = data;
               });
             });
+            dispatch(
+              api.util.updateQueryData("getTask", data.id, (draft) => {
+                if (draft) return data;
+                return draft;
+              })
+            );
           } catch (error) {
             patches.forEach((p) => p.undo());
+            detailPatch.undo();
             notifyError("Не удалось обновить задачу", error);
           }
         },
@@ -1050,11 +1072,15 @@ export const api = createApi({
             });
           }
         );
+        const detailPatch = dispatch(
+          api.util.updateQueryData("getTask", arg.id, () => undefined as any)
+        );
 
         try {
           await queryFulfilled;
         } catch (error) {
           patches.forEach((p) => p.undo());
+          detailPatch.undo();
           notifyError("Не удалось удалить задачу", error);
         }
       },
@@ -1098,6 +1124,13 @@ export const api = createApi({
             });
           }
         );
+        const detailPatch = dispatch(
+          api.util.updateQueryData("getTask", arg.taskId, (draft) => {
+            updateTaskDetailDraft(draft, (task) =>
+              applyAllocation(task, arg.participantId, arg.sprintId, arg.days)
+            );
+          })
+        );
 
         try {
           const { data } = await queryFulfilled;
@@ -1107,8 +1140,15 @@ export const api = createApi({
               if (idx >= 0) tasks[idx] = data;
             });
           });
+          dispatch(
+            api.util.updateQueryData("getTask", data.id, (draft) => {
+              if (draft) return data;
+              return draft;
+            })
+          );
         } catch (error) {
           patches.forEach((p) => p.undo());
+          detailPatch.undo();
           notifyError("Не удалось сохранить распределение задачи", error);
         }
       },
@@ -1145,6 +1185,13 @@ export const api = createApi({
             });
           }
         );
+        const detailPatch = dispatch(
+          api.util.updateQueryData("getTask", arg.taskId, (draft) => {
+            updateTaskDetailDraft(draft, (task) =>
+              applyBulkAllocation(task, arg.participantId, arg.allocations)
+            );
+          })
+        );
 
         try {
           const { data } = await queryFulfilled;
@@ -1154,8 +1201,15 @@ export const api = createApi({
               if (idx >= 0) tasks[idx] = data;
             });
           });
+          dispatch(
+            api.util.updateQueryData("getTask", data.id, (draft) => {
+              if (draft) return data;
+              return draft;
+            })
+          );
         } catch (error) {
           patches.forEach((p) => p.undo());
+          detailPatch.undo();
           notifyError("Не удалось сохранить распределение по спринтам", error);
         }
       },
@@ -1196,6 +1250,15 @@ export const api = createApi({
             });
           }
         );
+        const detailPatch = dispatch(
+          api.util.updateQueryData("getTask", arg.taskId, (draft) => {
+            updateTaskDetailDraft(draft, (task) => {
+              Object.entries(arg.allocations).forEach(([participantId, row]) =>
+                applyBulkAllocation(task, participantId, row)
+              );
+            });
+          })
+        );
 
         try {
           const { data } = await queryFulfilled;
@@ -1205,8 +1268,15 @@ export const api = createApi({
               if (idx >= 0) tasks[idx] = data;
             });
           });
+          dispatch(
+            api.util.updateQueryData("getTask", data.id, (draft) => {
+              if (draft) return data;
+              return draft;
+            })
+          );
         } catch (error) {
           patches.forEach((p) => p.undo());
+          detailPatch.undo();
           notifyError("Не удалось сохранить распределение по спринтам", error);
         }
       },
@@ -1244,6 +1314,13 @@ export const api = createApi({
             });
           }
         );
+        const detailPatch = dispatch(
+          api.util.updateQueryData("getTask", arg.taskId, (draft) => {
+            updateTaskDetailDraft(draft, (task) =>
+              applySprintLoad(task, arg.sprintId, arg.days)
+            );
+          })
+        );
 
         try {
           const { data } = await queryFulfilled;
@@ -1253,8 +1330,15 @@ export const api = createApi({
               if (idx >= 0) tasks[idx] = data;
             });
           });
+          dispatch(
+            api.util.updateQueryData("getTask", data.id, (draft) => {
+              if (draft) return data;
+              return draft;
+            })
+          );
         } catch (error) {
           patches.forEach((p) => p.undo());
+          detailPatch.undo();
           notifyError("Не удалось сохранить загрузку задачи", error);
         }
       },
@@ -1430,6 +1514,34 @@ export const api = createApi({
         skipTeamPrefix: true,
       }),
       invalidatesTags: [listTag("Team")],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const optimistic: Team = {
+          key: arg.key,
+          name: arg.name,
+        };
+
+        const patch = dispatch(
+          api.util.updateQueryData("getTeams", undefined, (draft) => {
+            const idx = draft.findIndex((t) => t.key === optimistic.key);
+            if (idx >= 0) draft[idx] = optimistic;
+            else draft.push(optimistic);
+          })
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getTeams", undefined, (draft) => {
+              const idx = draft.findIndex((t) => t.key === data.key);
+              if (idx >= 0) draft[idx] = data;
+              else draft.push(data);
+            })
+          );
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось создать команду", error);
+        }
+      },
     }),
 
     updateTeam: b.mutation<Team, { key: string; name: string }>({
@@ -1443,6 +1555,27 @@ export const api = createApi({
         { type: "Team", id: arg.key },
         listTag("Team"),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getTeams", undefined, (draft) => {
+            const idx = draft.findIndex((t) => t.key === arg.key);
+            if (idx >= 0) draft[idx] = { ...draft[idx], name: arg.name };
+          })
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getTeams", undefined, (draft) => {
+              const idx = draft.findIndex((t) => t.key === data.key);
+              if (idx >= 0) draft[idx] = data;
+            })
+          );
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось обновить команду", error);
+        }
+      },
     }),
 
     deleteTeam: b.mutation<void, { key: string; deleteData: boolean }>({
@@ -1456,6 +1589,21 @@ export const api = createApi({
         { type: "Team", id: arg.key },
         listTag("Team"),
       ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getTeams", undefined, (draft) => {
+            const idx = draft.findIndex((t) => t.key === arg.key);
+            if (idx >= 0) draft.splice(idx, 1);
+          })
+        );
+
+        try {
+          await queryFulfilled;
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось удалить команду", error);
+        }
+      },
     }),
   }),
 });
