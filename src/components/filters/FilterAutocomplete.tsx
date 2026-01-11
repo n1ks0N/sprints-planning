@@ -22,6 +22,8 @@ type BaseProps = {
   sx?: SxProps<Theme>;
   disableClearable?: boolean;
   helperText?: React.ReactNode;
+  commitOnBlur?: boolean;
+  debounceMs?: number;
 };
 
 type MultipleProps = BaseProps & {
@@ -163,15 +165,48 @@ export function FilterAutocomplete(props: FilterAutocompleteProps) {
     );
   }
 
-  const singleValue = props.value ? buildOption(props.value) : null;
+  const singleValue = React.useMemo(
+    () => (props.value ? buildOption(props.value) : null),
+    [props.value, buildOption]
+  );
+  const shouldCommitOnBlur = allowCustom && props.commitOnBlur;
+  const debounceMs = allowCustom ? props.debounceMs ?? 0 : 0;
 
   const [inputValue, setInputValue] = React.useState(
     singleValue?.label ?? ""
+  );
+  const debounceTimer = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null
   );
 
   React.useEffect(() => {
     setInputValue(singleValue?.label ?? props.value ?? "");
   }, [singleValue, props.value]);
+
+  React.useEffect(
+    () => () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+      }
+    },
+    []
+  );
+
+  const clearDebounce = React.useCallback(() => {
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+      debounceTimer.current = null;
+    }
+  }, []);
+
+  const commitValue = React.useCallback(
+    (rawValue: string) => {
+      const next = rawValue.trim();
+      if (next === props.value) return;
+      props.onChange(next);
+    },
+    [props.onChange, props.value]
+  );
 
   const handleSingleChange = (
     _: any,
@@ -181,7 +216,8 @@ export function FilterAutocomplete(props: FilterAutocompleteProps) {
       typeof value === "string"
         ? value
         : value?.value ?? (allowCustom ? inputValue : "");
-    props.onChange(next.trim());
+    clearDebounce();
+    commitValue(next);
   };
 
   const handleInputChange = (
@@ -190,8 +226,18 @@ export function FilterAutocomplete(props: FilterAutocompleteProps) {
     reason: AutocompleteInputChangeReason
   ) => {
     setInputValue(value);
-    if (allowCustom && (reason === "input" || reason === "clear")) {
-      props.onChange(value.trim());
+    if (!allowCustom) return;
+    if (reason !== "input" && reason !== "clear") return;
+    if (debounceMs > 0) {
+      clearDebounce();
+      debounceTimer.current = setTimeout(
+        () => commitValue(value),
+        debounceMs
+      );
+      return;
+    }
+    if (!shouldCommitOnBlur) {
+      commitValue(value);
     }
   };
 
@@ -222,6 +268,11 @@ export function FilterAutocomplete(props: FilterAutocompleteProps) {
           placeholder={placeholder}
           size={size}
           helperText={helperText}
+          onBlur={() => {
+            if (!shouldCommitOnBlur) return;
+            clearDebounce();
+            commitValue(inputValue);
+          }}
         />
       )}
     />

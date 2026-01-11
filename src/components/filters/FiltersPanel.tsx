@@ -8,10 +8,11 @@ import type { FilterAutocompleteProps } from "./FilterAutocomplete";
 export type SearchFilterConfig = {
   label: string;
   value: string;
-  onChange: (value: string) => void;
-  onCommit?: () => void;
+  onChange?: (value: string) => void;
+  onCommit?: (value: string) => void;
   placeholder?: string;
   sx?: SxProps<Theme>;
+  commitOnBlurOnly?: boolean;
 };
 
 export type FiltersPanelFilter =
@@ -83,18 +84,50 @@ export default function FiltersPanel({
           );
         }
 
-        const { label, value, onChange, onCommit, placeholder, sx } =
-          filter.props;
+        const {
+          label,
+          value,
+          onChange,
+          onCommit,
+          placeholder,
+          sx,
+          commitOnBlurOnly,
+        } = filter.props;
         const baseSx = filter.minWidth ? { minWidth: filter.minWidth } : undefined;
         const mergedSx = baseSx ? mergeSx(baseSx, sx) : sx;
+        const handleCommit = (nextValue: string) => {
+          onChange?.(nextValue);
+          onCommit?.(nextValue);
+        };
+
+        if (commitOnBlurOnly) {
+          return (
+            <TextField
+              key={`${filter.key}-${value}`}
+              label={label}
+              defaultValue={value}
+              onBlur={(e) => handleCommit(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                }
+              }}
+              placeholder={placeholder}
+              size="small"
+              fullWidth
+              sx={mergedSx}
+            />
+          );
+        }
 
         return (
           <TextField
             key={filter.key}
             label={label}
             value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onBlur={() => onCommit?.()}
+            onChange={(e) => onChange?.(e.target.value)}
+            onBlur={(e) => onCommit?.(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
