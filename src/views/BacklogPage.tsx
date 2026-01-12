@@ -75,6 +75,7 @@ import { setBacklogFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 import FiltersPanel from "../components/filters/FiltersPanel";
+import type { FiltersPanelFilter } from "../components/filters/FiltersPanel";
 
 import {
   DndContext,
@@ -144,6 +145,368 @@ function syncTasksPageMeta(draft: TasksPage) {
   draft.empty = draft.content.length === 0;
   draft.first = pageInfo.number <= 0;
   draft.last = pageInfo.number + 1 >= totalPages;
+}
+
+const EMPTY_TASKS: BacklogItem[] = [];
+
+type BacklogLocalState = {
+  taskQuartersMap: Record<string, string[]>;
+  allocations: Allocations;
+  participantOrders: Record<string, string[]>;
+  hiddenParticipantsTaskIds: Set<string>;
+};
+
+type BacklogLocalAction =
+  | {
+      type: "SYNC_FROM_TASKS";
+      tasks: BacklogItem[];
+      sprintQuarterById: Map<string, string>;
+      defaultQuarterId?: string;
+    }
+  | { type: "SET_TASK_QUARTERS"; taskId: string; quarterIds: string[] }
+  | { type: "TOGGLE_HIDDEN_PARTICIPANTS"; taskId: string; hidden: boolean }
+  | { type: "SET_PARTICIPANT_ORDER"; taskId: string; order: string[] }
+  | {
+      type: "SET_ALLOCATION";
+      taskId: string;
+      participantId: string;
+      sprintId: string;
+      value: number;
+    }
+  | {
+      type: "SET_ALLOCATIONS_ROW";
+      taskId: string;
+      participantId: string;
+      row: Record<string, number>;
+    }
+  | { type: "REMOVE_TASK"; taskId: string };
+
+const EMPTY_ALLOC: Allocations = {};
+const EMPTY_STR_ARR: string[] = [];
+
+function uniqStrings(xs: string[]) {
+  return Array.from(new Set(xs.filter(Boolean)));
+}
+
+function backlogLocalReducer(
+  state: BacklogLocalState,
+  action: BacklogLocalAction
+): BacklogLocalState {
+  switch (action.type) {
+    case "SYNC_FROM_TASKS": {
+      const { tasks, sprintQuarterById, defaultQuarterId } = action;
+
+      const taskById = new Map(tasks.map((t) => [t.id, t]));
+
+      let nextTaskQuartersMap = state.taskQuartersMap;
+      let taskQuartersChanged = false;
+
+      let nextAllocations = state.allocations;
+      let allocationsChanged = false;
+
+      let nextParticipantOrders = state.participantOrders;
+      let participantOrdersChanged = false;
+
+      for (const existingTaskId of Object.keys(state.taskQuartersMap)) {
+        if (!taskById.has(existingTaskId)) {
+          if (!taskQuartersChanged) {
+            nextTaskQuartersMap = { ...state.taskQuartersMap };
+            taskQuartersChanged = true;
+          }
+          delete nextTaskQuartersMap[existingTaskId];
+        }
+      }
+
+      for (const existingTaskId of Object.keys(state.allocations)) {
+        if (!taskById.has(existingTaskId)) {
+          if (!allocationsChanged) {
+            nextAllocations = { ...state.allocations };
+            allocationsChanged = true;
+          }
+          delete nextAllocations[existingTaskId];
+        }
+      }
+
+      for (const existingTaskId of Object.keys(state.participantOrders)) {
+        if (!taskById.has(existingTaskId)) {
+          if (!participantOrdersChanged) {
+            nextParticipantOrders = { ...state.participantOrders };
+            participantOrdersChanged = true;
+          }
+          delete nextParticipantOrders[existingTaskId];
+        }
+      }
+
+      for (const t of tasks) {
+        const existingQ = state.taskQuartersMap[t.id];
+        if (!existingQ || existingQ.length === 0) {
+          const explicit = Array.isArray((t as any).quarterIds)
+            ? ((t as any).quarterIds as string[]).filter(Boolean)
+            : [];
+          let derived: string[] = [];
+          if (explicit.length) {
+            derived = uniqStrings(explicit);
+          } else {
+            const from = new Set<string>();
+            const alloc = t.allocations || {};
+            for (const pid of Object.keys(alloc)) {
+              const row = (alloc as any)[pid] || {};
+              for (const sid of Object.keys(row)) {
+                const qid = sprintQuarterById.get(sid);
+                if (qid) from.add(qid);
+              }
+            }
+            const loads = t.loads || {};
+            for (const [sid, days] of Object.entries(loads)) {
+              if (Number(days) > 0) {
+                const qid = sprintQuarterById.get(sid);
+                if (qid) from.add(qid);
+              }
+            }
+            derived = from.size
+              ? Array.from(from)
+              : defaultQuarterId
+                ? [defaultQuarterId]
+                : [];
+          }
+
+          if (derived.length) {
+            if (!taskQuartersChanged) {
+              nextTaskQuartersMap = { ...state.taskQuartersMap };
+              taskQuartersChanged = true;
+            }
+            nextTaskQuartersMap[t.id] = derived;
+          }
+        }
+
+        const pids = t.participantIds || EMPTY_STR_ARR;
+        const existingOrder = state.participantOrders[t.id];
+
+        if (!existingOrder) {
+          if (pids.length) {
+            if (!participantOrdersChanged) {
+              nextParticipantOrders = { ...state.participantOrders };
+              participantOrdersChanged = true;
+            }
+            nextParticipantOrders[t.id] = pids.slice();
+          }
+        } else {
+          const kept = existingOrder.filter((id) => pids.includes(id));
+          const added = pids.filter((id) => !kept.includes(id));
+          const updated = [...kept, ...added];
+          if (!shallowArrayEqual(updated, existingOrder)) {
+            if (!participantOrdersChanged) {
+              nextParticipantOrders = { ...state.participantOrders };
+              participantOrdersChanged = true;
+            }
+            nextParticipantOrders[t.id] = updated;
+          }
+        }
+
+        const incoming = t.allocations || {};
+        const prevTaskAlloc = state.allocations[t.id];
+
+        let taskAlloc = prevTaskAlloc;
+        let taskAllocChanged = false;
+
+        if (prevTaskAlloc) {
+          for (const pid of Object.keys(prevTaskAlloc)) {
+            if (!pids.includes(pid)) {
+              if (!taskAllocChanged) {
+                taskAlloc = { ...prevTaskAlloc };
+                taskAllocChanged = true;
+              }
+              delete (taskAlloc as any)[pid];
+            }
+          }
+        }
+
+        for (const pid of pids) {
+          const incomingRow = (incoming as any)[pid] as
+            | Record<string, number>
+            | undefined;
+          if (!incomingRow) continue;
+
+          const prevRow = (taskAlloc as any)?.[pid] as
+            | Record<string, number>
+            | undefined;
+          let nextRow = prevRow;
+          let rowChanged = false;
+
+          for (const [sid, v] of Object.entries(incomingRow)) {
+            const val = Number(v ?? 0) || 0;
+            if ((prevRow?.[sid] ?? 0) !== val) {
+              if (!nextRow) {
+                nextRow = {};
+                rowChanged = true;
+              }
+              if (!rowChanged) {
+                nextRow = { ...prevRow };
+                rowChanged = true;
+              }
+              (nextRow as any)[sid] = val;
+            }
+          }
+
+          if (rowChanged) {
+            if (!taskAlloc) {
+              taskAlloc = {};
+              taskAllocChanged = true;
+            }
+            if (!taskAllocChanged && taskAlloc === prevTaskAlloc) {
+              taskAlloc = { ...(prevTaskAlloc || {}) };
+              taskAllocChanged = true;
+            }
+            (taskAlloc as any)[pid] = nextRow!;
+          } else {
+            if (!prevRow && incomingRow && Object.keys(incomingRow).length > 0) {
+              if (!taskAlloc) {
+                taskAlloc = {};
+                taskAllocChanged = true;
+              }
+              if (!taskAllocChanged && taskAlloc === prevTaskAlloc) {
+                taskAlloc = { ...(prevTaskAlloc || {}) };
+                taskAllocChanged = true;
+              }
+              (taskAlloc as any)[pid] = { ...incomingRow };
+            }
+          }
+        }
+
+        if (taskAllocChanged) {
+          if (!allocationsChanged) {
+            nextAllocations = { ...state.allocations };
+            allocationsChanged = true;
+          }
+          (nextAllocations as any)[t.id] = taskAlloc || {};
+        }
+      }
+
+      if (!taskQuartersChanged && !allocationsChanged && !participantOrdersChanged) {
+        return state;
+      }
+
+      return {
+        taskQuartersMap: nextTaskQuartersMap,
+        allocations: nextAllocations,
+        participantOrders: nextParticipantOrders,
+        hiddenParticipantsTaskIds: state.hiddenParticipantsTaskIds,
+      };
+    }
+
+    case "SET_TASK_QUARTERS": {
+      const unique = uniqStrings(action.quarterIds);
+      if (!unique.length) return state;
+      const prev = state.taskQuartersMap[action.taskId];
+      if (prev && shallowArrayEqual(prev, unique)) return state;
+      return {
+        ...state,
+        taskQuartersMap: { ...state.taskQuartersMap, [action.taskId]: unique },
+      };
+    }
+
+    case "TOGGLE_HIDDEN_PARTICIPANTS": {
+      const prev = state.hiddenParticipantsTaskIds;
+      const has = prev.has(action.taskId);
+      if (action.hidden === has) return state;
+      const next = new Set(prev);
+      if (action.hidden) next.add(action.taskId);
+      else next.delete(action.taskId);
+      return { ...state, hiddenParticipantsTaskIds: next };
+    }
+
+    case "SET_PARTICIPANT_ORDER": {
+      const prev = state.participantOrders[action.taskId];
+      if (prev && shallowArrayEqual(prev, action.order)) return state;
+      return {
+        ...state,
+        participantOrders: {
+          ...state.participantOrders,
+          [action.taskId]: action.order.slice(),
+        },
+      };
+    }
+
+    case "SET_ALLOCATION": {
+      const { taskId, participantId, sprintId } = action;
+      const value = Number(action.value ?? 0) || 0;
+
+      const prevTask = state.allocations[taskId] || {};
+      const prevRow = (prevTask as any)[participantId] || {};
+      const current = Number(prevRow[sprintId] ?? 0) || 0;
+      if (current === value) return state;
+
+      const nextRow = { ...prevRow, [sprintId]: value };
+      const nextTask = { ...prevTask, [participantId]: nextRow };
+      return {
+        ...state,
+        allocations: { ...state.allocations, [taskId]: nextTask },
+      };
+    }
+
+    case "SET_ALLOCATIONS_ROW": {
+      const { taskId, participantId, row } = action;
+      const prevTask = state.allocations[taskId] || {};
+      const prevRow = (prevTask as any)[participantId] || {};
+      const prevKeys = Object.keys(prevRow);
+      const nextKeys = Object.keys(row);
+      if (prevKeys.length === nextKeys.length) {
+        let same = true;
+        for (const k of nextKeys) {
+          if (Number(prevRow[k] ?? 0) !== Number(row[k] ?? 0)) {
+            same = false;
+            break;
+          }
+        }
+        if (same) return state;
+      }
+      const nextTask = { ...prevTask, [participantId]: { ...row } };
+      return {
+        ...state,
+        allocations: { ...state.allocations, [taskId]: nextTask },
+      };
+    }
+
+    case "REMOVE_TASK": {
+      const taskId = action.taskId;
+      if (
+        !state.taskQuartersMap[taskId] &&
+        !state.allocations[taskId] &&
+        !state.participantOrders[taskId]
+      ) {
+        return state;
+      }
+
+      const tq = { ...state.taskQuartersMap };
+      delete tq[taskId];
+      const al = { ...state.allocations };
+      delete al[taskId];
+      const po = { ...state.participantOrders };
+      delete po[taskId];
+
+      const hidden = new Set(state.hiddenParticipantsTaskIds);
+      hidden.delete(taskId);
+
+      return {
+        ...state,
+        taskQuartersMap: tq,
+        allocations: al,
+        participantOrders: po,
+        hiddenParticipantsTaskIds: hidden,
+      };
+    }
+
+    default:
+      return state;
+  }
+}
+
+function useDebouncedEffect(effect: () => void, deps: any[], delayMs: number) {
+  React.useEffect(() => {
+    const t = window.setTimeout(effect, delayMs);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
 }
 
 // ---------- Editable inputs (максимально локальное состояние) ----------
@@ -423,32 +786,19 @@ function deriveTaskQuarters(
 
 // taskId -> participantId -> sprintId -> days
 const EMPTY_ALLOCATIONS_ROW: Record<string, Record<string, number>> = {};
+const EMPTY_STRING_ARR: string[] = [];
 
-// ---------- TaskCard (карточка задачи + таблица нагрузок) ----------
-
-type TaskCardProps = {
-  task: BacklogItem;
-  allocationsByParticipant: Record<string, Record<string, number>>;
-  participants: Participant[];
-  participantMap: Map<string, Participant>;
-  participantOrder: string[];
-  sprintsGlobalOrdered: Sprint[];
-  sprintsByQuarter: Map<string, Sprint[]>;
-  quartersSorted: Quarter[];
-  selectedQuarterIds: string[];
-  quarterFilterOptions: { value: string; label: string }[];
-  customerOptions: string[];
-  streamOptions: string[];
-  releaseOptions: { value: string; label: string }[];
-  participantSensors: any;
+type TaskCardActions = {
   onStatusChange: (task: BacklogItem, status: TaskStatus) => void;
   onPriorityChange: (task: BacklogItem, priority: TaskPriority) => void;
   onUpdateTaskPatch: (task: BacklogItem, patch: Partial<BacklogItem>) => void;
-  onDuplicateTask: (task: BacklogItem) => void;
+  onDuplicateTask: (
+    task: BacklogItem,
+    allocationsByParticipant: Record<string, Record<string, number>>
+  ) => void;
   onMoveTask: (id: string, dir: "up" | "down") => void;
   onRemoveTask: (task: BacklogItem) => void;
   onChangeTaskQuarters: (taskId: string, quarterIds: string[]) => void;
-  getTaskQuarters: (task: BacklogItem) => string[];
   onAllocChange: (
     taskId: string,
     participantId: string,
@@ -464,20 +814,65 @@ type TaskCardProps = {
   onShiftRow: (
     taskId: string,
     participantId: string,
-    dir: "left" | "right"
+    dir: "left" | "right",
+    row: Record<string, number>
   ) => void;
-  onShiftTaskAllocations: (task: BacklogItem, dir: "left" | "right") => void;
-  onCopyRowToNextQuarter: (taskId: string, participantId: string) => void;
-  onAddParticipant: (task: BacklogItem, participantId: string) => void;
-  onRemoveParticipant: (task: BacklogItem, participantId: string) => void;
+  onShiftTaskAllocations: (
+    task: BacklogItem,
+    dir: "left" | "right",
+    allocationsByParticipant: Record<string, Record<string, number>>
+  ) => void;
+  onCopyRowToNextQuarter: (
+    taskId: string,
+    participantId: string,
+    row: Record<string, number>
+  ) => void;
+  onAddParticipant: (
+    task: BacklogItem,
+    participantId: string,
+    participantOrder: string[]
+  ) => void;
+  onRemoveParticipant: (
+    task: BacklogItem,
+    participantId: string,
+    participantOrder: string[]
+  ) => void;
   onChangeParticipant: (
     task: BacklogItem,
     fromParticipantId: string,
-    toParticipantId: string
+    toParticipantId: string,
+    allocationsByParticipant: Record<string, Record<string, number>>,
+    participantOrder: string[]
   ) => void;
   onParticipantOrderChange: (taskId: string, nextOrder: string[]) => void;
-  hiddenParticipants: boolean;
   onToggleParticipantsVisibility: (taskId: string, hidden: boolean) => void;
+};
+
+type BacklogCtx = {
+  participantsSortedByName: Participant[];
+  participantById: Record<string, Participant>;
+  sprintsSorted: Sprint[];
+  quartersSorted: Quarter[];
+  quarterFilterOptions: { value: string; label: string }[];
+  customerOptions: string[];
+  streamOptions: string[];
+  releaseOptions: { value: string; label: string }[];
+  releaseValueSet: Set<string>;
+  selectedQuarterIds: string[];
+  participantSensors: any;
+  findSprintIdByISO: (iso?: string) => string | "";
+  getTaskQuarters: (task: BacklogItem) => string[];
+};
+
+// ---------- TaskCard (карточка задачи + таблица нагрузок) ----------
+
+type TaskCardProps = {
+  task: BacklogItem;
+  allocationsByParticipant: Record<string, Record<string, number>>;
+  participantOrder: string[];
+  hiddenParticipants: boolean;
+  ctx: BacklogCtx;
+  actions: TaskCardActions;
   dragHandle?: DragHandleProps;
 };
 
@@ -490,6 +885,141 @@ type SortableParticipantRowProps = {
     setNodeRef: (element: HTMLElement | null) => void
   ) => React.ReactNode;
 };
+
+const HeaderSprintCell = React.memo(function HeaderSprintCell({
+  s,
+  highlight,
+}: {
+  s: Sprint;
+  highlight?: boolean;
+}) {
+  return (
+    <TableCell
+      align="center"
+      sx={{
+        minWidth: 110,
+        position: "relative",
+        bgcolor: highlight ? "warning.light" : undefined,
+      }}
+    >
+      <Box sx={{ fontWeight: 700 }}>
+        {moment(s.startDate).format("DD.MM.YYYY")} —{" "}
+        {moment(s.endDate).format("DD.MM.YYYY")}
+      </Box>
+      <Box sx={{ color: "text.secondary" }}>{s.name}</Box>
+    </TableCell>
+  );
+});
+
+const TooltipContent = React.memo(function TooltipContent({
+  title,
+  description,
+  dod,
+}: {
+  title: string;
+  description: string;
+  dod: string;
+}) {
+  return (
+    <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
+      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+        Заголовок: {title || "—"}
+      </Typography>
+      <Typography variant="body2">Описание: {description || "—"}</Typography>
+      <Typography variant="body2">DOD: {dod || "—"}</Typography>
+    </Stack>
+  );
+});
+
+type TaskDerived = {
+  taskStatus: TaskStatus;
+  taskQuarterIds: string[];
+  effectiveSprints: Sprint[];
+  orderedParticipantIds: string[];
+  participantRows: Participant[];
+  sumBySprint: Record<string, number>;
+  availableParticipants: Participant[];
+  leaderPid?: string;
+  relSprintId: string | "";
+  normalizedReleaseValue: string;
+};
+
+function useTaskDerived({
+  task,
+  allocationsByParticipant,
+  participantOrder,
+  ctx,
+}: {
+  task: BacklogItem;
+  allocationsByParticipant: Record<string, Record<string, number>>;
+  participantOrder: string[];
+  ctx: BacklogCtx;
+}): TaskDerived {
+  return React.useMemo(() => {
+    const taskStatus = task.status ?? "inprogress";
+    const taskQuarterIds = ctx.getTaskQuarters(task);
+    const allowedSprints = (taskQuarterIds.length
+      ? ctx.sprintsSorted.filter((s) => taskQuarterIds.includes(s.quarterId))
+      : ctx.sprintsSorted
+    ).slice();
+
+    const taskVisibleSprints =
+      ctx.selectedQuarterIds.length > 0
+        ? allowedSprints.filter((s) =>
+            ctx.selectedQuarterIds.includes(s.quarterId)
+          )
+        : allowedSprints;
+
+    const effectiveSprints =
+      taskVisibleSprints.length > 0 ? taskVisibleSprints : allowedSprints;
+
+    const orderedParticipantIds =
+      participantOrder.length > 0
+        ? participantOrder
+        : task.participantIds || [];
+
+    const participantRows = orderedParticipantIds
+      .map((id) => ctx.participantById[id])
+      .filter(Boolean) as Participant[];
+
+    const sumBySprint: Record<string, number> = Object.fromEntries(
+      effectiveSprints.map((s) => [s.id, 0])
+    );
+
+    for (const participant of participantRows) {
+      const row = allocationsByParticipant[participant.id] || {};
+      for (const sprint of effectiveSprints) {
+        sumBySprint[sprint.id] =
+          (sumBySprint[sprint.id] || 0) + toInt(Number(row[sprint.id] || 0));
+      }
+    }
+
+    const assignedIds = task.participantIds || EMPTY_STRING_ARR;
+    const assignedSet = new Set(assignedIds);
+    const availableParticipants = ctx.participantsSortedByName.filter(
+      (p) => !assignedSet.has(p.id)
+    );
+
+    const leaderPid = (task as any).leaderId || undefined;
+    const relISO = task.releaseDate || "";
+    const relSprintId =
+      task.releaseSprintId || ctx.findSprintIdByISO(relISO);
+    const normalizedReleaseValue = ctx.releaseValueSet.has(relISO) ? relISO : "";
+
+    return {
+      taskStatus,
+      taskQuarterIds,
+      effectiveSprints,
+      orderedParticipantIds,
+      participantRows,
+      sumBySprint,
+      availableParticipants,
+      leaderPid,
+      relSprintId,
+      normalizedReleaseValue,
+    };
+  }, [allocationsByParticipant, ctx, participantOrder, task]);
+}
 
 const SortableParticipantRow = ({
   participant,
@@ -517,93 +1047,52 @@ const SortableParticipantRow = ({
 const TaskCard = React.memo(function TaskCard({
   task,
   allocationsByParticipant,
-  participants,
-  participantMap,
   participantOrder,
-  sprintsGlobalOrdered,
-  sprintsByQuarter,
-  quartersSorted,
-  selectedQuarterIds,
-  quarterFilterOptions,
-  customerOptions,
-  streamOptions,
-  releaseOptions,
-  participantSensors,
-  onStatusChange,
-  onPriorityChange,
-  onUpdateTaskPatch,
-  onDuplicateTask,
-  onMoveTask,
-  onRemoveTask,
-  onChangeTaskQuarters,
-  getTaskQuarters,
-  onAllocChange,
-  onAllocCommit,
-  onShiftRow,
-  onShiftTaskAllocations,
-  onCopyRowToNextQuarter,
-  onAddParticipant,
-  onRemoveParticipant,
-  onChangeParticipant,
-  onParticipantOrderChange,
   hiddenParticipants,
-  onToggleParticipantsVisibility,
+  ctx,
+  actions,
   dragHandle,
 }: TaskCardProps) {
+  const {
+    onStatusChange,
+    onPriorityChange,
+    onUpdateTaskPatch,
+    onDuplicateTask,
+    onMoveTask,
+    onRemoveTask,
+    onChangeTaskQuarters,
+    onAllocChange,
+    onAllocCommit,
+    onShiftRow,
+    onShiftTaskAllocations,
+    onCopyRowToNextQuarter,
+    onAddParticipant,
+    onRemoveParticipant,
+    onChangeParticipant,
+    onParticipantOrderChange,
+    onToggleParticipantsVisibility,
+  } = actions;
   const rows = allocationsByParticipant || {};
-  const taskStatus = task.status ?? "inprogress";
-  const taskQuarterIds = getTaskQuarters(task);
   const [selectedParticipantToAdd, setSelectedParticipantToAdd] =
     React.useState<Participant | null>(null);
   const addParticipantInputRef = React.useRef<HTMLInputElement | null>(null);
-
-  const allowedSprints = React.useMemo(
-    () =>
-      (taskQuarterIds.length
-        ? sprintsGlobalOrdered.filter((s) =>
-            taskQuarterIds.includes(s.quarterId)
-          )
-        : sprintsGlobalOrdered
-      ).slice(),
-    [sprintsGlobalOrdered, taskQuarterIds]
-  );
-
-  const taskVisibleSprints =
-    selectedQuarterIds.length > 0
-      ? allowedSprints.filter((s) => selectedQuarterIds.includes(s.quarterId))
-      : allowedSprints;
-
-  const effectiveSprints =
-    taskVisibleSprints.length > 0 ? taskVisibleSprints : allowedSprints;
-
-  const orderedParticipantIds =
-    participantOrder.length > 0 ? participantOrder : task.participantIds || [];
-  const participantRows: Participant[] = orderedParticipantIds
-    .map((id) => participantMap.get(id))
-    .filter(Boolean) as Participant[];
-
-  const sumBySprint: Record<string, number> = {};
-  for (const s of effectiveSprints) {
-    sumBySprint[s.id] = participantRows.reduce((a, p) => {
-      const v = Number(rows[p.id]?.[s.id] || 0);
-      return a + toInt(v);
-    }, 0);
-  }
-
-  const leaderPid = (task as any).leaderId || undefined;
-  const relISO = task.releaseDate || "";
-
-  const detectSprintByDate = React.useCallback(
-    (iso?: string): string | undefined => {
-      if (!iso) return undefined;
-      const found = sprintsGlobalOrdered.find((s) =>
-        isISOWithin(iso, s.startDate, s.endDate)
-      );
-      return found?.id;
-    },
-    [sprintsGlobalOrdered]
-  );
-  const relSprintId = task.releaseSprintId || detectSprintByDate(relISO);
+  const {
+    taskStatus,
+    taskQuarterIds,
+    effectiveSprints,
+    orderedParticipantIds,
+    participantRows,
+    sumBySprint,
+    availableParticipants,
+    leaderPid,
+    relSprintId,
+    normalizedReleaseValue,
+  } = useTaskDerived({
+    task,
+    allocationsByParticipant: rows,
+    participantOrder,
+    ctx,
+  });
 
   const [customerDraft, setCustomerDraft] = React.useState(task.customer || "");
   const [streamDraft, setStreamDraft] = React.useState(task.stream || "");
@@ -645,18 +1134,6 @@ const TaskCard = React.memo(function TaskCard({
     handleCloseNote();
   }, [handleCloseNote, noteDraft, noteParticipant, onUpdateTaskPatch, task]);
 
-  const tooltipContent = (
-    <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
-      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-        Заголовок: {task.title || "—"}
-      </Typography>
-      <Typography variant="body2">
-        Описание: {task.description || "—"}
-      </Typography>
-      <Typography variant="body2">DOD: {task.dod || "—"}</Typography>
-    </Stack>
-  );
-
   const handleParticipantDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -671,13 +1148,6 @@ const TaskCard = React.memo(function TaskCard({
     onUpdateTaskPatch(task, { participantIds: reordered });
   };
 
-  const assignedParticipantIds = task.participantIds || [];
-  const availableParticipants = participants
-    .filter((p) => !assignedParticipantIds.includes(p.id))
-    .sort((a, b) =>
-      a.fullName.localeCompare(b.fullName, "ru", { sensitivity: "base" })
-    );
-
   React.useEffect(() => {
     if (
       selectedParticipantToAdd &&
@@ -687,12 +1157,6 @@ const TaskCard = React.memo(function TaskCard({
     }
   }, [availableParticipants, selectedParticipantToAdd]);
 
-  const allowedReleaseValues = React.useMemo(
-    () => new Set(releaseOptions.map((opt) => opt.value)),
-    [releaseOptions]
-  );
-  const normalizedReleaseValue = allowedReleaseValues.has(relISO) ? relISO : "";
-
   const clampedTextSx = {
     display: "-webkit-box",
     WebkitLineClamp: 2,
@@ -700,27 +1164,6 @@ const TaskCard = React.memo(function TaskCard({
     overflow: "hidden",
     wordBreak: "break-word" as const,
   };
-
-  const HeaderSprint = React.useCallback(
-    ({ s, highlight }: { s: Sprint; highlight?: boolean }) => (
-      <TableCell
-        key={s.id}
-        align="center"
-        sx={{
-          minWidth: 110,
-          position: "relative",
-          bgcolor: highlight ? "warning.light" : undefined,
-        }}
-      >
-        <Box sx={{ fontWeight: 700 }}>
-          {moment(s.startDate).format("DD.MM.YYYY")} —{" "}
-          {moment(s.endDate).format("DD.MM.YYYY")}
-        </Box>
-        <Box sx={{ color: "text.secondary" }}>{s.name}</Box>
-      </TableCell>
-    ),
-    []
-  );
 
   const handleToggleParticipants = React.useCallback(() => {
     onToggleParticipantsVisibility(task.id, !hiddenParticipants);
@@ -740,7 +1183,17 @@ const TaskCard = React.memo(function TaskCard({
         justifyContent="space-between"
         sx={{ mb: 1 }}
       >
-        <Tooltip title={tooltipContent} arrow placement="top-start">
+        <Tooltip
+          title={
+            <TooltipContent
+              title={task.title || ""}
+              description={task.description || ""}
+              dod={task.dod || ""}
+            />
+          }
+          arrow
+          placement="top-start"
+        >
           <Box sx={{ flex: 1, minWidth: 260, cursor: "help" }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
               <EditableText
@@ -869,7 +1322,7 @@ const TaskCard = React.memo(function TaskCard({
             multiple
             allowCustom={false}
             label="Кварталы"
-            options={quarterFilterOptions}
+            options={ctx.quarterFilterOptions}
             value={taskQuarterIds}
             onChange={(values) => {
               if (!values.length) return;
@@ -882,7 +1335,7 @@ const TaskCard = React.memo(function TaskCard({
           <Autocomplete
             size="small"
             freeSolo
-            options={customerOptions}
+            options={ctx.customerOptions}
             value={customerDraft}
             onInputChange={(_, v) => setCustomerDraft(v || "")}
             onChange={(_, v) => {
@@ -908,7 +1361,7 @@ const TaskCard = React.memo(function TaskCard({
           <Autocomplete
             size="small"
             freeSolo
-            options={streamOptions}
+            options={ctx.streamOptions}
             value={streamDraft}
             onInputChange={(_, v) => setStreamDraft(v || "")}
             onChange={(_, v) => {
@@ -938,7 +1391,7 @@ const TaskCard = React.memo(function TaskCard({
             value={normalizedReleaseValue}
             onChange={(e) => {
               const iso = String(e.target.value) || "";
-              const sid = detectSprintByDate(iso) || "";
+              const sid = ctx.findSprintIdByISO(iso) || "";
               onUpdateTaskPatch(task, {
                 releaseDate: iso,
                 releaseSprintId: sid,
@@ -950,7 +1403,7 @@ const TaskCard = React.memo(function TaskCard({
             <MenuItem value="">
               <em>—</em>
             </MenuItem>
-            {releaseOptions.map((opt) => (
+            {ctx.releaseOptions.map((opt) => (
               <MenuItem key={opt.value} value={opt.value}>
                 {opt.label}
               </MenuItem>
@@ -986,7 +1439,7 @@ const TaskCard = React.memo(function TaskCard({
             <Tooltip title="Сдвинуть всех участников влево (по всем спринтам)">
               <IconButton
                 size="small"
-                onClick={() => onShiftTaskAllocations(task, "left")}
+                onClick={() => onShiftTaskAllocations(task, "left", rows)}
               >
                 <ArrowBack fontSize="small" />
               </IconButton>
@@ -995,14 +1448,17 @@ const TaskCard = React.memo(function TaskCard({
             <Tooltip title="Сдвинуть всех участников вправо (по всем спринтам)">
               <IconButton
                 size="small"
-                onClick={() => onShiftTaskAllocations(task, "right")}
+                onClick={() => onShiftTaskAllocations(task, "right", rows)}
               >
                 <ArrowForward fontSize="small" />
               </IconButton>
             </Tooltip>
 
             <Tooltip title="Дублировать">
-              <IconButton size="small" onClick={() => onDuplicateTask(task)}>
+              <IconButton
+                size="small"
+                onClick={() => onDuplicateTask(task, rows)}
+              >
                 <CopyAll fontSize="small" />
               </IconButton>
             </Tooltip>
@@ -1037,68 +1493,68 @@ const TaskCard = React.memo(function TaskCard({
       {/* Таблица нагрузок по участникам */}
       {!hiddenParticipants && (
         <DndContext
-          sensors={participantSensors}
+          sensors={ctx.participantSensors}
           collisionDetection={closestCenter}
           onDragEnd={handleParticipantDragEnd}
         >
-        <TableContainer
-          component={Paper}
-          variant="outlined"
-          sx={{ mt: 1, position: "relative" }}
-        >
-          <Table size="small" stickyHeader>
-            <TableHead>
-              <TableRow>
-                <TableCell
-                  sx={{
-                    width: 52,
-                    position: "sticky",
-                    left: 0,
-                    zIndex: 3,
-                    bgcolor: "background.paper",
-                  }}
-                />
-                <TableCell
-                  sx={{
-                    minWidth: 260,
-                    position: "sticky",
-                    left: 52,
-                    zIndex: 3,
-                    bgcolor: "background.paper",
-                  }}
-                >
-                  Участник
-                </TableCell>
-                {effectiveSprints.map((s) => (
-                  <HeaderSprint
-                    key={s.id}
-                    s={s}
-                    highlight={Boolean(relSprintId && relSprintId === s.id)}
+          <TableContainer
+            component={Paper}
+            variant="outlined"
+            sx={{ mt: 1, position: "relative" }}
+          >
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell
+                    sx={{
+                      width: 52,
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 3,
+                      bgcolor: "background.paper",
+                    }}
                   />
-                ))}
-                <TableCell align="center" sx={{ minWidth: 100 }}>
-                  Итого
-                </TableCell>
-                <TableCell
-                  align="right"
-                  sx={{
-                    width: 220,
-                    position: "sticky",
-                    right: 0,
-                    zIndex: 3,
-                    bgcolor: "background.paper",
-                  }}
-                >
-                  Действия
-                </TableCell>
-              </TableRow>
-            </TableHead>
+                  <TableCell
+                    sx={{
+                      minWidth: 260,
+                      position: "sticky",
+                      left: 52,
+                      zIndex: 3,
+                      bgcolor: "background.paper",
+                    }}
+                  >
+                    Участник
+                  </TableCell>
+                  {effectiveSprints.map((s) => (
+                    <HeaderSprintCell
+                      key={s.id}
+                      s={s}
+                      highlight={Boolean(relSprintId && relSprintId === s.id)}
+                    />
+                  ))}
+                  <TableCell align="center" sx={{ minWidth: 100 }}>
+                    Итого
+                  </TableCell>
+                  <TableCell
+                    align="right"
+                    sx={{
+                      width: 220,
+                      position: "sticky",
+                      right: 0,
+                      zIndex: 3,
+                      bgcolor: "background.paper",
+                    }}
+                  >
+                    Действия
+                  </TableCell>
+                </TableRow>
+              </TableHead>
 
-            <TableBody>
-              <SortableContext
-                items={orderedParticipantIds}
-                strategy={verticalListSortingStrategy}
-              >
+              <TableBody>
+                <SortableContext
+                  items={orderedParticipantIds}
+                  strategy={verticalListSortingStrategy}
+                >
                 {participantRows.map((p) => {
                   const row = rows[p.id] || {};
                   const rowSum = effectiveSprints.reduce(
@@ -1106,11 +1562,7 @@ const TaskCard = React.memo(function TaskCard({
                     0
                   );
                   const isLeader = leaderPid === p.id;
-                  const participantEditOptions = participants.filter(
-                    (candidate) =>
-                      candidate.id === p.id ||
-                      !assignedParticipantIds.includes(candidate.id)
-                  );
+                  const participantEditOptions = [p, ...availableParticipants];
                   const participantNote = task.notes?.[p.id] ?? "";
                   const hasNote = participantNote.trim().length > 0;
 
@@ -1182,7 +1634,13 @@ const TaskCard = React.memo(function TaskCard({
                                 value={p}
                                 options={participantEditOptions}
                                 onCommit={(next) =>
-                                  onChangeParticipant(task, p.id, next.id)
+                                  onChangeParticipant(
+                                    task,
+                                    p.id,
+                                    next.id,
+                                    rows,
+                                    orderedParticipantIds
+                                  )
                                 }
                               />
                             </Stack>
@@ -1251,7 +1709,12 @@ const TaskCard = React.memo(function TaskCard({
                                 <IconButton
                                   size="small"
                                   onClick={() =>
-                                    onShiftRow(task.id, p.id, "left")
+                                    onShiftRow(
+                                      task.id,
+                                      p.id,
+                                      "left",
+                                      rows[p.id] || {}
+                                    )
                                   }
                                 >
                                   <ArrowBack fontSize="small" />
@@ -1262,7 +1725,12 @@ const TaskCard = React.memo(function TaskCard({
                                 <IconButton
                                   size="small"
                                   onClick={() =>
-                                    onShiftRow(task.id, p.id, "right")
+                                    onShiftRow(
+                                      task.id,
+                                      p.id,
+                                      "right",
+                                      rows[p.id] || {}
+                                    )
                                   }
                                 >
                                   <ArrowForward fontSize="small" />
@@ -1273,7 +1741,11 @@ const TaskCard = React.memo(function TaskCard({
                                 <IconButton
                                   size="small"
                                   onClick={() =>
-                                    onCopyRowToNextQuarter(task.id, p.id)
+                                    onCopyRowToNextQuarter(
+                                      task.id,
+                                      p.id,
+                                      rows[p.id] || {}
+                                    )
                                   }
                                 >
                                   <CopyAll fontSize="small" />
@@ -1284,7 +1756,11 @@ const TaskCard = React.memo(function TaskCard({
                                 <IconButton
                                   size="small"
                                   onClick={() =>
-                                    onRemoveParticipant(task, p.id)
+                                    onRemoveParticipant(
+                                      task,
+                                      p.id,
+                                      orderedParticipantIds
+                                    )
                                   }
                                 >
                                   <Delete fontSize="small" />
@@ -1312,7 +1788,11 @@ const TaskCard = React.memo(function TaskCard({
                       onChange={(_, value) => {
                         setSelectedParticipantToAdd(value);
                         if (value) {
-                          onAddParticipant(task, value.id);
+                          onAddParticipant(
+                            task,
+                            value.id,
+                            orderedParticipantIds
+                          );
                           addParticipantInputRef.current?.blur();
                         }
                         setSelectedParticipantToAdd(null);
@@ -1386,17 +1866,23 @@ const TaskCard = React.memo(function TaskCard({
   );
 });
 
-// ---------- Обёртка для DnD задач ----------
-
-type SortableTaskCardProps = {
+type SortableTaskCardItemProps = {
   task: BacklogItem;
-  children: (dragProps: DragHandleProps) => React.ReactNode;
+  allocationsByParticipant: Record<string, Record<string, number>>;
+  participantOrder: string[];
+  hiddenParticipants: boolean;
+  ctx: BacklogCtx;
+  actions: TaskCardActions;
 };
 
-function SortableTaskCard({
+const SortableTaskCardItem = React.memo(function SortableTaskCardItem({
   task,
-  children,
-}: SortableTaskCardProps): JSX.Element {
+  allocationsByParticipant,
+  participantOrder,
+  hiddenParticipants,
+  ctx,
+  actions,
+}: SortableTaskCardItemProps) {
   const {
     attributes,
     listeners,
@@ -1414,10 +1900,27 @@ function SortableTaskCard({
 
   return (
     <Box ref={setNodeRef} style={style} sx={{ width: "100%" }}>
-      {children({ attributes, listeners })}
+      <TaskCard
+        task={task}
+        allocationsByParticipant={allocationsByParticipant}
+        participantOrder={participantOrder}
+        hiddenParticipants={hiddenParticipants}
+        ctx={ctx}
+        actions={actions}
+        dragHandle={{ attributes, listeners }}
+      />
     </Box>
   );
-}
+}, (prev, next) => {
+  return (
+    prev.task === next.task &&
+    prev.allocationsByParticipant === next.allocationsByParticipant &&
+    shallowArrayEqual(prev.participantOrder, next.participantOrder) &&
+    prev.hiddenParticipants === next.hiddenParticipants &&
+    prev.ctx === next.ctx &&
+    prev.actions === next.actions
+  );
+});
 
 // ---------- BacklogPage ----------
 
@@ -1477,15 +1980,41 @@ export default function BacklogPage() {
     }
   }, [quarters.length, currentQuarterId, selectedQuarterIds.length, dispatch]);
 
-  const sprintById = React.useMemo(() => {
-    const m = new Map<string, Sprint>();
-    allSprints.forEach((s) => m.set(s.id, s));
-    return m;
+  const sprintsById = React.useMemo(() => {
+    const r: Record<string, Sprint> = {};
+    for (const s of allSprints) r[s.id] = s;
+    return r;
   }, [allSprints]);
 
   const sprintsGlobalOrdered = React.useMemo(
     () => allSprints.slice().sort(byEnd),
     [allSprints]
+  );
+
+  const sprintsSortedByStart = React.useMemo(
+    () => allSprints.slice().sort((a, b) => a.startDate.localeCompare(b.startDate)),
+    [allSprints]
+  );
+
+  const findSprintIdByISO = React.useCallback(
+    (iso?: string) => {
+      if (!iso) return "";
+      let low = 0;
+      let high = sprintsSortedByStart.length - 1;
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const sprint = sprintsSortedByStart[mid];
+        if (iso < sprint.startDate) {
+          high = mid - 1;
+        } else if (iso > sprint.endDate) {
+          low = mid + 1;
+        } else {
+          return sprint.id;
+        }
+      }
+      return "";
+    },
+    [sprintsSortedByStart]
   );
 
   const sprintsByQuarter = React.useMemo(() => {
@@ -1512,10 +2041,20 @@ export default function BacklogPage() {
     return quartersSorted[0]?.id ?? "";
   }, [selectedQuarterIds, currentQ, quartersSorted, quarterIdSet]);
 
-  const participantMap = React.useMemo(() => {
-    const m = new Map<string, Participant>();
-    participants.forEach((p) => m.set(p.id, p));
-    return m;
+  const participantsSortedByName = React.useMemo(
+    () =>
+      participants
+        .slice()
+        .sort((a, b) =>
+          a.fullName.localeCompare(b.fullName, "ru", { sensitivity: "base" })
+        ),
+    [participants]
+  );
+
+  const participantById = React.useMemo(() => {
+    const r: Record<string, Participant> = {};
+    for (const p of participants) r[p.id] = p;
+    return r;
   }, [participants]);
 
   const TASKS_PAGE_SIZE = React.useMemo(() => {
@@ -1638,22 +2177,20 @@ export default function BacklogPage() {
     [dispatch, tasksQueryArgs]
   );
 
-  const {
-    data: fetchedTasksPage,
-    isFetching,
-  } = useGetTasksQuery(tasksQueryArgs);
+  const { tasks, page, isFetching } = useGetTasksQuery(tasksQueryArgs, {
+    selectFromResult: ({ data, isFetching }) => ({
+      tasks: data?.content ?? EMPTY_TASKS,
+      page: data?.page,
+      isFetching,
+    }),
+  });
 
-  const fetchedTasks = React.useMemo(
-    () => fetchedTasksPage?.content ?? [],
-    [fetchedTasksPage]
-  );
-
-  const totalPages = fetchedTasksPage?.page?.totalPages;
-  const totalTasksCount = fetchedTasksPage?.page?.totalElements ?? 0;
+  const totalPages = page?.totalPages;
+  const totalTasksCount = page?.totalElements ?? 0;
 
   const hasMoreTasks = React.useMemo(
-    () => fetchedTasks.length < totalTasksCount,
-    [fetchedTasks.length, totalTasksCount]
+    () => tasks.length < totalTasksCount,
+    [tasks.length, totalTasksCount]
   );
 
   const loadNextTasksPage = React.useCallback(
@@ -1692,26 +2229,22 @@ export default function BacklogPage() {
     loadNextTasksPage,
   ]);
 
-  const allTasks = React.useMemo(
-    () =>
-      fetchedTasks.map((task) => ({
-        ...task,
-        status: (task.status as TaskStatus | undefined) ?? "inprogress",
-      })),
-    [fetchedTasks]
+  const initialLocalState = React.useMemo<BacklogLocalState>(
+    () => ({
+      taskQuartersMap: readLS<Record<string, string[]>>(LS_TASK_QUARTERS, {}),
+      allocations: EMPTY_ALLOC,
+      participantOrders: {},
+      hiddenParticipantsTaskIds: new Set(
+        readLS<string[]>(LS_HIDDEN_PARTICIPANTS, [])
+      ),
+    }),
+    []
   );
-  const [taskQuartersMap, setTaskQuartersMap] = React.useState<
-    Record<string, string[]>
-  >(() => readLS<Record<string, string[]>>(LS_TASK_QUARTERS, {}));
 
-  const [allocations, setAllocations] = React.useState<Allocations>({});
-  const [participantOrders, setParticipantOrders] = React.useState<
-    Record<string, string[]>
-  >({});
-  const [hiddenParticipantsTaskIds, setHiddenParticipantsTaskIds] =
-    React.useState<Set<string>>(
-      () => new Set(readLS<string[]>(LS_HIDDEN_PARTICIPANTS, []))
-    );
+  const [local, dispatchLocal] = React.useReducer(
+    backlogLocalReducer,
+    initialLocalState
+  );
   const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
   const [newTaskQuarterId, setNewTaskQuarterId] = React.useState<string>("");
   const [addTaskQuarterError, setAddTaskQuarterError] = React.useState(false);
@@ -1754,120 +2287,32 @@ export default function BacklogPage() {
     quarterIdsKey,
   ]);
 
-  React.useEffect(() => {
-    if (!allTasks.length) return;
+  useDebouncedEffect(() => {
+    writeLS(LS_TASK_QUARTERS, local.taskQuartersMap);
+  }, [local.taskQuartersMap], 400);
 
-    const taskMap = new Map(allTasks.map((t) => [t.id, t]));
-
-    setTaskQuartersMap((prev) => {
-      const next = { ...prev };
-      let changed = false;
-
-      for (const t of allTasks) {
-        if (!next[t.id] || next[t.id].length === 0) {
-          const derived = deriveTaskQuarters(
-            t,
-            allSprints,
-            selectedQuarterIds[0] || currentQ?.id
-          );
-          if (derived.length) {
-            next[t.id] = derived;
-            changed = true;
-          }
-        }
-      }
-
-      Object.keys(next).forEach((id) => {
-        if (!taskMap.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      });
-
-      return changed ? next : prev;
-    });
-  }, [allTasks, allSprints, selectedQuarterIds, currentQ]);
-
-  // Синхронизация локального состояния allocations с данными задач
-  React.useEffect(() => {
-    setAllocations((prev) => {
-      const next: Allocations = { ...prev };
-      let changed = false;
-      for (const t of allTasks) {
-        const taskAllocations: Record<string, Record<string, number>> = next[
-          t.id
-        ] ?? (next[t.id] = {});
-        const pids = t.participantIds || [];
-
-        Object.keys(taskAllocations).forEach((pid) => {
-          if (!pids.includes(pid)) {
-            delete taskAllocations[pid];
-            changed = true;
-          }
-        });
-
-        for (const pid of pids) {
-          const participantAllocations: Record<string, number> =
-            taskAllocations[pid] ?? (taskAllocations[pid] = {});
-          for (const s of allSprints) {
-            const existing = participantAllocations[s.id];
-            const incoming = t.allocations?.[pid]?.[s.id];
-            const value = Number(incoming ?? existing ?? 0) || 0;
-            if (participantAllocations[s.id] !== value) {
-              participantAllocations[s.id] = value;
-              changed = true;
-            }
-          }
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [allTasks, allSprints]);
-
-  React.useEffect(() => {
-    setParticipantOrders((prev) => {
-      const next = { ...prev } as Record<string, string[]>;
-      let changed = false;
-      for (const task of allTasks) {
-        const ids = task.participantIds || [];
-        const existing = next[task.id];
-        if (!existing) {
-          next[task.id] = ids.slice();
-          changed = true;
-          continue;
-        }
-        const kept = existing.filter((id) => ids.includes(id));
-        const added = ids.filter((id) => !kept.includes(id));
-        const updated = [...kept, ...added];
-        if (!shallowArrayEqual(updated, existing)) {
-          next[task.id] = updated;
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [allTasks]);
-
-  React.useEffect(
-    () => writeLS(LS_TASK_QUARTERS, taskQuartersMap),
-    [taskQuartersMap]
-  );
+  useDebouncedEffect(() => {
+    writeLS(
+      LS_HIDDEN_PARTICIPANTS,
+      Array.from(local.hiddenParticipantsTaskIds)
+    );
+  }, [local.hiddenParticipantsTaskIds], 400);
 
   const streamOptions = React.useMemo(() => {
     const s = new Set<string>();
-    for (const t of allTasks) if (t.stream?.trim()) s.add(t.stream.trim());
+    for (const t of tasks) if (t.stream?.trim()) s.add(t.stream.trim());
     return Array.from(s).sort();
-  }, [allTasks]);
+  }, [tasks]);
 
   const customerOptions = React.useMemo(() => {
     const s = new Set<string>();
-    for (const t of allTasks) if (t.customer?.trim()) s.add(t.customer.trim());
+    for (const t of tasks) if (t.customer?.trim()) s.add(t.customer.trim());
     return Array.from(s).sort();
-  }, [allTasks]);
+  }, [tasks]);
 
   const getTaskQuarters = React.useCallback(
     (task: BacklogItem): string[] => {
-      const fromMap = taskQuartersMap[task.id];
+      const fromMap = local.taskQuartersMap[task.id];
       if (fromMap && fromMap.length) return fromMap;
       const derived = deriveTaskQuarters(
         task,
@@ -1877,14 +2322,20 @@ export default function BacklogPage() {
       if (derived.length) return derived;
       return quartersSorted.map((q) => q.id);
     },
-    [taskQuartersMap, allSprints, selectedQuarterIds, currentQ, quartersSorted]
+    [
+      local.taskQuartersMap,
+      allSprints,
+      selectedQuarterIds,
+      currentQ,
+      quartersSorted,
+    ]
   );
 
   const updateTaskQuarters = React.useCallback(
     (taskId: string, quarterIds: string[]) => {
       const unique = Array.from(new Set(quarterIds.filter(Boolean)));
       if (!unique.length) return;
-      setTaskQuartersMap((prev) => ({ ...prev, [taskId]: unique }));
+      dispatchLocal({ type: "SET_TASK_QUARTERS", taskId, quarterIds: unique });
     },
     []
   );
@@ -1938,6 +2389,11 @@ export default function BacklogPage() {
         label: moment(iso).format("DD.MM.YYYY"),
       }));
   }, [promReleases]);
+
+  const releaseValueSet = React.useMemo(
+    () => new Set(releaseFilterOptions.map((opt) => opt.value)),
+    [releaseFilterOptions]
+  );
 
   const tasksPageSizeOptions = React.useMemo(
     () =>
@@ -2031,10 +2487,131 @@ export default function BacklogPage() {
     },
     [dispatch, normalizedSearch, startFiltersTransition]
   );
-  const deferredStatusFilter = React.useDeferredValue(statusFilter);
-  const deferredTasks = React.useDeferredValue(allTasks);
 
-  const filteredTasks = React.useMemo(() => {
+  const filtersConfig = React.useMemo<FiltersPanelFilter[]>(
+    () => [
+      {
+        type: "autocomplete",
+        key: "quarters",
+        minWidth: 200,
+        props: {
+          multiple: true,
+          allowCustom: false,
+          label: "Фильтр по кварталам",
+          options: quarterFilterOptions,
+          value: selectedQuarterIds,
+          onChange: handleQuarterFilterChange,
+        },
+      },
+      {
+        type: "autocomplete",
+        key: "priority",
+        minWidth: 160,
+        props: {
+          multiple: true,
+          allowCustom: false,
+          label: "Приоритет",
+          options: priorityOptions,
+          value: priorityFilter.map(String),
+          onChange: handlePriorityFilterChange,
+        },
+      },
+      {
+        type: "autocomplete",
+        key: "status",
+        minWidth: 200,
+        props: {
+          multiple: true,
+          allowCustom: false,
+          label: "Статусы",
+          options: statusOptions,
+          value: statusFilter,
+          onChange: handleStatusFilterChange,
+        },
+      },
+      {
+        type: "autocomplete",
+        key: "release",
+        minWidth: 200,
+        props: {
+          allowCustom: false,
+          label: "Релиз",
+          options: releaseFilterOptions,
+          value: releaseSprintFilter === "all" ? "" : releaseSprintFilter,
+          onChange: handleReleaseFilterChange,
+          placeholder: "Все релизы",
+        },
+      },
+      {
+        type: "autocomplete",
+        key: "stream",
+        minWidth: 200,
+        props: {
+          label: "Стрим по задаче",
+          options: streamOptions,
+          value: streamFilter,
+          onChange: handleStreamFilterChange,
+        },
+      },
+      {
+        type: "autocomplete",
+        key: "tasks-page-size",
+        minWidth: 200,
+        props: {
+          allowCustom: true,
+          label: "Количество задач",
+          options: tasksPageSizeOptions,
+          value: tasksPageSize,
+          onChange: handleTasksPageSizeChange,
+          placeholder: "20",
+          commitOnBlur: true,
+        },
+      },
+      {
+        type: "search",
+        key: "search",
+        minWidth: 220,
+        props: {
+          label: "Поиск по названию/описанию/DOD",
+          value: searchQuery,
+          onCommit: handleSearchCommit,
+          placeholder: "Введите текст",
+          commitOnBlurOnly: true,
+        },
+      },
+    ],
+    [
+      handlePriorityFilterChange,
+      handleQuarterFilterChange,
+      handleReleaseFilterChange,
+      handleSearchCommit,
+      handleStatusFilterChange,
+      handleStreamFilterChange,
+      handleTasksPageSizeChange,
+      priorityFilter,
+      priorityOptions,
+      quarterFilterOptions,
+      releaseFilterOptions,
+      releaseSprintFilter,
+      searchQuery,
+      selectedQuarterIds,
+      statusFilter,
+      statusOptions,
+      streamFilter,
+      streamOptions,
+      tasksPageSize,
+      tasksPageSizeOptions,
+    ]
+  );
+  const deferredStatusFilter = React.useDeferredValue(statusFilter);
+  const deferredTasks = React.useDeferredValue(tasks);
+
+  const taskById = React.useMemo(
+    () => new Map(deferredTasks.map((t) => [t.id, t])),
+    [deferredTasks]
+  );
+
+  const baseTaskIds = React.useMemo(() => {
     const byStatus =
       deferredStatusFilter.length === 0
         ? deferredTasks
@@ -2043,19 +2620,26 @@ export default function BacklogPage() {
             return deferredStatusFilter.includes(st);
           });
 
-    const pinnedTask = pinnedTaskId
-      ? deferredTasks.find((t) => t.id === pinnedTaskId) ?? null
-      : null;
-    const withPinned =
-      pinnedTask && !byStatus.some((t) => t.id === pinnedTask.id)
-        ? [pinnedTask, ...byStatus]
-        : byStatus;
-
-    const withOrder = withPinned.slice().sort((a, b) => {
-      if (pinnedTaskId) {
-        if (a.id === pinnedTaskId) return -1;
-        if (b.id === pinnedTaskId) return 1;
+    const ids = byStatus.map((t) => t.id);
+    if (pinnedTaskId && !ids.includes(pinnedTaskId)) {
+      const pinnedTask = taskById.get(pinnedTaskId);
+      if (pinnedTask) {
+        return [pinnedTaskId, ...ids];
       }
+    }
+    return ids;
+  }, [deferredStatusFilter, deferredTasks, pinnedTaskId, taskById]);
+
+  const sortedTaskIds = React.useMemo(() => {
+    const ids = baseTaskIds.slice();
+    ids.sort((ida, idb) => {
+      if (pinnedTaskId) {
+        if (ida === pinnedTaskId) return -1;
+        if (idb === pinnedTaskId) return 1;
+      }
+      const a = taskById.get(ida);
+      const b = taskById.get(idb);
+      if (!a || !b) return 0;
       const oa = Number.isFinite(a.order)
         ? Number(a.order)
         : Number.MAX_SAFE_INTEGER;
@@ -2065,11 +2649,41 @@ export default function BacklogPage() {
       if (oa !== ob) return oa - ob;
       return (a.createdAt || "").localeCompare(b.createdAt || "");
     });
+    return ids;
+  }, [baseTaskIds, pinnedTaskId, taskById]);
 
-    return withOrder;
-  }, [deferredTasks, deferredStatusFilter, pinnedTaskId]);
+  const displayedTasks = React.useMemo(
+    () =>
+      sortedTaskIds
+        .map((id) => taskById.get(id))
+        .filter((task): task is BacklogItem => Boolean(task)),
+    [sortedTaskIds, taskById]
+  );
 
-  const displayedTasksCount = filteredTasks.length;
+  const sprintQuarterById = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of allSprints) m.set(s.id, s.quarterId);
+    return m;
+  }, [allSprints]);
+
+  const tasksIdsKey = React.useMemo(
+    () => (sortedTaskIds.length ? sortedTaskIds.join("|") : ""),
+    [sortedTaskIds]
+  );
+
+  React.useEffect(() => {
+    startTaskTransition(() => {
+      dispatchLocal({
+        type: "SYNC_FROM_TASKS",
+        tasks: displayedTasks as BacklogItem[],
+        sprintQuarterById,
+        defaultQuarterId: selectedQuarterIds[0] || currentQ?.id,
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasksIdsKey, sprintQuarterById, selectedQuarterIds, currentQ?.id]);
+
+  const displayedTasksCount = displayedTasks.length;
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
@@ -2132,7 +2746,7 @@ export default function BacklogPage() {
     async (orderedIds: string[], movedTaskId: string) => {
       const completeIds = [
         ...orderedIds,
-        ...allTasks.filter((t) => !orderedIds.includes(t.id)).map((t) => t.id),
+        ...tasks.filter((t) => !orderedIds.includes(t.id)).map((t) => t.id),
       ];
 
       const targetIndex = completeIds.indexOf(movedTaskId);
@@ -2140,7 +2754,7 @@ export default function BacklogPage() {
 
       applyTaskOrderOptimistic(completeIds);
 
-      const currentOrderMap = new Map(allTasks.map((t) => [t.id, t.order]));
+      const currentOrderMap = new Map(tasks.map((t) => [t.id, t.order]));
       const currentOrder = currentOrderMap.get(movedTaskId);
       if (currentOrder === targetIndex) {
         return;
@@ -2152,7 +2766,7 @@ export default function BacklogPage() {
         console.error("Не удалось сохранить порядок задач", error);
       }
     },
-    [allTasks, applyTaskOrderOptimistic, updateTask]
+    [tasks, applyTaskOrderOptimistic, updateTask]
   );
 
   const createTask = async (quarterId?: string) => {
@@ -2169,10 +2783,13 @@ export default function BacklogPage() {
       releaseSprintId: "",
     }).unwrap();
 
-    setAllocations((prev) => ({ ...prev, [created.id]: {} }));
     setPinnedTaskId(created.id);
     if (quarterId) {
-      setTaskQuartersMap((prev) => ({ ...prev, [created.id]: [quarterId] }));
+      dispatchLocal({
+        type: "SET_TASK_QUARTERS",
+        taskId: created.id,
+        quarterIds: [quarterId],
+      });
     }
   };
 
@@ -2189,89 +2806,106 @@ export default function BacklogPage() {
     }
   };
 
-  const duplicateTask = async (task: BacklogItem) => {
-    const taskQuarters = getTaskQuarters(task);
-    const taskAllocations = allocations[task.id] || {};
-    const allocationsPayload = Object.entries(taskAllocations).reduce<
-      Record<string, Record<string, number>>
-    >((acc, [pid, row]) => {
-      const positive = Object.entries(row)
-        .map(([sid, value]) => [sid, toInt(Number(value) || 0)] as const)
-        .filter(([, days]) => days > 0);
-      if (positive.length) {
-        acc[pid] = Object.fromEntries(positive);
+  const duplicateTask = React.useCallback(
+    async (
+      task: BacklogItem,
+      allocationsByParticipant: Record<string, Record<string, number>>
+    ) => {
+      const taskQuarters = getTaskQuarters(task);
+      const allocationsPayload = Object.entries(
+        allocationsByParticipant || {}
+      ).reduce<Record<string, Record<string, number>>>((acc, [pid, row]) => {
+        const positive = Object.entries(row)
+          .map(([sid, value]) => [sid, toInt(Number(value) || 0)] as const)
+          .filter(([, days]) => days > 0);
+        if (positive.length) {
+          acc[pid] = Object.fromEntries(positive);
+        }
+        return acc;
+      }, {});
+
+      const loadsPayload = task.loads
+        ? Object.fromEntries(
+            Object.entries(task.loads)
+              .map(([sid, days]) => [sid, toInt(Number(days) || 0)] as const)
+              .filter(([, days]) => days > 0)
+          )
+        : undefined;
+
+      const baseOrder = Number.isFinite(task.order)
+        ? Number(task.order)
+        : tasks.length;
+      const copy = await addTask({
+        title: `${task.title} (копия)`,
+        description: (task as any).description,
+        dod: task.dod,
+        priority: task.priority,
+        status: task.status ?? "inprogress",
+        customer: task.customer,
+        stream: task.stream,
+        participantIds: task.participantIds.slice(),
+        releaseDate: task.releaseDate,
+        releaseSprintId: task.releaseSprintId,
+        leaderId: (task as any).leaderId ?? undefined,
+        quarterIds: taskQuarters,
+        order: baseOrder + 1,
+        loads: loadsPayload,
+        allocations: Object.keys(allocationsPayload).length
+          ? allocationsPayload
+          : undefined,
+      }).unwrap();
+
+      if (taskQuarters.length) {
+        dispatchLocal({
+          type: "SET_TASK_QUARTERS",
+          taskId: copy.id,
+          quarterIds: taskQuarters,
+        });
       }
-      return acc;
-    }, {});
 
-    const loadsPayload = task.loads
-      ? Object.fromEntries(
-          Object.entries(task.loads)
-            .map(([sid, days]) => [sid, toInt(Number(days) || 0)] as const)
-            .filter(([, days]) => days > 0)
-        )
-      : undefined;
-
-    const baseOrder = Number.isFinite(task.order)
-      ? Number(task.order)
-      : allTasks.length;
-    const copy = await addTask({
-      title: `${task.title} (копия)`,
-      description: (task as any).description,
-      dod: task.dod,
-      priority: task.priority,
-      status: task.status ?? "inprogress",
-      customer: task.customer,
-      stream: task.stream,
-      participantIds: task.participantIds.slice(),
-      releaseDate: task.releaseDate,
-      releaseSprintId: task.releaseSprintId,
-      leaderId: (task as any).leaderId ?? undefined,
-      quarterIds: taskQuarters,
-      order: baseOrder + 1,
-      loads: loadsPayload,
-      allocations: Object.keys(allocationsPayload).length
-        ? allocationsPayload
-        : undefined,
-    }).unwrap();
-
-    if (taskQuarters.length) {
-      setTaskQuartersMap((prev) => ({ ...prev, [copy.id]: taskQuarters }));
-    }
-
-    return copy;
-  };
-
-  const removeTask = async (t: BacklogItem) => {
-    if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
-    await deleteTask({ id: t.id }).unwrap();
-
-    setAllocations((prev) => {
-      const copy = { ...prev };
-      delete copy[t.id];
       return copy;
-    });
-  };
+    },
+    [addTask, getTaskQuarters, tasks.length]
+  );
 
-  const commitCell = (
-    taskId: string,
-    participantId: string,
-    sprintId: string,
-    value: number
-  ) => {
-    startTaskTransition(() => {
-      upsertTaskAllocation({
+  const removeTask = React.useCallback(
+    async (t: BacklogItem) => {
+      if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
+      await deleteTask({ id: t.id }).unwrap();
+      dispatchLocal({ type: "REMOVE_TASK", taskId: t.id });
+    },
+    [deleteTask]
+  );
+
+  const commitCell = React.useCallback(
+    (
+      taskId: string,
+      participantId: string,
+      sprintId: string,
+      value: number
+    ) => {
+      dispatchLocal({
+        type: "SET_ALLOCATION",
         taskId,
         participantId,
         sprintId,
-        days: toInt(Number(value) || 0),
-      })
-        .unwrap()
-        .catch((e) => {
-          console.error("Failed to save allocation", e);
-        });
-    });
-  };
+        value,
+      });
+      startTaskTransition(() => {
+        upsertTaskAllocation({
+          taskId,
+          participantId,
+          sprintId,
+          days: toInt(Number(value) || 0),
+        })
+          .unwrap()
+          .catch((e) => {
+            console.error("Failed to save allocation", e);
+          });
+      });
+    },
+    [startTaskTransition, upsertTaskAllocation]
+  );
 
   const handleAllocChange = React.useCallback(
     (
@@ -2280,204 +2914,143 @@ export default function BacklogPage() {
       sprintId: string,
       value: number
     ) => {
-      setAllocations((prev) => {
-        const prevTask = prev[taskId] || {};
-        const prevRow = prevTask[participantId] || {};
-        const current = prevRow[sprintId] ?? 0;
-        if (current === value) return prev;
-        const nextRow = { ...prevRow, [sprintId]: value };
-        const nextTask = { ...prevTask, [participantId]: nextRow };
-        return { ...prev, [taskId]: nextTask };
+      dispatchLocal({
+        type: "SET_ALLOCATION",
+        taskId,
+        participantId,
+        sprintId,
+        value,
       });
     },
     []
   );
 
-  const addParticipantToTask = (task: BacklogItem, pid: string) => {
-    if (!pid) return;
-    if (task.participantIds?.includes(pid)) return;
+  const addParticipantToTask = React.useCallback(
+    (task: BacklogItem, pid: string, participantOrder: string[]) => {
+      if (!pid) return;
+      if (task.participantIds?.includes(pid)) return;
 
-    updateField(task, { participantIds: [...task.participantIds, pid] });
+      updateField(task, { participantIds: [...task.participantIds, pid] });
 
-    setParticipantOrders((prev) => ({
-      ...prev,
-      [task.id]: [...(prev[task.id] || task.participantIds), pid],
-    }));
+      const nextOrder = [
+        ...(participantOrder.length ? participantOrder : task.participantIds),
+        pid,
+      ];
+      dispatchLocal({
+        type: "SET_PARTICIPANT_ORDER",
+        taskId: task.id,
+        order: nextOrder,
+      });
 
-    setAllocations((prev) => {
-      const prevTask = prev[task.id] || {};
-      if (prevTask[pid]) return prev;
-      const newRow: Record<string, number> = {};
-      for (const s of allSprints) newRow[s.id] = 0;
-      return {
-        ...prev,
-        [task.id]: {
-          ...prevTask,
-          [pid]: newRow,
-        },
+      dispatchLocal({
+        type: "SET_ALLOCATIONS_ROW",
+        taskId: task.id,
+        participantId: pid,
+        row: {},
+      });
+    },
+    [updateField]
+  );
+
+  const removeParticipantFromTask = React.useCallback(
+    async (task: BacklogItem, pid: string, participantOrder: string[]) => {
+      const nextOrder = (participantOrder.length
+        ? participantOrder
+        : task.participantIds
+      ).filter((id) => id !== pid);
+      dispatchLocal({
+        type: "SET_PARTICIPANT_ORDER",
+        taskId: task.id,
+        order: nextOrder,
+      });
+
+      const patch: Partial<BacklogItem> = {
+        participantIds: task.participantIds.filter((x) => x !== pid),
       };
-    });
-  };
-
-  const removeParticipantFromTask = async (task: BacklogItem, pid: string) => {
-    setAllocations((prev) => {
-      const prevTask = prev[task.id];
-      if (!prevTask || !prevTask[pid]) return prev;
-      const { [pid]: _, ...restRows } = prevTask;
-      return { ...prev, [task.id]: restRows };
-    });
-
-    setParticipantOrders((prev) => {
-      const next = { ...prev };
-      if (next[task.id]) {
-        next[task.id] = next[task.id].filter((id) => id !== pid);
+      if ((task as any).leaderId === pid) {
+        (patch as any).leaderId = "";
       }
-      return next;
-    });
 
-    const patch: Partial<BacklogItem> = {
-      participantIds: task.participantIds.filter((x) => x !== pid),
-    };
-    if ((task as any).leaderId === pid) {
-      (patch as any).leaderId = "";
-    }
-
-    try {
-      await updateField(task, patch);
-    } catch (error) {
-      console.error("Failed to remove participant from task", error);
-    }
-  };
-
-  const replaceParticipantInTask = async (
-    task: BacklogItem,
-    fromPid: string,
-    toPid: string
-  ) => {
-    if (!toPid || fromPid === toPid) return;
-    if (!task.participantIds.includes(fromPid)) return;
-    if (task.participantIds.includes(toPid)) return;
-
-    const participantIds = task.participantIds.map((id) =>
-      id === fromPid ? toPid : id
-    );
-    const taskAllocations = allocations[task.id] || {};
-    const rowToMove = taskAllocations[fromPid] || {};
-    const nextAllocations = Object.entries(taskAllocations).reduce<
-      Record<string, Record<string, number>>
-    >((acc, [pid, row]) => {
-      if (pid === fromPid) return acc;
-      acc[pid] = { ...row };
-      return acc;
-    }, {});
-
-    nextAllocations[toPid] = { ...rowToMove };
-
-    setAllocations((prev) => {
-      const prevTask = prev[task.id] || {};
-      const movedRow = prevTask[fromPid] || rowToMove;
-      const { [fromPid]: _, ...rest } = prevTask;
-      return {
-        ...prev,
-        [task.id]: {
-          ...rest,
-          [toPid]: { ...movedRow },
-        },
-      };
-    });
-
-    setParticipantOrders((prev) => {
-      const currentOrder = prev[task.id] || task.participantIds;
-      return {
-        ...prev,
-        [task.id]: currentOrder.map((id) => (id === fromPid ? toPid : id)),
-      };
-    });
-
-    const patch: Partial<BacklogItem> = {
-      participantIds,
-      allocations: nextAllocations,
-    };
-
-    if ((task as any).leaderId === fromPid) {
-      (patch as any).leaderId = toPid;
-    }
-
-    try {
-      await updateField(task, patch);
-    } catch (error) {
-      console.error("Failed to replace participant", error);
-    }
-  };
-
-  const shiftRow = (
-    taskId: string,
-    participantId: string,
-    dir: "left" | "right"
-  ) => {
-    const row = allocations[taskId]?.[participantId] || {};
-    const ids = sprintsGlobalOrdered.map((s) => s.id);
-    if (!ids.length) return;
-
-    const next: Record<string, number> = ids.reduce<Record<string, number>>(
-      (acc, sid) => {
-        acc[sid] = 0;
-        return acc;
-      },
-      {}
-    );
-
-    for (let i = 0; i < ids.length; i++) {
-      const fromSid = ids[i];
-      const targetIdx = dir === "left" ? i - 1 : i + 1;
-      const targetSid =
-        targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
-      const val = Number(row[fromSid] || 0);
-      next[targetSid] = (next[targetSid] || 0) + val;
-    }
-
-    setAllocations((prev) => {
-      const prevTask = prev[taskId] || {};
-      return {
-        ...prev,
-        [taskId]: {
-          ...prevTask,
-          [participantId]: next,
-        },
-      };
-    });
-
-    (async () => {
       try {
-        const bulkAllocations = ids.reduce<Record<string, number>>(
-          (acc, sid) => {
-            acc[sid] = toInt(Number(next[sid] || 0));
-            return acc;
-          },
-          {}
-        );
-        await upsertTaskAllocationMulti({
-          taskId,
-          allocations: {
-            [participantId]: bulkAllocations,
-          },
-        }).unwrap();
+        await updateField(task, patch);
       } catch (error) {
-        console.error("Failed to bulk save allocations", error);
+        console.error("Failed to remove participant from task", error);
       }
-    })();
-  };
+    },
+    [updateField]
+  );
 
-  const shiftTaskAllocations = (task: BacklogItem, dir: "left" | "right") => {
-    const ids = sprintsGlobalOrdered.map((s) => s.id);
-    if (!ids.length) return;
-    const taskAllocations = allocations[task.id] || {};
-    const participantIds = task.participantIds || [];
-    const nextTaskAllocations: Record<string, Record<string, number>> = {};
+  const replaceParticipantInTask = React.useCallback(
+    async (
+      task: BacklogItem,
+      fromPid: string,
+      toPid: string,
+      allocationsByParticipant: Record<string, Record<string, number>>,
+      participantOrder: string[]
+    ) => {
+      if (!toPid || fromPid === toPid) return;
+      if (!task.participantIds.includes(fromPid)) return;
+      if (task.participantIds.includes(toPid)) return;
 
-    for (const participantId of participantIds) {
-      const row = taskAllocations[participantId] || {};
-      const nextRow: Record<string, number> = ids.reduce<Record<string, number>>(
+      const participantIds = task.participantIds.map((id) =>
+        id === fromPid ? toPid : id
+      );
+      const rowToMove = allocationsByParticipant[fromPid] || {};
+      const nextAllocations = Object.entries(allocationsByParticipant).reduce<
+        Record<string, Record<string, number>>
+      >((acc, [pid, row]) => {
+        if (pid === fromPid) return acc;
+        acc[pid] = { ...row };
+        return acc;
+      }, {});
+
+      nextAllocations[toPid] = { ...rowToMove };
+
+      dispatchLocal({
+        type: "SET_ALLOCATIONS_ROW",
+        taskId: task.id,
+        participantId: toPid,
+        row: rowToMove,
+      });
+
+      const currentOrder = participantOrder.length
+        ? participantOrder
+        : task.participantIds;
+      dispatchLocal({
+        type: "SET_PARTICIPANT_ORDER",
+        taskId: task.id,
+        order: currentOrder.map((id) => (id === fromPid ? toPid : id)),
+      });
+
+      const patch: Partial<BacklogItem> = {
+        participantIds,
+        allocations: nextAllocations,
+      };
+
+      if ((task as any).leaderId === fromPid) {
+        (patch as any).leaderId = toPid;
+      }
+
+      try {
+        await updateField(task, patch);
+      } catch (error) {
+        console.error("Failed to replace participant", error);
+      }
+    },
+    [updateField]
+  );
+
+  const shiftRow = React.useCallback(
+    (
+      taskId: string,
+      participantId: string,
+      dir: "left" | "right",
+      row: Record<string, number>
+    ) => {
+      const ids = sprintsGlobalOrdered.map((s) => s.id);
+      if (!ids.length) return;
+
+      const next: Record<string, number> = ids.reduce<Record<string, number>>(
         (acc, sid) => {
           acc[sid] = 0;
           return acc;
@@ -2491,142 +3064,253 @@ export default function BacklogPage() {
         const targetSid =
           targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
         const val = Number(row[fromSid] || 0);
-        nextRow[targetSid] = (nextRow[targetSid] || 0) + val;
+        next[targetSid] = (next[targetSid] || 0) + val;
       }
 
-      nextTaskAllocations[participantId] = nextRow;
-    }
+      dispatchLocal({
+        type: "SET_ALLOCATIONS_ROW",
+        taskId,
+        participantId,
+        row: next,
+      });
 
-    if (!Object.keys(nextTaskAllocations).length) return;
-
-    setAllocations((prev) => {
-      const prevTask = prev[task.id] || {};
-      return {
-        ...prev,
-        [task.id]: { ...prevTask, ...nextTaskAllocations },
-      };
-    });
-
-    (async () => {
-      try {
-        const bulkAllocations = Object.entries(nextTaskAllocations).reduce<
-          Record<string, Record<string, number>>
-        >((acc, [participantId, row]) => {
-          acc[participantId] = ids.reduce<Record<string, number>>(
-            (inner, sid) => {
-              inner[sid] = toInt(Number(row[sid] || 0));
-              return inner;
+      (async () => {
+        try {
+          const bulkAllocations = ids.reduce<Record<string, number>>(
+            (acc, sid) => {
+              acc[sid] = toInt(Number(next[sid] || 0));
+              return acc;
             },
             {}
           );
-          return acc;
-        }, {});
-        await upsertTaskAllocationMulti({
-          taskId: task.id,
-          allocations: bulkAllocations,
-        }).unwrap();
-      } catch (error) {
-        console.error("Failed to bulk save allocations", error);
-      }
-    })();
-  };
+          await upsertTaskAllocationMulti({
+            taskId,
+            allocations: {
+              [participantId]: bulkAllocations,
+            },
+          }).unwrap();
+        } catch (error) {
+          console.error("Failed to bulk save allocations", error);
+        }
+      })();
+    },
+    [sprintsGlobalOrdered, upsertTaskAllocationMulti]
+  );
 
-  const copyRowToNextQuarter = (taskId: string, participantId: string) => {
-    const row = allocations[taskId]?.[participantId] || {};
-    if (!Object.keys(row).length) return;
+  const shiftTaskAllocations = React.useCallback(
+    (
+      task: BacklogItem,
+      dir: "left" | "right",
+      allocationsByParticipant: Record<string, Record<string, number>>
+    ) => {
+      const ids = sprintsGlobalOrdered.map((s) => s.id);
+      if (!ids.length) return;
+      const participantIds = task.participantIds || [];
+      const nextTaskAllocations: Record<string, Record<string, number>> = {};
 
-    const quartersWithLoad = new Set<string>();
-    for (const [sid, days] of Object.entries(row)) {
-      if (Number(days) > 0) {
-        const sprint = sprintById.get(sid);
-        if (sprint) quartersWithLoad.add(sprint.quarterId);
-      }
-    }
-    if (!quartersWithLoad.size) return;
-
-    let srcQuarterIndex = -1;
-    for (let i = 0; i < quartersSorted.length; i++) {
-      if (quartersWithLoad.has(quartersSorted[i].id)) {
-        srcQuarterIndex = i;
-      }
-    }
-    if (srcQuarterIndex < 0 || srcQuarterIndex >= quartersSorted.length - 1) {
-      return;
-    }
-
-    const srcQuarter = quartersSorted[srcQuarterIndex];
-    const dstQuarter = quartersSorted[srcQuarterIndex + 1];
-
-    const srcSprints = sprintsByQuarter.get(srcQuarter.id) || [];
-    const dstSprints = sprintsByQuarter.get(dstQuarter.id) || [];
-    if (!srcSprints.length || !dstSprints.length) return;
-
-    const maxLen = Math.min(srcSprints.length, dstSprints.length);
-    const nextRow: Record<string, number> = { ...row };
-
-    for (let i = 0; i < maxLen; i++) {
-      const srcSid = srcSprints[i].id;
-      const dstSid = dstSprints[i].id;
-      const val = Number(row[srcSid] || 0);
-      if (val > 0) {
-        nextRow[dstSid] = (nextRow[dstSid] || 0) + val;
-      }
-    }
-
-    setAllocations((prev) => {
-      const prevTask = prev[taskId] || {};
-      return {
-        ...prev,
-        [taskId]: { ...prevTask, [participantId]: nextRow },
-      };
-    });
-
-    (async () => {
-      try {
-        const bulkAllocations = Object.entries(nextRow).reduce<
+      for (const participantId of participantIds) {
+        const row = allocationsByParticipant[participantId] || {};
+        const nextRow: Record<string, number> = ids.reduce<
           Record<string, number>
-        >((acc, [sid, days]) => {
-          acc[sid] = toInt(Number(days) || 0);
+        >((acc, sid) => {
+          acc[sid] = 0;
           return acc;
         }, {});
-        await upsertTaskAllocationBulk({
-          taskId,
-          participantId,
-          allocations: bulkAllocations,
-        }).unwrap();
-      } catch (error) {
-        console.error("Failed to copy allocations to next quarter", error);
+
+        for (let i = 0; i < ids.length; i++) {
+          const fromSid = ids[i];
+          const targetIdx = dir === "left" ? i - 1 : i + 1;
+          const targetSid =
+            targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
+          const val = Number(row[fromSid] || 0);
+          nextRow[targetSid] = (nextRow[targetSid] || 0) + val;
+        }
+
+        nextTaskAllocations[participantId] = nextRow;
       }
-    })();
-  };
 
-  const moveTask = (id: string, dir: "up" | "down") => {
-    const current = filteredTasks.map((t) => t.id);
-    const idx = current.indexOf(id);
-    if (idx < 0) return;
-    const swapIdx = dir === "up" ? idx - 1 : idx + 1;
-    if (swapIdx < 0 || swapIdx >= current.length) return;
-    const A = current[idx];
-    const B = current[swapIdx];
+      if (!Object.keys(nextTaskAllocations).length) return;
 
-    const reordered = arrayMove(current, idx, swapIdx);
-    void persistTaskOrder(reordered, id);
-  };
+      for (const [participantId, row] of Object.entries(nextTaskAllocations)) {
+        dispatchLocal({
+          type: "SET_ALLOCATIONS_ROW",
+          taskId: task.id,
+          participantId,
+          row,
+        });
+      }
+
+      (async () => {
+        try {
+          const bulkAllocations = Object.entries(nextTaskAllocations).reduce<
+            Record<string, Record<string, number>>
+          >((acc, [participantId, row]) => {
+            acc[participantId] = ids.reduce<Record<string, number>>(
+              (inner, sid) => {
+                inner[sid] = toInt(Number(row[sid] || 0));
+                return inner;
+              },
+              {}
+            );
+            return acc;
+          }, {});
+          await upsertTaskAllocationMulti({
+            taskId: task.id,
+            allocations: bulkAllocations,
+          }).unwrap();
+        } catch (error) {
+          console.error("Failed to bulk save allocations", error);
+        }
+      })();
+    },
+    [sprintsGlobalOrdered, upsertTaskAllocationMulti]
+  );
+
+  const copyRowToNextQuarter = React.useCallback(
+    (
+      taskId: string,
+      participantId: string,
+      row: Record<string, number>
+    ) => {
+      if (!Object.keys(row).length) return;
+
+      const quartersWithLoad = new Set<string>();
+      for (const [sid, days] of Object.entries(row)) {
+        if (Number(days) > 0) {
+          const sprint = sprintsById[sid];
+          if (sprint) quartersWithLoad.add(sprint.quarterId);
+        }
+      }
+      if (!quartersWithLoad.size) return;
+
+      let srcQuarterIndex = -1;
+      for (let i = 0; i < quartersSorted.length; i++) {
+        if (quartersWithLoad.has(quartersSorted[i].id)) {
+          srcQuarterIndex = i;
+        }
+      }
+      if (
+        srcQuarterIndex < 0 ||
+        srcQuarterIndex >= quartersSorted.length - 1
+      ) {
+        return;
+      }
+
+      const srcQuarter = quartersSorted[srcQuarterIndex];
+      const dstQuarter = quartersSorted[srcQuarterIndex + 1];
+
+      const srcSprints = sprintsByQuarter.get(srcQuarter.id) || [];
+      const dstSprints = sprintsByQuarter.get(dstQuarter.id) || [];
+      if (!srcSprints.length || !dstSprints.length) return;
+
+      const maxLen = Math.min(srcSprints.length, dstSprints.length);
+      const nextRow: Record<string, number> = { ...row };
+
+      for (let i = 0; i < maxLen; i++) {
+        const srcSid = srcSprints[i].id;
+        const dstSid = dstSprints[i].id;
+        const val = Number(row[srcSid] || 0);
+        if (val > 0) {
+          nextRow[dstSid] = (nextRow[dstSid] || 0) + val;
+        }
+      }
+
+      dispatchLocal({
+        type: "SET_ALLOCATIONS_ROW",
+        taskId,
+        participantId,
+        row: nextRow,
+      });
+
+      (async () => {
+        try {
+          const bulkAllocations = Object.entries(nextRow).reduce<
+            Record<string, number>
+          >((acc, [sid, days]) => {
+            acc[sid] = toInt(Number(days) || 0);
+            return acc;
+          }, {});
+          await upsertTaskAllocationBulk({
+            taskId,
+            participantId,
+            allocations: bulkAllocations,
+          }).unwrap();
+        } catch (error) {
+          console.error("Failed to copy allocations to next quarter", error);
+        }
+      })();
+    },
+    [quartersSorted, sprintsById, sprintsByQuarter, upsertTaskAllocationBulk]
+  );
+
+  const moveTask = React.useCallback(
+    (id: string, dir: "up" | "down") => {
+      const current = sortedTaskIds;
+      const idx = current.indexOf(id);
+      if (idx < 0) return;
+      const swapIdx = dir === "up" ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= current.length) return;
+
+      const reordered = arrayMove(current, idx, swapIdx);
+      void persistTaskOrder(reordered, id);
+    },
+    [persistTaskOrder, sortedTaskIds]
+  );
 
   const toggleParticipantsVisibility = React.useCallback(
     (taskId: string, hidden: boolean) => {
-      setHiddenParticipantsTaskIds((prev) => {
-        const next = new Set(prev);
-        if (hidden) {
-          next.add(taskId);
-        } else {
-          next.delete(taskId);
-        }
-        writeLS(LS_HIDDEN_PARTICIPANTS, Array.from(next));
-        return next;
-      });
+      dispatchLocal({ type: "TOGGLE_HIDDEN_PARTICIPANTS", taskId, hidden });
     },
     []
+  );
+
+  const handleParticipantOrderChange = React.useCallback(
+    (taskId: string, order: string[]) => {
+      dispatchLocal({ type: "SET_PARTICIPANT_ORDER", taskId, order });
+      applyParticipantOrderOptimistic(taskId, order);
+    },
+    [applyParticipantOrderOptimistic]
+  );
+
+  const taskCardActions = React.useMemo<TaskCardActions>(
+    () => ({
+      onStatusChange: handleStatusChange,
+      onPriorityChange: handlePriorityChange,
+      onUpdateTaskPatch: handleUpdateTaskPatch,
+      onDuplicateTask: duplicateTask,
+      onMoveTask: moveTask,
+      onRemoveTask: removeTask,
+      onChangeTaskQuarters: updateTaskQuarters,
+      onAllocChange: handleAllocChange,
+      onAllocCommit: commitCell,
+      onShiftRow: shiftRow,
+      onShiftTaskAllocations: shiftTaskAllocations,
+      onCopyRowToNextQuarter: copyRowToNextQuarter,
+      onAddParticipant: addParticipantToTask,
+      onRemoveParticipant: removeParticipantFromTask,
+      onChangeParticipant: replaceParticipantInTask,
+      onParticipantOrderChange: handleParticipantOrderChange,
+      onToggleParticipantsVisibility: toggleParticipantsVisibility,
+    }),
+    [
+      addParticipantToTask,
+      commitCell,
+      copyRowToNextQuarter,
+      duplicateTask,
+      handleAllocChange,
+      handleParticipantOrderChange,
+      handlePriorityChange,
+      handleStatusChange,
+      handleUpdateTaskPatch,
+      moveTask,
+      removeParticipantFromTask,
+      removeTask,
+      replaceParticipantInTask,
+      shiftRow,
+      shiftTaskAllocations,
+      toggleParticipantsVisibility,
+      updateTaskQuarters,
+    ]
   );
 
   const taskSensors = useSensors(
@@ -2640,9 +3324,42 @@ export default function BacklogPage() {
     })
   );
 
+  const ctx = React.useMemo(
+    () => ({
+      participantsSortedByName,
+      participantById,
+      sprintsSorted: sprintsGlobalOrdered,
+      quartersSorted,
+      quarterFilterOptions,
+      customerOptions,
+      streamOptions,
+      releaseOptions: releaseFilterOptions,
+      releaseValueSet,
+      selectedQuarterIds,
+      participantSensors,
+      findSprintIdByISO,
+      getTaskQuarters,
+    }),
+    [
+      participantsSortedByName,
+      participantById,
+      sprintsGlobalOrdered,
+      quartersSorted,
+      quarterFilterOptions,
+      customerOptions,
+      streamOptions,
+      releaseFilterOptions,
+      releaseValueSet,
+      selectedQuarterIds,
+      participantSensors,
+      findSprintIdByISO,
+      getTaskQuarters,
+    ]
+  );
+
   const activeTask = React.useMemo(
-    () => filteredTasks.find((t) => t.id === activeTaskId) || null,
-    [activeTaskId, filteredTasks]
+    () => (activeTaskId ? taskById.get(activeTaskId) ?? null : null),
+    [activeTaskId, taskById]
   );
 
   const handleTaskDragStart = React.useCallback((event: DragStartEvent) => {
@@ -2659,7 +3376,7 @@ export default function BacklogPage() {
       setActiveTaskId(null);
       if (!over || active.id === over.id) return;
 
-      const currentIds = filteredTasks.map((t) => t.id);
+      const currentIds = sortedTaskIds;
       const oldIndex = currentIds.indexOf(String(active.id));
       const newIndex = currentIds.indexOf(String(over.id));
       if (oldIndex < 0 || newIndex < 0) return;
@@ -2667,7 +3384,7 @@ export default function BacklogPage() {
       const reordered = arrayMove(currentIds, oldIndex, newIndex);
       void persistTaskOrder(reordered, String(active.id));
     },
-    [filteredTasks, persistTaskOrder]
+    [persistTaskOrder, sortedTaskIds]
   );
 
   return (
@@ -2736,99 +3453,7 @@ export default function BacklogPage() {
         </Stack>
 
         {/* Фильтры */}
-        <FiltersPanel
-          filters={[
-            {
-              type: "autocomplete",
-              key: "quarters",
-              minWidth: 200,
-              props: {
-                multiple: true,
-                allowCustom: false,
-                label: "Фильтр по кварталам",
-                options: quarterFilterOptions,
-                value: selectedQuarterIds,
-                onChange: handleQuarterFilterChange,
-              },
-            },
-            {
-              type: "autocomplete",
-              key: "priority",
-              minWidth: 160,
-              props: {
-                multiple: true,
-                allowCustom: false,
-                label: "Приоритет",
-                options: priorityOptions,
-                value: priorityFilter.map(String),
-                onChange: handlePriorityFilterChange,
-              },
-            },
-            {
-              type: "autocomplete",
-              key: "status",
-              minWidth: 200,
-              props: {
-                multiple: true,
-                allowCustom: false,
-                label: "Статусы",
-                options: statusOptions,
-                value: statusFilter,
-                onChange: handleStatusFilterChange,
-              },
-            },
-            {
-              type: "autocomplete",
-              key: "release",
-              minWidth: 200,
-              props: {
-                allowCustom: false,
-                label: "Релиз",
-                options: releaseFilterOptions,
-                value: releaseSprintFilter === "all" ? "" : releaseSprintFilter,
-                onChange: handleReleaseFilterChange,
-                placeholder: "Все релизы",
-              },
-            },
-            {
-              type: "autocomplete",
-              key: "stream",
-              minWidth: 200,
-              props: {
-                label: "Стрим по задаче",
-                options: streamOptions,
-                value: streamFilter,
-                onChange: handleStreamFilterChange,
-              },
-            },
-            {
-              type: "autocomplete",
-              key: "tasks-page-size",
-              minWidth: 200,
-              props: {
-                allowCustom: true,
-                label: "Количество задач",
-                options: tasksPageSizeOptions,
-                value: tasksPageSize,
-                onChange: handleTasksPageSizeChange,
-                placeholder: "20",
-                commitOnBlur: true,
-              },
-            },
-            {
-              type: "search",
-              key: "search",
-              minWidth: 220,
-              props: {
-                label: "Поиск по названию/описанию/DOD",
-                value: searchQuery,
-                onCommit: handleSearchCommit,
-                placeholder: "Введите текст",
-                commitOnBlurOnly: true,
-              },
-            },
-          ]}
-        />
+        <FiltersPanel filters={filtersConfig} />
 
         {/* Список задач с DnD */}
         <DndContext
@@ -2839,68 +3464,31 @@ export default function BacklogPage() {
           onDragCancel={handleTaskDragCancel}
         >
           <SortableContext
-            items={filteredTasks.map((t) => t.id)}
+            items={sortedTaskIds}
             strategy={verticalListSortingStrategy}
           >
             <Stack spacing={2}>
-              {filteredTasks.map((t) => {
+              {displayedTasks.map((t) => {
                 const allocationsByParticipant =
-                  allocations[t.id] || EMPTY_ALLOCATIONS_ROW;
-                const participantOrder = participantOrders[t.id] || [];
-
+                  local.allocations[t.id] || EMPTY_ALLOCATIONS_ROW;
+                const participantOrder =
+                  local.participantOrders[t.id] || EMPTY_STRING_ARR;
                 return (
-                  <SortableTaskCard key={t.id} task={t}>
-                    {(dragProps) => (
-                      <TaskCard
-                        task={t}
-                        allocationsByParticipant={allocationsByParticipant}
-                        participants={participants}
-                        participantMap={participantMap}
-                        participantOrder={participantOrder}
-                        sprintsGlobalOrdered={sprintsGlobalOrdered}
-                        sprintsByQuarter={sprintsByQuarter}
-                        quartersSorted={quartersSorted}
-                        selectedQuarterIds={selectedQuarterIds}
-                        quarterFilterOptions={quarterFilterOptions}
-                        customerOptions={customerOptions}
-                        streamOptions={streamOptions}
-                        releaseOptions={releaseFilterOptions}
-                        participantSensors={participantSensors}
-                        onStatusChange={handleStatusChange}
-                        onPriorityChange={handlePriorityChange}
-                        onUpdateTaskPatch={handleUpdateTaskPatch}
-                        onDuplicateTask={duplicateTask}
-                        onMoveTask={moveTask}
-                        onRemoveTask={removeTask}
-                        onChangeTaskQuarters={updateTaskQuarters}
-                        getTaskQuarters={getTaskQuarters}
-                        onAllocChange={handleAllocChange}
-                        onAllocCommit={commitCell}
-                        onShiftRow={shiftRow}
-                        onShiftTaskAllocations={shiftTaskAllocations}
-                        onCopyRowToNextQuarter={copyRowToNextQuarter}
-                        onAddParticipant={addParticipantToTask}
-                        onRemoveParticipant={removeParticipantFromTask}
-                        onChangeParticipant={replaceParticipantInTask}
-                        onParticipantOrderChange={(taskId, order) => {
-                          setParticipantOrders((prev) => ({
-                            ...prev,
-                            [taskId]: order,
-                          }));
-                          applyParticipantOrderOptimistic(taskId, order);
-                        }}
-                        hiddenParticipants={hiddenParticipantsTaskIds.has(t.id)}
-                        onToggleParticipantsVisibility={
-                          toggleParticipantsVisibility
-                        }
-                        dragHandle={dragProps}
-                      />
+                  <SortableTaskCardItem
+                    key={t.id}
+                    task={t}
+                    allocationsByParticipant={allocationsByParticipant}
+                    participantOrder={participantOrder}
+                    hiddenParticipants={local.hiddenParticipantsTaskIds.has(
+                      t.id
                     )}
-                  </SortableTaskCard>
+                    ctx={ctx}
+                    actions={taskCardActions}
+                  />
                 );
               })}
 
-              {!filteredTasks.length && !isFetching && (
+              {!displayedTasks.length && !isFetching && (
                 <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
                   <Typography color="text.secondary">
                     Нет задач по текущим фильтрам
@@ -2939,10 +3527,10 @@ export default function BacklogPage() {
           <Button
             variant="outlined"
             onClick={() => {
-              if (fetchedTasks.length >= totalTasksCount || isFetching) return;
+              if (tasks.length >= totalTasksCount || isFetching) return;
               loadNextTasksPage(effectiveTasksPageNumber);
             }}
-            disabled={fetchedTasks.length >= totalTasksCount || isFetching}
+            disabled={tasks.length >= totalTasksCount || isFetching}
           >
             {isFetching ? "Загрузка..." : "Загрузить еще"}
           </Button>
