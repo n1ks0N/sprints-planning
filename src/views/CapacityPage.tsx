@@ -54,17 +54,17 @@ function collectSprintIds(
 
 /**
  * Раскраска ячейки:
- * - если workload < 0.75 * available  -> Оранжевый
- * - если workload > 1.25 * available  -> Красный
+ * - если workload < normFactor * available  -> Оранжевый
+ * - если workload > (2 - normFactor) * available  -> Красный
  * - иначе                              -> Зелёный
  * Частный случай: available === 0 -> workload>0 красный, иначе зелёный
  */
-function cellColor(workload: number, available: number): string {
+function cellColor(workload: number, available: number, normFactor: number): string {
   if (available === 0) {
     return workload > 0 ? "#ffebee" : "#e8f5e9";
   }
-  const low = 0.75 * available;
-  const high = 1.25 * available;
+  const low = normFactor * available;
+  const high = (2 - normFactor) * available;
   if (workload < low) return "#fff3e0"; // оранжевый
   if (workload > high) return "#ffebee"; // красный
   return "#e8f5e9"; // зелёный
@@ -372,9 +372,10 @@ export default function CapacityPage() {
                         const cell = getCell(p.id, s.id);
                         const availRaw = cell?.availableDays ?? 0;
                         const workRaw = cell?.workloadDays ?? 0;
+                        const normFactor = cell?.normFactor ?? 0.75;
                         const avail = round1(availRaw);
                         const work = round1(workRaw);
-                        const bg = cellColor(workRaw, availRaw);
+                        const bg = cellColor(workRaw, availRaw, normFactor);
 
                         return (
                           <TableCell
