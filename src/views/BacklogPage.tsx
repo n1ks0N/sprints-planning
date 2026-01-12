@@ -149,6 +149,366 @@ function syncTasksPageMeta(draft: TasksPage) {
 
 const EMPTY_TASKS: BacklogItem[] = [];
 
+type BacklogLocalState = {
+  taskQuartersMap: Record<string, string[]>;
+  allocations: Allocations;
+  participantOrders: Record<string, string[]>;
+  hiddenParticipantsTaskIds: Set<string>;
+};
+
+type BacklogLocalAction =
+  | {
+      type: "SYNC_FROM_TASKS";
+      tasks: BacklogItem[];
+      sprintQuarterById: Map<string, string>;
+      defaultQuarterId?: string;
+    }
+  | { type: "SET_TASK_QUARTERS"; taskId: string; quarterIds: string[] }
+  | { type: "TOGGLE_HIDDEN_PARTICIPANTS"; taskId: string; hidden: boolean }
+  | { type: "SET_PARTICIPANT_ORDER"; taskId: string; order: string[] }
+  | {
+      type: "SET_ALLOCATION";
+      taskId: string;
+      participantId: string;
+      sprintId: string;
+      value: number;
+    }
+  | {
+      type: "SET_ALLOCATIONS_ROW";
+      taskId: string;
+      participantId: string;
+      row: Record<string, number>;
+    }
+  | { type: "REMOVE_TASK"; taskId: string };
+
+const EMPTY_ALLOC: Allocations = {};
+const EMPTY_STR_ARR: string[] = [];
+
+function uniqStrings(xs: string[]) {
+  return Array.from(new Set(xs.filter(Boolean)));
+}
+
+function backlogLocalReducer(
+  state: BacklogLocalState,
+  action: BacklogLocalAction
+): BacklogLocalState {
+  switch (action.type) {
+    case "SYNC_FROM_TASKS": {
+      const { tasks, sprintQuarterById, defaultQuarterId } = action;
+
+      const taskById = new Map(tasks.map((t) => [t.id, t]));
+
+      let nextTaskQuartersMap = state.taskQuartersMap;
+      let taskQuartersChanged = false;
+
+      let nextAllocations = state.allocations;
+      let allocationsChanged = false;
+
+      let nextParticipantOrders = state.participantOrders;
+      let participantOrdersChanged = false;
+
+      for (const existingTaskId of Object.keys(state.taskQuartersMap)) {
+        if (!taskById.has(existingTaskId)) {
+          if (!taskQuartersChanged) {
+            nextTaskQuartersMap = { ...state.taskQuartersMap };
+            taskQuartersChanged = true;
+          }
+          delete nextTaskQuartersMap[existingTaskId];
+        }
+      }
+
+      for (const existingTaskId of Object.keys(state.allocations)) {
+        if (!taskById.has(existingTaskId)) {
+          if (!allocationsChanged) {
+            nextAllocations = { ...state.allocations };
+            allocationsChanged = true;
+          }
+          delete nextAllocations[existingTaskId];
+        }
+      }
+
+      for (const existingTaskId of Object.keys(state.participantOrders)) {
+        if (!taskById.has(existingTaskId)) {
+          if (!participantOrdersChanged) {
+            nextParticipantOrders = { ...state.participantOrders };
+            participantOrdersChanged = true;
+          }
+          delete nextParticipantOrders[existingTaskId];
+        }
+      }
+
+      for (const t of tasks) {
+        const existingQ = state.taskQuartersMap[t.id];
+        if (!existingQ || existingQ.length === 0) {
+          const explicit = Array.isArray((t as any).quarterIds)
+            ? ((t as any).quarterIds as string[]).filter(Boolean)
+            : [];
+          let derived: string[] = [];
+          if (explicit.length) {
+            derived = uniqStrings(explicit);
+          } else {
+            const from = new Set<string>();
+            const alloc = t.allocations || {};
+            for (const pid of Object.keys(alloc)) {
+              const row = (alloc as any)[pid] || {};
+              for (const sid of Object.keys(row)) {
+                const qid = sprintQuarterById.get(sid);
+                if (qid) from.add(qid);
+              }
+            }
+            const loads = t.loads || {};
+            for (const [sid, days] of Object.entries(loads)) {
+              if (Number(days) > 0) {
+                const qid = sprintQuarterById.get(sid);
+                if (qid) from.add(qid);
+              }
+            }
+            derived = from.size
+              ? Array.from(from)
+              : defaultQuarterId
+                ? [defaultQuarterId]
+                : [];
+          }
+
+          if (derived.length) {
+            if (!taskQuartersChanged) {
+              nextTaskQuartersMap = { ...state.taskQuartersMap };
+              taskQuartersChanged = true;
+            }
+            nextTaskQuartersMap[t.id] = derived;
+          }
+        }
+
+        const pids = t.participantIds || EMPTY_STR_ARR;
+        const existingOrder = state.participantOrders[t.id];
+
+        if (!existingOrder) {
+          if (pids.length) {
+            if (!participantOrdersChanged) {
+              nextParticipantOrders = { ...state.participantOrders };
+              participantOrdersChanged = true;
+            }
+            nextParticipantOrders[t.id] = pids.slice();
+          }
+        } else {
+          const kept = existingOrder.filter((id) => pids.includes(id));
+          const added = pids.filter((id) => !kept.includes(id));
+          const updated = [...kept, ...added];
+          if (!shallowArrayEqual(updated, existingOrder)) {
+            if (!participantOrdersChanged) {
+              nextParticipantOrders = { ...state.participantOrders };
+              participantOrdersChanged = true;
+            }
+            nextParticipantOrders[t.id] = updated;
+          }
+        }
+
+        const incoming = t.allocations || {};
+        const prevTaskAlloc = state.allocations[t.id];
+
+        let taskAlloc = prevTaskAlloc;
+        let taskAllocChanged = false;
+
+        if (prevTaskAlloc) {
+          for (const pid of Object.keys(prevTaskAlloc)) {
+            if (!pids.includes(pid)) {
+              if (!taskAllocChanged) {
+                taskAlloc = { ...prevTaskAlloc };
+                taskAllocChanged = true;
+              }
+              delete (taskAlloc as any)[pid];
+            }
+          }
+        }
+
+        for (const pid of pids) {
+          const incomingRow = (incoming as any)[pid] as
+            | Record<string, number>
+            | undefined;
+          if (!incomingRow) continue;
+
+          const prevRow = (taskAlloc as any)?.[pid] as
+            | Record<string, number>
+            | undefined;
+          let nextRow = prevRow;
+          let rowChanged = false;
+
+          for (const [sid, v] of Object.entries(incomingRow)) {
+            const val = Number(v ?? 0) || 0;
+            if ((prevRow?.[sid] ?? 0) !== val) {
+              if (!nextRow) {
+                nextRow = {};
+                rowChanged = true;
+              }
+              if (!rowChanged) {
+                nextRow = { ...prevRow };
+                rowChanged = true;
+              }
+              (nextRow as any)[sid] = val;
+            }
+          }
+
+          if (rowChanged) {
+            if (!taskAlloc) {
+              taskAlloc = {};
+              taskAllocChanged = true;
+            }
+            if (!taskAllocChanged && taskAlloc === prevTaskAlloc) {
+              taskAlloc = { ...(prevTaskAlloc || {}) };
+              taskAllocChanged = true;
+            }
+            (taskAlloc as any)[pid] = nextRow!;
+          } else {
+            if (!prevRow && incomingRow && Object.keys(incomingRow).length > 0) {
+              if (!taskAlloc) {
+                taskAlloc = {};
+                taskAllocChanged = true;
+              }
+              if (!taskAllocChanged && taskAlloc === prevTaskAlloc) {
+                taskAlloc = { ...(prevTaskAlloc || {}) };
+                taskAllocChanged = true;
+              }
+              (taskAlloc as any)[pid] = { ...incomingRow };
+            }
+          }
+        }
+
+        if (taskAllocChanged) {
+          if (!allocationsChanged) {
+            nextAllocations = { ...state.allocations };
+            allocationsChanged = true;
+          }
+          (nextAllocations as any)[t.id] = taskAlloc || {};
+        }
+      }
+
+      if (!taskQuartersChanged && !allocationsChanged && !participantOrdersChanged) {
+        return state;
+      }
+
+      return {
+        taskQuartersMap: nextTaskQuartersMap,
+        allocations: nextAllocations,
+        participantOrders: nextParticipantOrders,
+        hiddenParticipantsTaskIds: state.hiddenParticipantsTaskIds,
+      };
+    }
+
+    case "SET_TASK_QUARTERS": {
+      const unique = uniqStrings(action.quarterIds);
+      if (!unique.length) return state;
+      const prev = state.taskQuartersMap[action.taskId];
+      if (prev && shallowArrayEqual(prev, unique)) return state;
+      return {
+        ...state,
+        taskQuartersMap: { ...state.taskQuartersMap, [action.taskId]: unique },
+      };
+    }
+
+    case "TOGGLE_HIDDEN_PARTICIPANTS": {
+      const prev = state.hiddenParticipantsTaskIds;
+      const has = prev.has(action.taskId);
+      if (action.hidden === has) return state;
+      const next = new Set(prev);
+      if (action.hidden) next.add(action.taskId);
+      else next.delete(action.taskId);
+      return { ...state, hiddenParticipantsTaskIds: next };
+    }
+
+    case "SET_PARTICIPANT_ORDER": {
+      const prev = state.participantOrders[action.taskId];
+      if (prev && shallowArrayEqual(prev, action.order)) return state;
+      return {
+        ...state,
+        participantOrders: {
+          ...state.participantOrders,
+          [action.taskId]: action.order.slice(),
+        },
+      };
+    }
+
+    case "SET_ALLOCATION": {
+      const { taskId, participantId, sprintId } = action;
+      const value = Number(action.value ?? 0) || 0;
+
+      const prevTask = state.allocations[taskId] || {};
+      const prevRow = (prevTask as any)[participantId] || {};
+      const current = Number(prevRow[sprintId] ?? 0) || 0;
+      if (current === value) return state;
+
+      const nextRow = { ...prevRow, [sprintId]: value };
+      const nextTask = { ...prevTask, [participantId]: nextRow };
+      return {
+        ...state,
+        allocations: { ...state.allocations, [taskId]: nextTask },
+      };
+    }
+
+    case "SET_ALLOCATIONS_ROW": {
+      const { taskId, participantId, row } = action;
+      const prevTask = state.allocations[taskId] || {};
+      const prevRow = (prevTask as any)[participantId] || {};
+      const prevKeys = Object.keys(prevRow);
+      const nextKeys = Object.keys(row);
+      if (prevKeys.length === nextKeys.length) {
+        let same = true;
+        for (const k of nextKeys) {
+          if (Number(prevRow[k] ?? 0) !== Number(row[k] ?? 0)) {
+            same = false;
+            break;
+          }
+        }
+        if (same) return state;
+      }
+      const nextTask = { ...prevTask, [participantId]: { ...row } };
+      return {
+        ...state,
+        allocations: { ...state.allocations, [taskId]: nextTask },
+      };
+    }
+
+    case "REMOVE_TASK": {
+      const taskId = action.taskId;
+      if (
+        !state.taskQuartersMap[taskId] &&
+        !state.allocations[taskId] &&
+        !state.participantOrders[taskId]
+      ) {
+        return state;
+      }
+
+      const tq = { ...state.taskQuartersMap };
+      delete tq[taskId];
+      const al = { ...state.allocations };
+      delete al[taskId];
+      const po = { ...state.participantOrders };
+      delete po[taskId];
+
+      const hidden = new Set(state.hiddenParticipantsTaskIds);
+      hidden.delete(taskId);
+
+      return {
+        ...state,
+        taskQuartersMap: tq,
+        allocations: al,
+        participantOrders: po,
+        hiddenParticipantsTaskIds: hidden,
+      };
+    }
+
+    default:
+      return state;
+  }
+}
+
+function useDebouncedEffect(effect: () => void, deps: any[], delayMs: number) {
+  React.useEffect(() => {
+    const t = window.setTimeout(effect, delayMs);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
 // ---------- Editable inputs (максимально локальное состояние) ----------
 
 type EditableTextProps = {
@@ -432,7 +792,10 @@ type TaskCardActions = {
   onStatusChange: (task: BacklogItem, status: TaskStatus) => void;
   onPriorityChange: (task: BacklogItem, priority: TaskPriority) => void;
   onUpdateTaskPatch: (task: BacklogItem, patch: Partial<BacklogItem>) => void;
-  onDuplicateTask: (task: BacklogItem) => void;
+  onDuplicateTask: (
+    task: BacklogItem,
+    allocationsByParticipant: Record<string, Record<string, number>>
+  ) => void;
   onMoveTask: (id: string, dir: "up" | "down") => void;
   onRemoveTask: (task: BacklogItem) => void;
   onChangeTaskQuarters: (taskId: string, quarterIds: string[]) => void;
@@ -451,16 +814,35 @@ type TaskCardActions = {
   onShiftRow: (
     taskId: string,
     participantId: string,
-    dir: "left" | "right"
+    dir: "left" | "right",
+    row: Record<string, number>
   ) => void;
-  onShiftTaskAllocations: (task: BacklogItem, dir: "left" | "right") => void;
-  onCopyRowToNextQuarter: (taskId: string, participantId: string) => void;
-  onAddParticipant: (task: BacklogItem, participantId: string) => void;
-  onRemoveParticipant: (task: BacklogItem, participantId: string) => void;
+  onShiftTaskAllocations: (
+    task: BacklogItem,
+    dir: "left" | "right",
+    allocationsByParticipant: Record<string, Record<string, number>>
+  ) => void;
+  onCopyRowToNextQuarter: (
+    taskId: string,
+    participantId: string,
+    row: Record<string, number>
+  ) => void;
+  onAddParticipant: (
+    task: BacklogItem,
+    participantId: string,
+    participantOrder: string[]
+  ) => void;
+  onRemoveParticipant: (
+    task: BacklogItem,
+    participantId: string,
+    participantOrder: string[]
+  ) => void;
   onChangeParticipant: (
     task: BacklogItem,
     fromParticipantId: string,
-    toParticipantId: string
+    toParticipantId: string,
+    allocationsByParticipant: Record<string, Record<string, number>>,
+    participantOrder: string[]
   ) => void;
   onParticipantOrderChange: (taskId: string, nextOrder: string[]) => void;
   onToggleParticipantsVisibility: (taskId: string, hidden: boolean) => void;
@@ -1011,7 +1393,7 @@ const TaskCard = React.memo(function TaskCard({
             <Tooltip title="Сдвинуть всех участников влево (по всем спринтам)">
               <IconButton
                 size="small"
-                onClick={() => onShiftTaskAllocations(task, "left")}
+                onClick={() => onShiftTaskAllocations(task, "left", rows)}
               >
                 <ArrowBack fontSize="small" />
               </IconButton>
@@ -1020,14 +1402,17 @@ const TaskCard = React.memo(function TaskCard({
             <Tooltip title="Сдвинуть всех участников вправо (по всем спринтам)">
               <IconButton
                 size="small"
-                onClick={() => onShiftTaskAllocations(task, "right")}
+                onClick={() => onShiftTaskAllocations(task, "right", rows)}
               >
                 <ArrowForward fontSize="small" />
               </IconButton>
             </Tooltip>
 
             <Tooltip title="Дублировать">
-              <IconButton size="small" onClick={() => onDuplicateTask(task)}>
+              <IconButton
+                size="small"
+                onClick={() => onDuplicateTask(task, rows)}
+              >
                 <CopyAll fontSize="small" />
               </IconButton>
             </Tooltip>
@@ -1207,7 +1592,13 @@ const TaskCard = React.memo(function TaskCard({
                                 value={p}
                                 options={participantEditOptions}
                                 onCommit={(next) =>
-                                  onChangeParticipant(task, p.id, next.id)
+                                  onChangeParticipant(
+                                    task,
+                                    p.id,
+                                    next.id,
+                                    rows,
+                                    orderedParticipantIds
+                                  )
                                 }
                               />
                             </Stack>
@@ -1276,7 +1667,12 @@ const TaskCard = React.memo(function TaskCard({
                                 <IconButton
                                   size="small"
                                   onClick={() =>
-                                    onShiftRow(task.id, p.id, "left")
+                                    onShiftRow(
+                                      task.id,
+                                      p.id,
+                                      "left",
+                                      rows[p.id] || {}
+                                    )
                                   }
                                 >
                                   <ArrowBack fontSize="small" />
@@ -1287,7 +1683,12 @@ const TaskCard = React.memo(function TaskCard({
                                 <IconButton
                                   size="small"
                                   onClick={() =>
-                                    onShiftRow(task.id, p.id, "right")
+                                    onShiftRow(
+                                      task.id,
+                                      p.id,
+                                      "right",
+                                      rows[p.id] || {}
+                                    )
                                   }
                                 >
                                   <ArrowForward fontSize="small" />
@@ -1298,7 +1699,11 @@ const TaskCard = React.memo(function TaskCard({
                                 <IconButton
                                   size="small"
                                   onClick={() =>
-                                    onCopyRowToNextQuarter(task.id, p.id)
+                                    onCopyRowToNextQuarter(
+                                      task.id,
+                                      p.id,
+                                      rows[p.id] || {}
+                                    )
                                   }
                                 >
                                   <CopyAll fontSize="small" />
@@ -1309,7 +1714,11 @@ const TaskCard = React.memo(function TaskCard({
                                 <IconButton
                                   size="small"
                                   onClick={() =>
-                                    onRemoveParticipant(task, p.id)
+                                    onRemoveParticipant(
+                                      task,
+                                      p.id,
+                                      orderedParticipantIds
+                                    )
                                   }
                                 >
                                   <Delete fontSize="small" />
@@ -1337,7 +1746,11 @@ const TaskCard = React.memo(function TaskCard({
                       onChange={(_, value) => {
                         setSelectedParticipantToAdd(value);
                         if (value) {
-                          onAddParticipant(task, value.id);
+                          onAddParticipant(
+                            task,
+                            value.id,
+                            orderedParticipantIds
+                          );
                           addParticipantInputRef.current?.blur();
                         }
                         setSelectedParticipantToAdd(null);
@@ -1730,26 +2143,25 @@ export default function BacklogPage() {
     loadNextTasksPage,
   ]);
 
-  const [taskQuartersMap, setTaskQuartersMap] = React.useState<
-    Record<string, string[]>
-  >(() => readLS<Record<string, string[]>>(LS_TASK_QUARTERS, {}));
+  const initialLocalState = React.useMemo<BacklogLocalState>(
+    () => ({
+      taskQuartersMap: readLS<Record<string, string[]>>(LS_TASK_QUARTERS, {}),
+      allocations: EMPTY_ALLOC,
+      participantOrders: {},
+      hiddenParticipantsTaskIds: new Set(
+        readLS<string[]>(LS_HIDDEN_PARTICIPANTS, [])
+      ),
+    }),
+    []
+  );
 
-  const [allocations, setAllocations] = React.useState<Allocations>({});
-  const allocationsRef = React.useRef(allocations);
-  const [participantOrders, setParticipantOrders] = React.useState<
-    Record<string, string[]>
-  >({});
-  const [hiddenParticipantsTaskIds, setHiddenParticipantsTaskIds] =
-    React.useState<Set<string>>(
-      () => new Set(readLS<string[]>(LS_HIDDEN_PARTICIPANTS, []))
-    );
+  const [local, dispatchLocal] = React.useReducer(
+    backlogLocalReducer,
+    initialLocalState
+  );
   const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
   const [newTaskQuarterId, setNewTaskQuarterId] = React.useState<string>("");
   const [addTaskQuarterError, setAddTaskQuarterError] = React.useState(false);
-
-  React.useEffect(() => {
-    allocationsRef.current = allocations;
-  }, [allocations]);
 
   React.useEffect(() => {
     if (quarterIdSet.size === 0) return;
@@ -1789,104 +2201,16 @@ export default function BacklogPage() {
     quarterIdsKey,
   ]);
 
-  React.useEffect(() => {
-    if (!tasks.length) return;
+  useDebouncedEffect(() => {
+    writeLS(LS_TASK_QUARTERS, local.taskQuartersMap);
+  }, [local.taskQuartersMap], 400);
 
-    const taskMap = new Map(tasks.map((t) => [t.id, t]));
-
-    setTaskQuartersMap((prev) => {
-      const next = { ...prev };
-      let changed = false;
-
-      for (const t of tasks) {
-        if (!next[t.id] || next[t.id].length === 0) {
-          const derived = deriveTaskQuarters(
-            t,
-            allSprints,
-            selectedQuarterIds[0] || currentQ?.id
-          );
-          if (derived.length) {
-            next[t.id] = derived;
-            changed = true;
-          }
-        }
-      }
-
-      Object.keys(next).forEach((id) => {
-        if (!taskMap.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      });
-
-      return changed ? next : prev;
-    });
-  }, [tasks, allSprints, selectedQuarterIds, currentQ]);
-
-  // Синхронизация локального состояния allocations с данными задач
-  React.useEffect(() => {
-    setAllocations((prev) => {
-      const next: Allocations = { ...prev };
-      let changed = false;
-      for (const t of tasks) {
-        const taskAllocations: Record<string, Record<string, number>> = next[
-          t.id
-        ] ?? (next[t.id] = {});
-        const pids = t.participantIds || [];
-
-        Object.keys(taskAllocations).forEach((pid) => {
-          if (!pids.includes(pid)) {
-            delete taskAllocations[pid];
-            changed = true;
-          }
-        });
-
-        for (const pid of pids) {
-          const participantAllocations: Record<string, number> =
-            taskAllocations[pid] ?? (taskAllocations[pid] = {});
-          for (const s of allSprints) {
-            const existing = participantAllocations[s.id];
-            const incoming = t.allocations?.[pid]?.[s.id];
-            const value = Number(incoming ?? existing ?? 0) || 0;
-            if (participantAllocations[s.id] !== value) {
-              participantAllocations[s.id] = value;
-              changed = true;
-            }
-          }
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [tasks, allSprints]);
-
-  React.useEffect(() => {
-    setParticipantOrders((prev) => {
-      const next = { ...prev } as Record<string, string[]>;
-      let changed = false;
-      for (const task of tasks) {
-        const ids = task.participantIds || [];
-        const existing = next[task.id];
-        if (!existing) {
-          next[task.id] = ids.slice();
-          changed = true;
-          continue;
-        }
-        const kept = existing.filter((id) => ids.includes(id));
-        const added = ids.filter((id) => !kept.includes(id));
-        const updated = [...kept, ...added];
-        if (!shallowArrayEqual(updated, existing)) {
-          next[task.id] = updated;
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [tasks]);
-
-  React.useEffect(
-    () => writeLS(LS_TASK_QUARTERS, taskQuartersMap),
-    [taskQuartersMap]
-  );
+  useDebouncedEffect(() => {
+    writeLS(
+      LS_HIDDEN_PARTICIPANTS,
+      Array.from(local.hiddenParticipantsTaskIds)
+    );
+  }, [local.hiddenParticipantsTaskIds], 400);
 
   const streamOptions = React.useMemo(() => {
     const s = new Set<string>();
@@ -1902,7 +2226,7 @@ export default function BacklogPage() {
 
   const getTaskQuarters = React.useCallback(
     (task: BacklogItem): string[] => {
-      const fromMap = taskQuartersMap[task.id];
+      const fromMap = local.taskQuartersMap[task.id];
       if (fromMap && fromMap.length) return fromMap;
       const derived = deriveTaskQuarters(
         task,
@@ -1912,14 +2236,20 @@ export default function BacklogPage() {
       if (derived.length) return derived;
       return quartersSorted.map((q) => q.id);
     },
-    [taskQuartersMap, allSprints, selectedQuarterIds, currentQ, quartersSorted]
+    [
+      local.taskQuartersMap,
+      allSprints,
+      selectedQuarterIds,
+      currentQ,
+      quartersSorted,
+    ]
   );
 
   const updateTaskQuarters = React.useCallback(
     (taskId: string, quarterIds: string[]) => {
       const unique = Array.from(new Set(quarterIds.filter(Boolean)));
       if (!unique.length) return;
-      setTaskQuartersMap((prev) => ({ ...prev, [taskId]: unique }));
+      dispatchLocal({ type: "SET_TASK_QUARTERS", taskId, quarterIds: unique });
     },
     []
   );
@@ -2220,6 +2550,29 @@ export default function BacklogPage() {
     return withOrder;
   }, [deferredTasks, deferredStatusFilter, pinnedTaskId]);
 
+  const sprintQuarterById = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of allSprints) m.set(s.id, s.quarterId);
+    return m;
+  }, [allSprints]);
+
+  const tasksIdsKey = React.useMemo(
+    () => (filteredTasks.length ? filteredTasks.map((t) => t.id).join("|") : ""),
+    [filteredTasks]
+  );
+
+  React.useEffect(() => {
+    startTaskTransition(() => {
+      dispatchLocal({
+        type: "SYNC_FROM_TASKS",
+        tasks: filteredTasks,
+        sprintQuarterById,
+        defaultQuarterId: selectedQuarterIds[0] || currentQ?.id,
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasksIdsKey, sprintQuarterById, selectedQuarterIds, currentQ?.id]);
+
   const filteredTaskIds = React.useMemo(
     () => filteredTasks.map((t) => t.id),
     [filteredTasks]
@@ -2325,10 +2678,13 @@ export default function BacklogPage() {
       releaseSprintId: "",
     }).unwrap();
 
-    setAllocations((prev) => ({ ...prev, [created.id]: {} }));
     setPinnedTaskId(created.id);
     if (quarterId) {
-      setTaskQuartersMap((prev) => ({ ...prev, [created.id]: [quarterId] }));
+      dispatchLocal({
+        type: "SET_TASK_QUARTERS",
+        taskId: created.id,
+        quarterIds: [quarterId],
+      });
     }
   };
 
@@ -2346,12 +2702,14 @@ export default function BacklogPage() {
   };
 
   const duplicateTask = React.useCallback(
-    async (task: BacklogItem) => {
+    async (
+      task: BacklogItem,
+      allocationsByParticipant: Record<string, Record<string, number>>
+    ) => {
       const taskQuarters = getTaskQuarters(task);
-      const taskAllocations = allocationsRef.current[task.id] || {};
-      const allocationsPayload = Object.entries(taskAllocations).reduce<
-        Record<string, Record<string, number>>
-      >((acc, [pid, row]) => {
+      const allocationsPayload = Object.entries(
+        allocationsByParticipant || {}
+      ).reduce<Record<string, Record<string, number>>>((acc, [pid, row]) => {
         const positive = Object.entries(row)
           .map(([sid, value]) => [sid, toInt(Number(value) || 0)] as const)
           .filter(([, days]) => days > 0);
@@ -2393,7 +2751,11 @@ export default function BacklogPage() {
       }).unwrap();
 
       if (taskQuarters.length) {
-        setTaskQuartersMap((prev) => ({ ...prev, [copy.id]: taskQuarters }));
+        dispatchLocal({
+          type: "SET_TASK_QUARTERS",
+          taskId: copy.id,
+          quarterIds: taskQuarters,
+        });
       }
 
       return copy;
@@ -2405,12 +2767,7 @@ export default function BacklogPage() {
     async (t: BacklogItem) => {
       if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
       await deleteTask({ id: t.id }).unwrap();
-
-      setAllocations((prev) => {
-        const copy = { ...prev };
-        delete copy[t.id];
-        return copy;
-      });
+      dispatchLocal({ type: "REMOVE_TASK", taskId: t.id });
     },
     [deleteTask]
   );
@@ -2422,6 +2779,13 @@ export default function BacklogPage() {
       sprintId: string,
       value: number
     ) => {
+      dispatchLocal({
+        type: "SET_ALLOCATION",
+        taskId,
+        participantId,
+        sprintId,
+        value,
+      });
       startTaskTransition(() => {
         upsertTaskAllocation({
           taskId,
@@ -2445,63 +2809,54 @@ export default function BacklogPage() {
       sprintId: string,
       value: number
     ) => {
-      setAllocations((prev) => {
-        const prevTask = prev[taskId] || {};
-        const prevRow = prevTask[participantId] || {};
-        const current = prevRow[sprintId] ?? 0;
-        if (current === value) return prev;
-        const nextRow = { ...prevRow, [sprintId]: value };
-        const nextTask = { ...prevTask, [participantId]: nextRow };
-        return { ...prev, [taskId]: nextTask };
+      dispatchLocal({
+        type: "SET_ALLOCATION",
+        taskId,
+        participantId,
+        sprintId,
+        value,
       });
     },
     []
   );
 
   const addParticipantToTask = React.useCallback(
-    (task: BacklogItem, pid: string) => {
+    (task: BacklogItem, pid: string, participantOrder: string[]) => {
       if (!pid) return;
       if (task.participantIds?.includes(pid)) return;
 
       updateField(task, { participantIds: [...task.participantIds, pid] });
 
-      setParticipantOrders((prev) => ({
-        ...prev,
-        [task.id]: [...(prev[task.id] || task.participantIds), pid],
-      }));
+      const nextOrder = [
+        ...(participantOrder.length ? participantOrder : task.participantIds),
+        pid,
+      ];
+      dispatchLocal({
+        type: "SET_PARTICIPANT_ORDER",
+        taskId: task.id,
+        order: nextOrder,
+      });
 
-      setAllocations((prev) => {
-        const prevTask = prev[task.id] || {};
-        if (prevTask[pid]) return prev;
-        const newRow: Record<string, number> = {};
-        for (const s of allSprints) newRow[s.id] = 0;
-        return {
-          ...prev,
-          [task.id]: {
-            ...prevTask,
-            [pid]: newRow,
-          },
-        };
+      dispatchLocal({
+        type: "SET_ALLOCATIONS_ROW",
+        taskId: task.id,
+        participantId: pid,
+        row: {},
       });
     },
-    [allSprints, updateField]
+    [updateField]
   );
 
   const removeParticipantFromTask = React.useCallback(
-    async (task: BacklogItem, pid: string) => {
-      setAllocations((prev) => {
-        const prevTask = prev[task.id];
-        if (!prevTask || !prevTask[pid]) return prev;
-        const { [pid]: _, ...restRows } = prevTask;
-        return { ...prev, [task.id]: restRows };
-      });
-
-      setParticipantOrders((prev) => {
-        const next = { ...prev };
-        if (next[task.id]) {
-          next[task.id] = next[task.id].filter((id) => id !== pid);
-        }
-        return next;
+    async (task: BacklogItem, pid: string, participantOrder: string[]) => {
+      const nextOrder = (participantOrder.length
+        ? participantOrder
+        : task.participantIds
+      ).filter((id) => id !== pid);
+      dispatchLocal({
+        type: "SET_PARTICIPANT_ORDER",
+        taskId: task.id,
+        order: nextOrder,
       });
 
       const patch: Partial<BacklogItem> = {
@@ -2521,7 +2876,13 @@ export default function BacklogPage() {
   );
 
   const replaceParticipantInTask = React.useCallback(
-    async (task: BacklogItem, fromPid: string, toPid: string) => {
+    async (
+      task: BacklogItem,
+      fromPid: string,
+      toPid: string,
+      allocationsByParticipant: Record<string, Record<string, number>>,
+      participantOrder: string[]
+    ) => {
       if (!toPid || fromPid === toPid) return;
       if (!task.participantIds.includes(fromPid)) return;
       if (task.participantIds.includes(toPid)) return;
@@ -2529,9 +2890,8 @@ export default function BacklogPage() {
       const participantIds = task.participantIds.map((id) =>
         id === fromPid ? toPid : id
       );
-      const taskAllocations = allocationsRef.current[task.id] || {};
-      const rowToMove = taskAllocations[fromPid] || {};
-      const nextAllocations = Object.entries(taskAllocations).reduce<
+      const rowToMove = allocationsByParticipant[fromPid] || {};
+      const nextAllocations = Object.entries(allocationsByParticipant).reduce<
         Record<string, Record<string, number>>
       >((acc, [pid, row]) => {
         if (pid === fromPid) return acc;
@@ -2541,25 +2901,20 @@ export default function BacklogPage() {
 
       nextAllocations[toPid] = { ...rowToMove };
 
-      setAllocations((prev) => {
-        const prevTask = prev[task.id] || {};
-        const movedRow = prevTask[fromPid] || rowToMove;
-        const { [fromPid]: _, ...rest } = prevTask;
-        return {
-          ...prev,
-          [task.id]: {
-            ...rest,
-            [toPid]: { ...movedRow },
-          },
-        };
+      dispatchLocal({
+        type: "SET_ALLOCATIONS_ROW",
+        taskId: task.id,
+        participantId: toPid,
+        row: rowToMove,
       });
 
-      setParticipantOrders((prev) => {
-        const currentOrder = prev[task.id] || task.participantIds;
-        return {
-          ...prev,
-          [task.id]: currentOrder.map((id) => (id === fromPid ? toPid : id)),
-        };
+      const currentOrder = participantOrder.length
+        ? participantOrder
+        : task.participantIds;
+      dispatchLocal({
+        type: "SET_PARTICIPANT_ORDER",
+        taskId: task.id,
+        order: currentOrder.map((id) => (id === fromPid ? toPid : id)),
       });
 
       const patch: Partial<BacklogItem> = {
@@ -2581,8 +2936,12 @@ export default function BacklogPage() {
   );
 
   const shiftRow = React.useCallback(
-    (taskId: string, participantId: string, dir: "left" | "right") => {
-      const row = allocationsRef.current[taskId]?.[participantId] || {};
+    (
+      taskId: string,
+      participantId: string,
+      dir: "left" | "right",
+      row: Record<string, number>
+    ) => {
       const ids = sprintsGlobalOrdered.map((s) => s.id);
       if (!ids.length) return;
 
@@ -2603,15 +2962,11 @@ export default function BacklogPage() {
         next[targetSid] = (next[targetSid] || 0) + val;
       }
 
-      setAllocations((prev) => {
-        const prevTask = prev[taskId] || {};
-        return {
-          ...prev,
-          [taskId]: {
-            ...prevTask,
-            [participantId]: next,
-          },
-        };
+      dispatchLocal({
+        type: "SET_ALLOCATIONS_ROW",
+        taskId,
+        participantId,
+        row: next,
       });
 
       (async () => {
@@ -2638,15 +2993,18 @@ export default function BacklogPage() {
   );
 
   const shiftTaskAllocations = React.useCallback(
-    (task: BacklogItem, dir: "left" | "right") => {
+    (
+      task: BacklogItem,
+      dir: "left" | "right",
+      allocationsByParticipant: Record<string, Record<string, number>>
+    ) => {
       const ids = sprintsGlobalOrdered.map((s) => s.id);
       if (!ids.length) return;
-      const taskAllocations = allocationsRef.current[task.id] || {};
       const participantIds = task.participantIds || [];
       const nextTaskAllocations: Record<string, Record<string, number>> = {};
 
       for (const participantId of participantIds) {
-        const row = taskAllocations[participantId] || {};
+        const row = allocationsByParticipant[participantId] || {};
         const nextRow: Record<string, number> = ids.reduce<
           Record<string, number>
         >((acc, sid) => {
@@ -2668,13 +3026,14 @@ export default function BacklogPage() {
 
       if (!Object.keys(nextTaskAllocations).length) return;
 
-      setAllocations((prev) => {
-        const prevTask = prev[task.id] || {};
-        return {
-          ...prev,
-          [task.id]: { ...prevTask, ...nextTaskAllocations },
-        };
-      });
+      for (const [participantId, row] of Object.entries(nextTaskAllocations)) {
+        dispatchLocal({
+          type: "SET_ALLOCATIONS_ROW",
+          taskId: task.id,
+          participantId,
+          row,
+        });
+      }
 
       (async () => {
         try {
@@ -2703,8 +3062,11 @@ export default function BacklogPage() {
   );
 
   const copyRowToNextQuarter = React.useCallback(
-    (taskId: string, participantId: string) => {
-      const row = allocationsRef.current[taskId]?.[participantId] || {};
+    (
+      taskId: string,
+      participantId: string,
+      row: Record<string, number>
+    ) => {
       if (!Object.keys(row).length) return;
 
       const quartersWithLoad = new Set<string>();
@@ -2748,12 +3110,11 @@ export default function BacklogPage() {
         }
       }
 
-      setAllocations((prev) => {
-        const prevTask = prev[taskId] || {};
-        return {
-          ...prev,
-          [taskId]: { ...prevTask, [participantId]: nextRow },
-        };
+      dispatchLocal({
+        type: "SET_ALLOCATIONS_ROW",
+        taskId,
+        participantId,
+        row: nextRow,
       });
 
       (async () => {
@@ -2793,26 +3154,14 @@ export default function BacklogPage() {
 
   const toggleParticipantsVisibility = React.useCallback(
     (taskId: string, hidden: boolean) => {
-      setHiddenParticipantsTaskIds((prev) => {
-        const next = new Set(prev);
-        if (hidden) {
-          next.add(taskId);
-        } else {
-          next.delete(taskId);
-        }
-        writeLS(LS_HIDDEN_PARTICIPANTS, Array.from(next));
-        return next;
-      });
+      dispatchLocal({ type: "TOGGLE_HIDDEN_PARTICIPANTS", taskId, hidden });
     },
     []
   );
 
   const handleParticipantOrderChange = React.useCallback(
     (taskId: string, order: string[]) => {
-      setParticipantOrders((prev) => ({
-        ...prev,
-        [taskId]: order,
-      }));
+      dispatchLocal({ type: "SET_PARTICIPANT_ORDER", taskId, order });
       applyParticipantOrderOptimistic(taskId, order);
     },
     [applyParticipantOrderOptimistic]
@@ -3017,16 +3366,18 @@ export default function BacklogPage() {
               <Stack spacing={2}>
                 {filteredTasks.map((t) => {
                   const allocationsByParticipant =
-                    allocations[t.id] || EMPTY_ALLOCATIONS_ROW;
+                    local.allocations[t.id] || EMPTY_ALLOCATIONS_ROW;
                   const participantOrder =
-                    participantOrders[t.id] || EMPTY_STRING_ARR;
+                    local.participantOrders[t.id] || EMPTY_STRING_ARR;
                   return (
                     <SortableTaskCardItem
                       key={t.id}
                       task={t}
                       allocationsByParticipant={allocationsByParticipant}
                       participantOrder={participantOrder}
-                      hiddenParticipants={hiddenParticipantsTaskIds.has(t.id)}
+                      hiddenParticipants={local.hiddenParticipantsTaskIds.has(
+                        t.id
+                      )}
                     />
                   );
                 })}
