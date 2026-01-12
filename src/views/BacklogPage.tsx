@@ -75,6 +75,7 @@ import { setBacklogFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 import FiltersPanel from "../components/filters/FiltersPanel";
+import type { FiltersPanelFilter } from "../components/filters/FiltersPanel";
 
 import {
   DndContext,
@@ -2066,7 +2067,7 @@ export default function BacklogPage() {
     [dispatch, normalizedSearch, startFiltersTransition]
   );
 
-  const filtersConfig = React.useMemo(
+  const filtersConfig = React.useMemo<FiltersPanelFilter[]>(
     () => [
       {
         type: "autocomplete",
