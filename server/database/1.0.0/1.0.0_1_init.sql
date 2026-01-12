@@ -33,6 +33,15 @@ CREATE TABLE participants (
 );
 CREATE INDEX participants_role_idx ON participants(role);
 
+CREATE TABLE run_vacation (
+    participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
+    run_days INT NOT NULL DEFAULT 0,
+    vacation_norm_days INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (participant_id, sprint_id)
+);
+CREATE INDEX runvac_sprint_idx ON run_vacation(sprint_id);
+
 CREATE TABLE tasks (
     id UUID PRIMARY KEY,
     title TEXT NOT NULL,
