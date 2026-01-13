@@ -28,6 +28,7 @@ server:
 app:
   capacity:
     norm-factor: 0.85
+    capacity-factor: 0.85
 management:
   endpoints:
     web:
