@@ -53,7 +53,6 @@ public class CapacityService {
         Map<String, Map<String, Double>> workloadByParticipantAndSprint = aggregateWorkload(teamKey, sprints);
 
         double normFactor = capacityProperties.normFactor();
-        double roundedNormFactor = roundToOneDecimal(normFactor);
         List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
         List<ParticipantEntity> filteredParticipants = filterParticipants(
             participants,
@@ -80,7 +79,7 @@ public class CapacityService {
                     sprint.getId().toString(),
                     sprint.getWorkingDays(),
                     roundedParticipantRate,
-                    roundedNormFactor,
+                    normFactor,
                     baseCapacity,
                     available,
                     roundedWorkload

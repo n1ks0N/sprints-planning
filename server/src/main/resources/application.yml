@@ -27,7 +27,7 @@ server:
     context-path: /api/v1/sprints-planning
 app:
   capacity:
-    norm-factor: 0.75
+    norm-factor: 0.85
 management:
   endpoints:
     web:

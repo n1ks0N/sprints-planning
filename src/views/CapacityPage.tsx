@@ -372,7 +372,7 @@ export default function CapacityPage() {
                         const cell = getCell(p.id, s.id);
                         const availRaw = cell?.availableDays ?? 0;
                         const workRaw = cell?.workloadDays ?? 0;
-                        const normFactor = cell?.normFactor ?? 0.75;
+                        const normFactor = cell?.normFactor ?? 0.85;
                         const avail = round1(availRaw);
                         const work = round1(workRaw);
                         const bg = cellColor(workRaw, availRaw, normFactor);
