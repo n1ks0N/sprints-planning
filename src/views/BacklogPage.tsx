@@ -1932,7 +1932,16 @@ export default function BacklogPage() {
       new Set(promReleases.map((r) => r.promDate).filter(Boolean))
     );
     return dates
-      .sort((a, b) => moment(a).valueOf() - moment(b).valueOf())
+      .sort((a, b) => {
+        const aDate = moment(a, "YYYY-MM-DD", true);
+        const bDate = moment(b, "YYYY-MM-DD", true);
+        if (!aDate.isValid() && !bDate.isValid()) {
+          return a.localeCompare(b);
+        }
+        if (!aDate.isValid()) return 1;
+        if (!bDate.isValid()) return -1;
+        return aDate.valueOf() - bDate.valueOf();
+      })
       .map((iso) => ({
         value: iso,
         label: moment(iso).format("DD.MM.YYYY"),
