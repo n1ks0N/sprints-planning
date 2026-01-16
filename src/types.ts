@@ -31,9 +31,8 @@ export type CapacityCell = {
   workingDays: number;
   rate: number;
   normFactor: number;
+  capacityFactor: number;
   baseCapacity: number;
-  runDays: number;
-  vacationNormDays: number;
   availableDays: number;
   workloadDays: number;
 };

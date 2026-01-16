@@ -20,3 +20,6 @@ databaseChangeLog:
   - include:
       file: 1.0.0/1.0.0_7_normalize_task_order.sql
       relativeToChangelogFile: true
+  - include:
+      file: 1.0.0/1.0.0_8_remove_run_vacation.sql
+      relativeToChangelogFile: true
