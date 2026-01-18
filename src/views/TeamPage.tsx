@@ -171,9 +171,8 @@ export default function TeamPage() {
 
   const handleRoleFilterChange = React.useCallback(
     (values: string[]) => {
-      const next = Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
-      if (shallowArrayEqual(next, filterRoles)) return;
-      dispatch(setTeamFilters({ filterRoles: next }));
+      if (shallowArrayEqual(values, filterRoles)) return;
+      dispatch(setTeamFilters({ filterRoles: values }));
     },
     [dispatch, filterRoles]
   );
@@ -196,9 +195,8 @@ export default function TeamPage() {
 
   const handleUserStreamFilterChange = React.useCallback(
     (values: string[]) => {
-      const next = normalizeUserStreams(values);
-      if (shallowArrayEqual(next, filterUserStreams)) return;
-      dispatch(setTeamFilters({ filterUserStreams: next }));
+      if (shallowArrayEqual(values, filterUserStreams)) return;
+      dispatch(setTeamFilters({ filterUserStreams: values }));
     },
     [dispatch, filterUserStreams]
   );

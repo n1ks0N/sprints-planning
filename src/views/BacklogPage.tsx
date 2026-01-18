@@ -1882,9 +1882,9 @@ export default function BacklogPage() {
 
   const updateTaskQuarters = React.useCallback(
     (taskId: string, quarterIds: string[]) => {
-      const unique = Array.from(new Set(quarterIds.filter(Boolean)));
-      if (!unique.length) return;
-      setTaskQuartersMap((prev) => ({ ...prev, [taskId]: unique }));
+      const filtered = quarterIds.filter(Boolean);
+      if (!filtered.length) return;
+      setTaskQuartersMap((prev) => ({ ...prev, [taskId]: filtered }));
     },
     []
   );
@@ -1952,10 +1952,9 @@ export default function BacklogPage() {
     (ids: string[]) => {
       const existing = new Set(quarters.map((q) => q.id));
       const filtered = ids.filter((id) => existing.has(id));
-      const unique = Array.from(new Set(filtered));
-      if (shallowArrayEqual(unique, selectedQuarterIds)) return;
+      if (shallowArrayEqual(filtered, selectedQuarterIds)) return;
       startFiltersTransition(() => {
-        dispatch(setBacklogFilters({ selectedQuarterIds: unique }));
+        dispatch(setBacklogFilters({ selectedQuarterIds: filtered }));
       });
     },
     [quarters, selectedQuarterIds, startFiltersTransition, dispatch]
@@ -1963,9 +1962,8 @@ export default function BacklogPage() {
 
   const handlePriorityFilterChange = React.useCallback(
     (values: string[]) => {
-      const unique = Array.from(new Set(values));
-      const next = unique
-        .map((v) => Number(v))
+      const next = values
+        .map(Number)
         .filter((n): n is number => PRIORITY_VALUES.includes(n));
       if (shallowArrayEqual(next, priorityFilter)) return;
       startFiltersTransition(() => {
@@ -1977,7 +1975,7 @@ export default function BacklogPage() {
 
   const handleStatusFilterChange = React.useCallback(
     (values: string[]) => {
-      const next = Array.from(new Set(values)) as TaskStatus[];
+      const next = values as TaskStatus[];
       if (shallowArrayEqual(next, statusFilter)) return;
       startFiltersTransition(() => {
         dispatch(setBacklogFilters({ statusFilter: next }));
