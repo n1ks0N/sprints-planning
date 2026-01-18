@@ -155,9 +155,8 @@ export default function TimeSetupPage() {
     if (!quarters.length) return;
     const actualIds = new Set(quarters.map((q) => q.id));
     const filtered = selectedQuarterIds.filter((id) => actualIds.has(id));
-    const unique = Array.from(new Set(filtered));
-    if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
-      dispatch(setTimeSelectedQuarterIds(unique));
+    if (!shallowStringArrayEqual(filtered, selectedQuarterIds)) {
+      dispatch(setTimeSelectedQuarterIds(filtered));
     }
   }, [quarters, selectedQuarterIds, dispatch]);
 
@@ -173,9 +172,8 @@ export default function TimeSetupPage() {
     (ids: string[]) => {
       const existing = new Set(quarters.map((q) => q.id));
       const filtered = ids.filter((id) => existing.has(id));
-      const unique = Array.from(new Set(filtered));
-      if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
-        dispatch(setTimeSelectedQuarterIds(unique));
+      if (!shallowStringArrayEqual(filtered, selectedQuarterIds)) {
+        dispatch(setTimeSelectedQuarterIds(filtered));
       }
     },
     [quarters, selectedQuarterIds, dispatch]
@@ -512,8 +510,7 @@ export default function TimeSetupPage() {
     }).unwrap()) as Quarter;
 
     if (selectedQuarterIds.length > 0) {
-      const set = new Set(selectedQuarterIds);
-      if (!set.has(created.id)) {
+      if (!selectedQuarterIds.includes(created.id)) {
         dispatch(
           setTimeSelectedQuarterIds([...selectedQuarterIds, created.id])
         );

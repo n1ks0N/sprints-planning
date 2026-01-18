@@ -82,9 +82,6 @@ function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
   return true;
 }
 
-const normalizeUnique = (values: string[]) =>
-  Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
-
 export default function CapacityPage() {
   const { data: quarters = [], isLoading: isQuartersLoading } =
     useGetQuartersQuery();
@@ -119,9 +116,8 @@ export default function CapacityPage() {
     if (!quarters.length) return;
     const actualIds = new Set(quarters.map((q) => q.id));
     const filtered = selectedQuarterIds.filter((id) => actualIds.has(id));
-    const unique = Array.from(new Set(filtered));
-    if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
-      dispatch(setCapacitySelectedQuarterIds(unique));
+    if (!shallowStringArrayEqual(filtered, selectedQuarterIds)) {
+      dispatch(setCapacitySelectedQuarterIds(filtered));
     }
   }, [quarters, selectedQuarterIds, dispatch]);
 
@@ -185,9 +181,8 @@ export default function CapacityPage() {
     (ids: string[]) => {
       const existing = new Set(quarters.map((q) => q.id));
       const filtered = ids.filter((id) => existing.has(id));
-      const unique = Array.from(new Set(filtered));
-      if (!shallowStringArrayEqual(unique, selectedQuarterIds)) {
-        dispatch(setCapacitySelectedQuarterIds(unique));
+      if (!shallowStringArrayEqual(filtered, selectedQuarterIds)) {
+        dispatch(setCapacitySelectedQuarterIds(filtered));
       }
     },
     [quarters, dispatch, selectedQuarterIds]
@@ -205,18 +200,16 @@ export default function CapacityPage() {
 
   const handleRoleFilterChange = React.useCallback(
     (values: string[]) => {
-      const next = normalizeUnique(values);
-      if (shallowStringArrayEqual(next, rolesFilter)) return;
-      dispatch(setCapacityFilters({ rolesFilter: next }));
+      if (shallowStringArrayEqual(values, rolesFilter)) return;
+      dispatch(setCapacityFilters({ rolesFilter: values }));
     },
     [dispatch, rolesFilter]
   );
 
   const handleUserStreamsFilterChange = React.useCallback(
     (values: string[]) => {
-      const next = normalizeUnique(values);
-      if (shallowStringArrayEqual(next, userStreamsFilter)) return;
-      dispatch(setCapacityFilters({ userStreamsFilter: next }));
+      if (shallowStringArrayEqual(values, userStreamsFilter)) return;
+      dispatch(setCapacityFilters({ userStreamsFilter: values }));
     },
     [dispatch, userStreamsFilter]
   );

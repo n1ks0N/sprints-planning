@@ -127,30 +127,24 @@ export default function ParticipantWorkloadPage() {
 
   const handleRolesFilterChange = React.useCallback(
     (values: string[]) => {
-      const next = Array.from(
-        new Set(values.map((v) => v.trim()).filter(Boolean))
-      );
-      if (shallowArrayEqual(next, ui.rolesFilter)) return;
-      dispatch(setParticipantWorkloadFilters({ rolesFilter: next }));
+      if (shallowArrayEqual(values, ui.rolesFilter)) return;
+      dispatch(setParticipantWorkloadFilters({ rolesFilter: values }));
     },
     [dispatch, ui.rolesFilter]
   );
 
   const handleUserStreamsFilterChange = React.useCallback(
     (values: string[]) => {
-      const next = Array.from(
-        new Set(values.map((v) => v.trim()).filter(Boolean))
-      );
-      if (shallowArrayEqual(next, ui.userStreamsFilter)) return;
-      dispatch(setParticipantWorkloadFilters({ userStreamsFilter: next }));
+      if (shallowArrayEqual(values, ui.userStreamsFilter)) return;
+      dispatch(setParticipantWorkloadFilters({ userStreamsFilter: values }));
     },
     [dispatch, ui.userStreamsFilter]
   );
 
   const handlePriorityFilterChange = React.useCallback(
     (values: string[]) => {
-      const next = Array.from(new Set(values))
-        .map((v) => Number(v))
+      const next = values
+        .map(Number)
         .filter((n): n is number => [1, 2, 3].includes(n));
       if (shallowArrayEqual(next, ui.priorityFilter)) return;
       dispatch(
@@ -168,11 +162,7 @@ export default function ParticipantWorkloadPage() {
   );
 
   const participantsInScope = React.useMemo(() => {
-    let list = participants.slice();
-    if (selectedParticipants.length) {
-      const set = new Set(selectedParticipants.map((p) => p.id));
-      list = list.filter((p) => set.has(p.id));
-    }
+    let list = selectedParticipants.length ? selectedParticipants : participants;
     if (ui.rolesFilter.length) {
       const rset = new Set(ui.rolesFilter);
       list = list.filter((p) => rset.has(p.role));
@@ -331,7 +321,7 @@ export default function ParticipantWorkloadPage() {
               onChange: (ids) =>
                 dispatch(
                   setParticipantWorkloadFilters({
-                    selectedQuarterIds: Array.from(new Set(ids)),
+                    selectedQuarterIds: ids,
                   })
                 ),
             },
