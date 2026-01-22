@@ -936,6 +936,7 @@ const TaskCard = React.memo(function TaskCard({
             size="small"
             label="Релиз (ПРОМ)"
             value={normalizedReleaseValue}
+            InputLabelProps={{ shrink: true }}
             onChange={(e) => {
               const rawValue = String(e.target.value);
               const iso = rawValue ? rawValue : null;
