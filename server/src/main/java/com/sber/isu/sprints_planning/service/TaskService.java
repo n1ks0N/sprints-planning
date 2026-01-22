@@ -175,6 +175,7 @@ public class TaskService {
         if (request.releaseSprintId() != null) {
             if (request.releaseSprintId().isBlank()) {
                 entity.setReleaseSprint(null);
+                entity.setReleaseDate(null);
             } else {
                 entity.setReleaseSprint(fetchSprint(teamKey, request.releaseSprintId()));
             }

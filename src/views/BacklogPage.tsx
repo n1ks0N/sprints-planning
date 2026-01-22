@@ -937,8 +937,9 @@ const TaskCard = React.memo(function TaskCard({
             label="Релиз (ПРОМ)"
             value={normalizedReleaseValue}
             onChange={(e) => {
-              const iso = String(e.target.value) || "";
-              const sid = detectSprintByDate(iso) || "";
+              const rawValue = String(e.target.value);
+              const iso = rawValue ? rawValue : null;
+              const sid = iso ? detectSprintByDate(iso) || "" : "";
               onUpdateTaskPatch(task, {
                 releaseDate: iso,
                 releaseSprintId: sid,
@@ -2786,6 +2787,7 @@ export default function BacklogPage() {
                 value: releaseSprintFilter === "all" ? "" : releaseSprintFilter,
                 onChange: handleReleaseFilterChange,
                 placeholder: "Все релизы",
+                sortOptions: false,
               },
             },
             {
