@@ -6,7 +6,6 @@ import com.sber.isu.sprints_planning.dto.request.QuarterCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.QuarterUpdateRequest;
 import com.sber.isu.sprints_planning.mapper.DtoMapper;
 import com.sber.isu.sprints_planning.model.QuarterEntity;
-import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
@@ -88,13 +87,6 @@ public class QuarterService {
     public QuarterDto delete(String teamKey, IdRequest request) {
         QuarterEntity entity = quarterRepository.findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Quarter not found"));
-        List<UUID> sprintIds = sprintRepository.findByTeamKeyAndQuarterIdOrderByOrderAsc(teamKey, entity.getId())
-            .stream()
-            .map(SprintEntity::getId)
-            .toList();
-        if (!sprintIds.isEmpty()) {
-            taskRepository.clearReleaseForSprints(sprintIds);
-        }
         quarterRepository.delete(entity);
         return DtoMapper.toQuarterDto(entity);
     }

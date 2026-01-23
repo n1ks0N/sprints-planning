@@ -17,7 +17,7 @@ public record TaskDto(
     Map<String, BigDecimal> loads,
     Map<String, Map<String, BigDecimal>> allocations,
     Map<String, String> notes,
-    String releaseDate,
+    String releaseDateId,
     String releaseSprintId,
     String leaderId,
     Integer order,
