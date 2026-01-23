@@ -691,7 +691,14 @@ const TaskCard = React.memo(function TaskCard({
     () => new Set(releaseOptions.map((opt) => opt.value)),
     [releaseOptions]
   );
-  const normalizedReleaseValue = allowedReleaseValues.has(relISO) ? relISO : "";
+  const releaseOptionsWithCurrent = React.useMemo(() => {
+    if (!relISO || allowedReleaseValues.has(relISO)) return releaseOptions;
+    const label = moment(relISO).isValid()
+      ? moment(relISO).format("DD.MM.YYYY")
+      : relISO;
+    return [{ value: relISO, label }, ...releaseOptions];
+  }, [allowedReleaseValues, relISO, releaseOptions]);
+  const selectedReleaseValue = relISO || "";
 
   const clampedTextSx = {
     display: "-webkit-box",
@@ -935,7 +942,7 @@ const TaskCard = React.memo(function TaskCard({
             select
             size="small"
             label="Релиз (ПРОМ)"
-            value={normalizedReleaseValue}
+            value={selectedReleaseValue}
             InputLabelProps={{ shrink: true }}
             onChange={(e) => {
               const rawValue = String(e.target.value);
@@ -952,7 +959,7 @@ const TaskCard = React.memo(function TaskCard({
             <MenuItem value="">
               <em>—</em>
             </MenuItem>
-            {releaseOptions.map((opt) => (
+            {releaseOptionsWithCurrent.map((opt) => (
               <MenuItem key={opt.value} value={opt.value}>
                 {opt.label}
               </MenuItem>
