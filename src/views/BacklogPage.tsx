@@ -106,15 +106,8 @@ function toInt(n: number) {
   return Number.isFinite(n) ? Math.round(n) : 0;
 }
 
-function normalizeISODate(value?: string | null) {
-  return value ? value.trim().split("T")[0] : "";
-}
-
 function isISOWithin(iso: string, startISO: string, endISO: string) {
-  const normalized = normalizeISODate(iso);
-  const start = normalizeISODate(startISO);
-  const end = normalizeISODate(endISO);
-  return normalized >= start && normalized <= end;
+  return iso >= startISO && iso <= endISO;
 }
 
 function todayISO() {
@@ -598,14 +591,13 @@ const TaskCard = React.memo(function TaskCard({
   }
 
   const leaderPid = (task as any).leaderId || undefined;
-  const relISO = normalizeISODate(task.releaseDate);
+  const relISO = task.releaseDate || "";
 
   const detectSprintByDate = React.useCallback(
     (iso?: string): string | undefined => {
-      const normalized = normalizeISODate(iso);
-      if (!normalized) return undefined;
+      if (!iso) return undefined;
       const found = sprintsGlobalOrdered.find((s) =>
-        isISOWithin(normalized, s.startDate, s.endDate)
+        isISOWithin(iso, s.startDate, s.endDate)
       );
       return found?.id;
     },
@@ -699,14 +691,7 @@ const TaskCard = React.memo(function TaskCard({
     () => new Set(releaseOptions.map((opt) => opt.value)),
     [releaseOptions]
   );
-  const releaseOptionsWithCurrent = React.useMemo(() => {
-    if (!relISO || allowedReleaseValues.has(relISO)) return releaseOptions;
-    const label = moment(relISO).isValid()
-      ? moment(relISO).format("DD.MM.YYYY")
-      : relISO;
-    return [{ value: relISO, label }, ...releaseOptions];
-  }, [allowedReleaseValues, relISO, releaseOptions]);
-  const selectedReleaseValue = relISO || "";
+  const normalizedReleaseValue = allowedReleaseValues.has(relISO) ? relISO : "";
 
   const clampedTextSx = {
     display: "-webkit-box",
@@ -950,12 +935,10 @@ const TaskCard = React.memo(function TaskCard({
             select
             size="small"
             label="Релиз (ПРОМ)"
-            value={selectedReleaseValue}
-            InputLabelProps={{ shrink: true }}
+            value={normalizedReleaseValue}
             onChange={(e) => {
-              const rawValue = String(e.target.value);
-              const iso = rawValue ? rawValue : null;
-              const sid = iso ? detectSprintByDate(iso) || "" : "";
+              const iso = String(e.target.value) || "";
+              const sid = detectSprintByDate(iso) || "";
               onUpdateTaskPatch(task, {
                 releaseDate: iso,
                 releaseSprintId: sid,
@@ -967,7 +950,7 @@ const TaskCard = React.memo(function TaskCard({
             <MenuItem value="">
               <em>—</em>
             </MenuItem>
-            {releaseOptionsWithCurrent.map((opt) => (
+            {releaseOptions.map((opt) => (
               <MenuItem key={opt.value} value={opt.value}>
                 {opt.label}
               </MenuItem>
@@ -2803,7 +2786,6 @@ export default function BacklogPage() {
                 value: releaseSprintFilter === "all" ? "" : releaseSprintFilter,
                 onChange: handleReleaseFilterChange,
                 placeholder: "Все релизы",
-                sortOptions: false,
               },
             },
             {

@@ -24,7 +24,6 @@ type BaseProps = {
   helperText?: React.ReactNode;
   commitOnBlur?: boolean;
   debounceMs?: number;
-  sortOptions?: boolean;
 };
 
 type MultipleProps = BaseProps & {
@@ -48,10 +47,7 @@ type Normalized = {
 
 const EMPTY_NORMALIZED: Normalized = { list: [], byValue: new Map() };
 
-function normalizeOptions(
-  options: OptionInput[],
-  sortOptions: boolean
-): Normalized {
+function normalizeOptions(options: OptionInput[]): Normalized {
   if (!options.length) return EMPTY_NORMALIZED;
   const byValue = new Map<string, FilterOption>();
   for (const raw of options) {
@@ -74,10 +70,9 @@ function normalizeOptions(
       });
     }
   }
-  const list = Array.from(byValue.values());
-  if (sortOptions) {
-    list.sort((a, b) => a.label.localeCompare(b.label, "ru"));
-  }
+  const list = Array.from(byValue.values()).sort((a, b) =>
+    a.label.localeCompare(b.label, "ru")
+  );
   return { list, byValue };
 }
 
@@ -103,12 +98,11 @@ export function FilterAutocomplete(props: FilterAutocompleteProps) {
     sx,
     disableClearable,
     helperText,
-    sortOptions = true,
   } = props;
 
   const normalized = React.useMemo(
-    () => normalizeOptions(options, sortOptions),
-    [options, sortOptions]
+    () => normalizeOptions(options),
+    [options]
   );
 
   const buildOption = React.useCallback(
