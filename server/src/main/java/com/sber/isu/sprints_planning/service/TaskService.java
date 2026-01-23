@@ -296,8 +296,8 @@ public class TaskService {
             recalcLoad(task, sprint);
         }
         task.setUpdatedAt(LocalDate.now());
-        List<SprintEntity> sprints = fetchAllSprints(teamKey);
-        return toDto(task, sprints);
+        List<SprintEntity> sprintList = fetchAllSprints(teamKey);
+        return toDto(task, sprintList);
     }
 
     @Transactional
@@ -306,8 +306,8 @@ public class TaskService {
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         Map<String, Map<String, BigDecimal>> allocationsByParticipant = request.allocations();
         if (allocationsByParticipant == null || allocationsByParticipant.isEmpty()) {
-            List<SprintEntity> sprints = fetchAllSprints(teamKey);
-            return toDto(task, sprints);
+            List<SprintEntity> sprintList = fetchAllSprints(teamKey);
+            return toDto(task, sprintList);
         }
         Map<UUID, SprintEntity> sprints = fetchSprintsForMulti(teamKey, allocationsByParticipant);
         for (Map.Entry<String, Map<String, BigDecimal>> participantEntry : allocationsByParticipant.entrySet()) {
@@ -340,8 +340,8 @@ public class TaskService {
             }
         }
         task.setUpdatedAt(LocalDate.now());
-        List<SprintEntity> sprints = fetchAllSprints(teamKey);
-        return toDto(task, sprints);
+        List<SprintEntity> sprintList = fetchAllSprints(teamKey);
+        return toDto(task, sprintList);
     }
 
     @Transactional
