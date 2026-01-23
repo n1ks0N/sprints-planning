@@ -89,9 +89,8 @@ public class TaskService {
     }
 
     private List<TaskDto> toDtos(String teamKey, List<TaskEntity> tasks) {
-        List<SprintEntity> sprints = fetchAllSprints(teamKey);
         return tasks.stream()
-            .map(task -> toDto(task, sprints))
+            .map(task -> toDto(teamKey, task))
             .toList();
     }
 
@@ -100,16 +99,14 @@ public class TaskService {
         if (entity == null) {
             throw new EntityNotFoundException("Task not found");
         }
-        List<SprintEntity> sprints = fetchAllSprints(teamKey);
-        return toDto(entity, sprints);
+        return toDto(teamKey, entity);
     }
 
     private List<TaskDto> findFilteredTasks(String teamKey, TaskFilter filter) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
         List<TaskEntity> tasks = taskRepository.findFilteredWithDetails(teamKey, effectiveFilter);
-        List<SprintEntity> sprints = fetchAllSprints(teamKey);
         return tasks.stream()
-            .map(task -> toDto(task, sprints))
+            .map(task -> toDto(teamKey, task))
             .toList();
     }
 
@@ -141,7 +138,7 @@ public class TaskService {
         updateParticipants(teamKey, saved, request.participantIds(), sprints);
         applyLoads(saved, request.loads(), sprintIndex);
         applyAllocations(saved, request.allocations(), sprintIndex);
-        return toDto(saved, sprints);
+        return toDto(teamKey, saved);
     }
 
     @Transactional
@@ -199,7 +196,7 @@ public class TaskService {
             reorderTask(teamKey, entity, request.order());
         }
         entity.setUpdatedAt(LocalDate.now());
-        return toDto(entity, sprints);
+        return toDto(teamKey, entity);
     }
 
     @Transactional
@@ -209,8 +206,7 @@ public class TaskService {
         int order = entity.getDisplayOrder();
         taskRepository.delete(entity);
         taskRepository.decrementDisplayOrderAfter(teamKey, order);
-        List<SprintEntity> sprints = fetchAllSprints(teamKey);
-        return toDto(entity, sprints);
+        return toDto(teamKey, entity);
     }
 
     @Transactional
@@ -236,8 +232,7 @@ public class TaskService {
         allocation.setDays(maxOrZero(request.days()));
         recalcLoad(task, sprint);
         task.setUpdatedAt(LocalDate.now());
-        List<SprintEntity> sprints = fetchAllSprints(teamKey);
-        return toDto(task, sprints);
+        return toDto(teamKey, task);
     }
 
     private int resolveDisplayOrder(String teamKey, Integer requestedOrder) {
@@ -296,8 +291,7 @@ public class TaskService {
             recalcLoad(task, sprint);
         }
         task.setUpdatedAt(LocalDate.now());
-        List<SprintEntity> sprintList = fetchAllSprints(teamKey);
-        return toDto(task, sprintList);
+        return toDto(teamKey, task);
     }
 
     @Transactional
@@ -306,8 +300,7 @@ public class TaskService {
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         Map<String, Map<String, BigDecimal>> allocationsByParticipant = request.allocations();
         if (allocationsByParticipant == null || allocationsByParticipant.isEmpty()) {
-            List<SprintEntity> sprintList = fetchAllSprints(teamKey);
-            return toDto(task, sprintList);
+            return toDto(teamKey, task);
         }
         Map<UUID, SprintEntity> sprints = fetchSprintsForMulti(teamKey, allocationsByParticipant);
         for (Map.Entry<String, Map<String, BigDecimal>> participantEntry : allocationsByParticipant.entrySet()) {
@@ -340,8 +333,7 @@ public class TaskService {
             }
         }
         task.setUpdatedAt(LocalDate.now());
-        List<SprintEntity> sprintList = fetchAllSprints(teamKey);
-        return toDto(task, sprintList);
+        return toDto(teamKey, task);
     }
 
     @Transactional
@@ -363,8 +355,7 @@ public class TaskService {
             });
         load.setDays(maxOrZero(request.days()));
         task.setUpdatedAt(LocalDate.now());
-        List<SprintEntity> sprints = fetchAllSprints(teamKey);
-        return toDto(task, sprints);
+        return toDto(teamKey, task);
     }
 
     private void updateParticipants(String teamKey, TaskEntity entity, List<String> participantIds, List<SprintEntity> sprints) {
@@ -559,23 +550,25 @@ public class TaskService {
         return sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey);
     }
 
-    private TaskDto toDto(TaskEntity entity, List<SprintEntity> sprints) {
+    private TaskDto toDto(String teamKey, TaskEntity entity) {
         entity.setStatus(normalizeStatus(entity.getStatus()));
-        String releaseSprintId = resolveReleaseSprintId(entity.getReleaseDate(), sprints);
+        String releaseSprintId = resolveReleaseSprintId(teamKey, entity.getReleaseDate());
         return DtoMapper.toTaskDto(entity, releaseSprintId);
     }
 
-    private String resolveReleaseSprintId(ReleaseEntity release, List<SprintEntity> sprints) {
+    private String resolveReleaseSprintId(String teamKey, ReleaseEntity release) {
         if (release == null || release.getPromDate() == null) {
             return null;
         }
         LocalDate releaseDate = release.getPromDate();
-        for (SprintEntity sprint : sprints) {
-            if (!releaseDate.isBefore(sprint.getStartDate()) && !releaseDate.isAfter(sprint.getEndDate())) {
-                return sprint.getId().toString();
-            }
-        }
-        return null;
+        return sprintRepository
+            .findFirstByTeamKeyAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                teamKey,
+                releaseDate,
+                releaseDate
+            )
+            .map(sprint -> sprint.getId().toString())
+            .orElse(null);
     }
 
     private Map<UUID, SprintEntity> indexSprints(List<SprintEntity> sprints) {
