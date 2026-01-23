@@ -106,8 +106,15 @@ function toInt(n: number) {
   return Number.isFinite(n) ? Math.round(n) : 0;
 }
 
+function normalizeISODate(value?: string | null) {
+  return value ? value.trim().split("T")[0] : "";
+}
+
 function isISOWithin(iso: string, startISO: string, endISO: string) {
-  return iso >= startISO && iso <= endISO;
+  const normalized = normalizeISODate(iso);
+  const start = normalizeISODate(startISO);
+  const end = normalizeISODate(endISO);
+  return normalized >= start && normalized <= end;
 }
 
 function todayISO() {
@@ -591,8 +598,6 @@ const TaskCard = React.memo(function TaskCard({
   }
 
   const leaderPid = (task as any).leaderId || undefined;
-  const normalizeISODate = (value?: string | null) =>
-    value ? value.trim().split("T")[0] : "";
   const relISO = normalizeISODate(task.releaseDate);
 
   const detectSprintByDate = React.useCallback(
