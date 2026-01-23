@@ -591,18 +591,16 @@ const TaskCard = React.memo(function TaskCard({
   }
 
   const leaderPid = (task as any).leaderId || undefined;
-  const rawReleaseISO = task.releaseDate || "";
-  const relISO = React.useMemo(() => {
-    const trimmed = rawReleaseISO?.trim();
-    if (!trimmed) return "";
-    return trimmed.split("T")[0] || "";
-  }, [rawReleaseISO]);
+  const normalizeISODate = (value?: string | null) =>
+    value ? value.trim().split("T")[0] : "";
+  const relISO = normalizeISODate(task.releaseDate);
 
   const detectSprintByDate = React.useCallback(
     (iso?: string): string | undefined => {
-      if (!iso) return undefined;
+      const normalized = normalizeISODate(iso);
+      if (!normalized) return undefined;
       const found = sprintsGlobalOrdered.find((s) =>
-        isISOWithin(iso, s.startDate, s.endDate)
+        isISOWithin(normalized, s.startDate, s.endDate)
       );
       return found?.id;
     },
