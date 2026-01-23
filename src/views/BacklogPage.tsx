@@ -2786,6 +2786,7 @@ export default function BacklogPage() {
                 value: releaseSprintFilter === "all" ? "" : releaseSprintFilter,
                 onChange: handleReleaseFilterChange,
                 placeholder: "Все релизы",
+                sortOptions: false,
               },
             },
             {
