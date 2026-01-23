@@ -88,12 +88,6 @@ public class TaskService {
         return new PageImpl<>(content, filtered.getPageable(), filtered.getTotalElements());
     }
 
-    private List<TaskDto> toDtos(String teamKey, List<TaskEntity> tasks) {
-        return tasks.stream()
-            .map(task -> toDto(teamKey, task))
-            .toList();
-    }
-
     public TaskDto findById(String teamKey, UUID id) {
         TaskEntity entity = taskRepository.findWithDetailsById(id, teamKey);
         if (entity == null) {
@@ -105,9 +99,7 @@ public class TaskService {
     private List<TaskDto> findFilteredTasks(String teamKey, TaskFilter filter) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
         List<TaskEntity> tasks = taskRepository.findFilteredWithDetails(teamKey, effectiveFilter);
-        return tasks.stream()
-            .map(task -> toDto(teamKey, task))
-            .toList();
+        return toDtos(teamKey, tasks);
     }
 
     @Transactional
@@ -138,7 +130,7 @@ public class TaskService {
         updateParticipants(teamKey, saved, request.participantIds(), sprints);
         applyLoads(saved, request.loads(), sprintIndex);
         applyAllocations(saved, request.allocations(), sprintIndex);
-        return toDto(teamKey, saved);
+        return toDto(saved, sprints);
     }
 
     @Transactional
@@ -196,7 +188,7 @@ public class TaskService {
             reorderTask(teamKey, entity, request.order());
         }
         entity.setUpdatedAt(LocalDate.now());
-        return toDto(teamKey, entity);
+        return toDto(entity, sprints);
     }
 
     @Transactional
@@ -550,24 +542,37 @@ public class TaskService {
         return sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey);
     }
 
+    private List<TaskDto> toDtos(String teamKey, List<TaskEntity> tasks) {
+        if (tasks.isEmpty()) {
+            return List.of();
+        }
+        List<SprintEntity> sprints = fetchAllSprints(teamKey);
+        return tasks.stream()
+            .map(task -> toDto(task, sprints))
+            .toList();
+    }
+
     private TaskDto toDto(String teamKey, TaskEntity entity) {
+        List<SprintEntity> sprints = fetchAllSprints(teamKey);
+        return toDto(entity, sprints);
+    }
+
+    private TaskDto toDto(TaskEntity entity, List<SprintEntity> sprints) {
         entity.setStatus(normalizeStatus(entity.getStatus()));
-        String releaseSprintId = resolveReleaseSprintId(teamKey, entity.getReleaseDate());
+        String releaseSprintId = resolveReleaseSprintId(sprints, entity.getReleaseDate());
         return DtoMapper.toTaskDto(entity, releaseSprintId);
     }
 
-    private String resolveReleaseSprintId(String teamKey, ReleaseEntity release) {
+    private String resolveReleaseSprintId(List<SprintEntity> sprints, ReleaseEntity release) {
         if (release == null || release.getPromDate() == null) {
             return null;
         }
         LocalDate releaseDate = release.getPromDate();
-        return sprintRepository
-            .findFirstByTeamKeyAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
-                teamKey,
-                releaseDate,
-                releaseDate
-            )
+        return sprints.stream()
+            .filter(sprint -> !releaseDate.isBefore(sprint.getStartDate())
+                && !releaseDate.isAfter(sprint.getEndDate()))
             .map(sprint -> sprint.getId().toString())
+            .findFirst()
             .orElse(null);
     }
 
