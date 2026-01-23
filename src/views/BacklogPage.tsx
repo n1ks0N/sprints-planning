@@ -591,7 +591,12 @@ const TaskCard = React.memo(function TaskCard({
   }
 
   const leaderPid = (task as any).leaderId || undefined;
-  const relISO = task.releaseDate || "";
+  const rawReleaseISO = task.releaseDate || "";
+  const relISO = React.useMemo(() => {
+    const trimmed = rawReleaseISO?.trim();
+    if (!trimmed) return "";
+    return trimmed.split("T")[0] || "";
+  }, [rawReleaseISO]);
 
   const detectSprintByDate = React.useCallback(
     (iso?: string): string | undefined => {
