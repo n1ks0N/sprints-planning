@@ -592,17 +592,19 @@ public class TaskService {
         if (release == null) {
             return null;
         }
+        UUID releaseId = release.getId();
+        if (releaseId != null) {
+            LocalDate cached = releasePromDates.get(releaseId);
+            if (cached != null) {
+                return cached;
+            }
+        }
         LocalDate promDate = release.getPromDate();
         if (promDate != null) {
             return promDate;
         }
-        UUID releaseId = release.getId();
         if (releaseId == null) {
             return null;
-        }
-        LocalDate cached = releasePromDates.get(releaseId);
-        if (cached != null) {
-            return cached;
         }
         return releaseRepository.findByIdAndTeamKey(releaseId, teamKey)
             .map(ReleaseEntity::getPromDate)
