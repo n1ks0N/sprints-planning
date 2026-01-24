@@ -10,4 +10,6 @@ public interface ReleaseRepository extends JpaRepository<ReleaseEntity, UUID> {
     List<ReleaseEntity> findAllByTeamKeyOrderByPromDateAsc(String teamKey);
 
     Optional<ReleaseEntity> findByIdAndTeamKey(UUID id, String teamKey);
+
+    List<ReleaseEntity> findByTeamKeyAndIdIn(String teamKey, Iterable<UUID> ids);
 }

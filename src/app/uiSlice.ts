@@ -5,7 +5,7 @@ export type UIState = {
   backlog: {
     quarterId: string; // "all" | qid
     selectedQuarterIds: string[];
-    releaseSprintFilter: string; // "all" | "" | sprintId
+    releaseSprintFilter: string; // "all" | "" | releaseDateId
     priorityFilter: number[]; // [1,2,3]
     streamFilter: string;
     statusFilter: TaskStatus[];

@@ -63,7 +63,7 @@ public final class DtoMapper {
         );
     }
 
-    public static TaskDto toTaskDto(TaskEntity entity) {
+    public static TaskDto toTaskDto(TaskEntity entity, String releaseSprintId) {
         List<String> participantIds = new ArrayList<>();
         entity.getParticipants().stream()
             .sorted(Comparator.comparingInt(TaskParticipantEntity::getDisplayOrder))
@@ -84,6 +84,9 @@ public final class DtoMapper {
                 notes.put(entry.getKey().toString(), entry.getValue());
             }
         }
+        String releaseDateId = entity.getReleaseDate() != null
+            ? entity.getReleaseDate().getId().toString()
+            : null;
         return new TaskDto(
             entity.getId().toString(),
             entity.getTitle(),
@@ -97,8 +100,8 @@ public final class DtoMapper {
             loads,
             allocations,
             notes,
-            toIso(entity.getReleaseDate()),
-            entity.getReleaseSprint() != null ? entity.getReleaseSprint().getId().toString() : null,
+            releaseDateId,
+            releaseSprintId,
             entity.getLeaderParticipant() != null ? entity.getLeaderParticipant().getId().toString() : null,
             entity.getDisplayOrder(),
             toIso(entity.getCreatedAt()),

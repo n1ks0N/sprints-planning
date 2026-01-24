@@ -195,10 +195,8 @@ public class ExportService {
             row.createCell(col++).setCellValue(task.getLeaderParticipant() != null
                 ? participantIndex.getOrDefault(task.getLeaderParticipant().getId(), task.getLeaderParticipant()).getFullName()
                 : "");
-            row.createCell(col++).setCellValue(task.getReleaseSprint() != null
-                ? sprintIndex.getOrDefault(task.getReleaseSprint().getId(), task.getReleaseSprint()).getName()
-                : "");
-            row.createCell(col++).setCellValue(toIso(task.getReleaseDate()));
+            row.createCell(col++).setCellValue(resolveReleaseSprintName(task, sprintIndex));
+            row.createCell(col++).setCellValue(resolveReleaseDate(task));
             row.createCell(col++).setCellValue(toIso(task.getCreatedAt()));
             row.createCell(col++).setCellValue(toIso(task.getUpdatedAt()));
             row.createCell(col++).setCellValue(task.getDescription());
@@ -281,6 +279,26 @@ public class ExportService {
             .sorted(Comparator.comparingInt(TaskParticipantEntity::getDisplayOrder))
             .map(tp -> participantIndex.getOrDefault(tp.getParticipant().getId(), tp.getParticipant()).getFullName())
             .collect(Collectors.joining(", "));
+    }
+
+    private String resolveReleaseDate(TaskEntity task) {
+        if (task.getReleaseDate() == null) {
+            return "";
+        }
+        return toIso(task.getReleaseDate().getPromDate());
+    }
+
+    private String resolveReleaseSprintName(TaskEntity task, Map<UUID, SprintEntity> sprintIndex) {
+        if (task.getReleaseDate() == null || task.getReleaseDate().getPromDate() == null) {
+            return "";
+        }
+        LocalDate releaseDate = task.getReleaseDate().getPromDate();
+        for (SprintEntity sprint : sprintIndex.values()) {
+            if (!releaseDate.isBefore(sprint.getStartDate()) && !releaseDate.isAfter(sprint.getEndDate())) {
+                return sprint.getName();
+            }
+        }
+        return "";
     }
 
     private String toIso(LocalDate date) {

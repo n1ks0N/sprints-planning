@@ -417,6 +417,13 @@ function deriveTaskQuarters(
     }
   }
 
+  if (task.releaseSprintId) {
+    const releaseSprint = allSprints.find((s) => s.id === task.releaseSprintId);
+    if (releaseSprint) {
+      fromAllocations.add(releaseSprint.quarterId);
+    }
+  }
+
   if (fromAllocations.size) return Array.from(fromAllocations);
   return currentQuarterId ? [currentQuarterId] : [];
 }
@@ -591,19 +598,8 @@ const TaskCard = React.memo(function TaskCard({
   }
 
   const leaderPid = (task as any).leaderId || undefined;
-  const relISO = task.releaseDate || "";
-
-  const detectSprintByDate = React.useCallback(
-    (iso?: string): string | undefined => {
-      if (!iso) return undefined;
-      const found = sprintsGlobalOrdered.find((s) =>
-        isISOWithin(iso, s.startDate, s.endDate)
-      );
-      return found?.id;
-    },
-    [sprintsGlobalOrdered]
-  );
-  const relSprintId = task.releaseSprintId || detectSprintByDate(relISO);
+  const releaseDateId = task.releaseDateId || "";
+  const relSprintId = task.releaseSprintId || "";
 
   const [customerDraft, setCustomerDraft] = React.useState(task.customer || "");
   const [streamDraft, setStreamDraft] = React.useState(task.stream || "");
@@ -691,7 +687,9 @@ const TaskCard = React.memo(function TaskCard({
     () => new Set(releaseOptions.map((opt) => opt.value)),
     [releaseOptions]
   );
-  const normalizedReleaseValue = allowedReleaseValues.has(relISO) ? relISO : "";
+  const normalizedReleaseValue = allowedReleaseValues.has(releaseDateId)
+    ? releaseDateId
+    : "";
 
   const clampedTextSx = {
     display: "-webkit-box",
@@ -937,11 +935,9 @@ const TaskCard = React.memo(function TaskCard({
             label="Релиз (ПРОМ)"
             value={normalizedReleaseValue}
             onChange={(e) => {
-              const iso = String(e.target.value) || "";
-              const sid = detectSprintByDate(iso) || "";
+              const nextId = String(e.target.value);
               onUpdateTaskPatch(task, {
-                releaseDate: iso,
-                releaseSprintId: sid,
+                releaseDateId: nextId,
               });
             }}
             sx={{ minWidth: 180, maxWidth: 220, flexShrink: 0 }}
@@ -1565,7 +1561,7 @@ export default function BacklogPage() {
       quarterIds: selectedQuarterIds,
       priority: priorityFilter,
       statuses: statusFilter,
-      releaseDate:
+      releaseDateId:
         releaseSprintFilter === "all" ? undefined : releaseSprintFilter.trim(),
       stream: streamFilter.trim(),
       search: normalizedSearch,
@@ -1916,28 +1912,21 @@ export default function BacklogPage() {
     []
   );
 
-  const promReleases: { id: string; promDate: string }[] = React.useMemo(
-    () =>
-      releases
-        .map((r: any) => ({
-          id: String(r.id ?? r.promId ?? r.promDate),
-          promDate: String(r.promDate || r.prom || r.date || ""),
-        }))
-        .filter((x) => x.promDate),
-    [releases]
-  );
-
   const releaseFilterOptions = React.useMemo(() => {
-    const dates = Array.from(
-      new Set(promReleases.map((r) => r.promDate).filter(Boolean))
-    );
-    return dates
-      .sort((a, b) => moment(a).valueOf() - moment(b).valueOf())
-      .map((iso) => ({
-        value: iso,
-        label: moment(iso).format("DD.MM.YYYY"),
+    const entries = releases
+      .map((r: any) => ({
+        id: String(r.id ?? r.promId ?? ""),
+        promDate: String(r.promDate || r.prom || r.date || ""),
+      }))
+      .filter((entry) => entry.id && entry.promDate);
+
+    return entries
+      .sort((a, b) => moment(a.promDate).valueOf() - moment(b.promDate).valueOf())
+      .map((entry) => ({
+        value: entry.id,
+        label: moment(entry.promDate).format("DD.MM.YYYY"),
       }));
-  }, [promReleases]);
+  }, [releases]);
 
   const tasksPageSizeOptions = React.useMemo(
     () =>
@@ -2163,8 +2152,7 @@ export default function BacklogPage() {
       customer: "",
       stream: "",
       participantIds: [],
-      releaseDate: "",
-      releaseSprintId: "",
+      releaseDateId: null,
     }).unwrap();
 
     setAllocations((prev) => ({ ...prev, [created.id]: {} }));
@@ -2222,8 +2210,7 @@ export default function BacklogPage() {
       customer: task.customer,
       stream: task.stream,
       participantIds: task.participantIds.slice(),
-      releaseDate: task.releaseDate,
-      releaseSprintId: task.releaseSprintId,
+      releaseDateId: task.releaseDateId ?? null,
       leaderId: (task as any).leaderId ?? undefined,
       quarterIds: taskQuarters,
       order: baseOrder + 1,
@@ -2786,6 +2773,7 @@ export default function BacklogPage() {
                 value: releaseSprintFilter === "all" ? "" : releaseSprintFilter,
                 onChange: handleReleaseFilterChange,
                 placeholder: "Все релизы",
+                sortOptions: false,
               },
             },
             {

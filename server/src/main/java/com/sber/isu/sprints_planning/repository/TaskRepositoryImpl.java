@@ -134,7 +134,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
                 """
                     select distinct t from TaskEntity t
                     left join fetch t.leaderParticipant lp
-                    left join fetch t.releaseSprint rs
+                    left join fetch t.releaseDate rd
                     where t.id in :ids
                 """,
                 TaskEntity.class
@@ -213,8 +213,8 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             predicates.add(task.get("priority").in(filter.priorities()));
         }
 
-        if (filter.releaseDate() != null) {
-            predicates.add(cb.equal(task.get("releaseDate"), filter.releaseDate()));
+        if (filter.releaseDateId() != null) {
+            predicates.add(cb.equal(task.get("releaseDate").get("id"), filter.releaseDateId()));
         }
 
         if (filter.stream() != null) {

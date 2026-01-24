@@ -1,7 +1,5 @@
 package com.sber.isu.sprints_planning.service;
 
-import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -11,7 +9,7 @@ public record TaskFilter(
     Set<UUID> quarterIds,
     Set<Short> priorities,
     Set<String> statuses,
-    LocalDate releaseDate,
+    UUID releaseDateId,
     String stream,
     Set<UUID> participantIds,
     Set<String> roles,
@@ -39,7 +37,7 @@ public record TaskFilter(
         String quarterIds,
         String priorities,
         String statuses,
-        String releaseDate,
+        String releaseDateId,
         String stream,
         String participantIds,
         String roles,
@@ -51,7 +49,7 @@ public record TaskFilter(
             parseUuidSet(quarterIds),
             parseShortSet(priorities),
             parseStringSet(statuses),
-            parseDate(releaseDate),
+            parseUuid(releaseDateId),
             normalize(stream),
             parseUuidSet(participantIds),
             parseStringSet(roles),
@@ -108,17 +106,6 @@ public record TaskFilter(
             }
         }
         return values;
-    }
-
-    private static LocalDate parseDate(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return null;
-        }
-        try {
-            return LocalDate.parse(raw.trim());
-        } catch (DateTimeParseException ignored) {
-            return null;
-        }
     }
 
     private static String normalize(String raw) {

@@ -32,4 +32,10 @@ public interface SprintRepository extends JpaRepository<SprintEntity, UUID> {
     Optional<SprintEntity> findByIdAndTeamKey(@Param("id") UUID id, @Param("teamKey") String teamKey);
 
     List<SprintEntity> findByTeamKeyAndIdIn(String teamKey, Iterable<UUID> ids);
+
+    Optional<SprintEntity> findFirstByTeamKeyAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+        String teamKey,
+        java.time.LocalDate dateFrom,
+        java.time.LocalDate dateTo
+    );
 }

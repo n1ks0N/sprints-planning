@@ -10,6 +10,7 @@ import com.sber.isu.sprints_planning.dto.request.TaskLoadRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
 import com.sber.isu.sprints_planning.mapper.DtoMapper;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
+import com.sber.isu.sprints_planning.model.ReleaseEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationId;
@@ -19,6 +20,7 @@ import com.sber.isu.sprints_planning.model.TaskLoadId;
 import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
 import com.sber.isu.sprints_planning.model.TaskParticipantId;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
+import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskAllocationRepository;
 import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
@@ -50,17 +52,20 @@ public class TaskService {
     private final TaskAllocationRepository taskAllocationRepository;
     private final ParticipantRepository participantRepository;
     private final SprintRepository sprintRepository;
+    private final ReleaseRepository releaseRepository;
 
     public TaskService(TaskRepository taskRepository,
         TaskLoadRepository taskLoadRepository,
         TaskAllocationRepository taskAllocationRepository,
         ParticipantRepository participantRepository,
-        SprintRepository sprintRepository) {
+        SprintRepository sprintRepository,
+        ReleaseRepository releaseRepository) {
         this.taskRepository = taskRepository;
         this.taskLoadRepository = taskLoadRepository;
         this.taskAllocationRepository = taskAllocationRepository;
         this.participantRepository = participantRepository;
         this.sprintRepository = sprintRepository;
+        this.releaseRepository = releaseRepository;
     }
 
     @Transactional
@@ -73,21 +78,14 @@ public class TaskService {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
         if (page == null && size == null) {
             List<TaskEntity> tasks = taskRepository.findFilteredWithDetails(teamKey, effectiveFilter);
-            List<TaskDto> content = toDtos(tasks);
+            List<TaskDto> content = toDtos(teamKey, tasks);
             return new PageImpl<>(content);
         }
         int safePage = page == null ? 0 : Math.max(page, 0);
         int safeSize = size == null ? 20 : Math.max(size, 1);
         Page<TaskEntity> filtered = taskRepository.findFilteredPageWithDetails(teamKey, effectiveFilter, safePage, safeSize);
-        List<TaskDto> content = toDtos(filtered.getContent());
+        List<TaskDto> content = toDtos(teamKey, filtered.getContent());
         return new PageImpl<>(content, filtered.getPageable(), filtered.getTotalElements());
-    }
-
-    private List<TaskDto> toDtos(List<TaskEntity> tasks) {
-        return tasks.stream()
-            .peek(task -> task.setStatus(normalizeStatus(task.getStatus())))
-            .map(DtoMapper::toTaskDto)
-            .toList();
     }
 
     public TaskDto findById(String teamKey, UUID id) {
@@ -95,17 +93,13 @@ public class TaskService {
         if (entity == null) {
             throw new EntityNotFoundException("Task not found");
         }
-        entity.setStatus(normalizeStatus(entity.getStatus()));
-        return DtoMapper.toTaskDto(entity);
+        return toDto(teamKey, entity);
     }
 
     private List<TaskDto> findFilteredTasks(String teamKey, TaskFilter filter) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
         List<TaskEntity> tasks = taskRepository.findFilteredWithDetails(teamKey, effectiveFilter);
-        tasks.forEach(task -> task.setStatus(normalizeStatus(task.getStatus())));
-        return tasks.stream()
-            .map(DtoMapper::toTaskDto)
-            .toList();
+        return toDtos(teamKey, tasks);
     }
 
     @Transactional
@@ -122,11 +116,8 @@ public class TaskService {
         entity.setCreatedAt(LocalDate.now());
         entity.setUpdatedAt(LocalDate.now());
         entity.setNotes(convertNotes(request.notes()));
-        if (request.releaseDate() != null) {
-            entity.setReleaseDate(request.releaseDate());
-        }
-        if (request.releaseSprintId() != null && !request.releaseSprintId().isBlank()) {
-            entity.setReleaseSprint(fetchSprint(teamKey, request.releaseSprintId()));
+        if (request.releaseDateId() != null) {
+            entity.setReleaseDate(resolveRelease(teamKey, request.releaseDateId()));
         }
         if (request.leaderId() != null && !request.leaderId().isBlank()) {
             entity.setLeaderParticipant(fetchParticipant(teamKey, request.leaderId()));
@@ -139,7 +130,8 @@ public class TaskService {
         updateParticipants(teamKey, saved, request.participantIds(), sprints);
         applyLoads(saved, request.loads(), sprintIndex);
         applyAllocations(saved, request.allocations(), sprintIndex);
-        return DtoMapper.toTaskDto(saved);
+        Map<UUID, LocalDate> releasePromDates = fetchReleasePromDates(teamKey, List.of(saved));
+        return toDto(teamKey, saved, sprints, releasePromDates);
     }
 
     @Transactional
@@ -169,15 +161,8 @@ public class TaskService {
         if (request.stream() != null) {
             entity.setStream(request.stream());
         }
-        if (request.releaseDate() != null) {
-            entity.setReleaseDate(request.releaseDate());
-        }
-        if (request.releaseSprintId() != null) {
-            if (request.releaseSprintId().isBlank()) {
-                entity.setReleaseSprint(null);
-            } else {
-                entity.setReleaseSprint(fetchSprint(teamKey, request.releaseSprintId()));
-            }
+        if (request.releaseDateId() != null) {
+            entity.setReleaseDate(resolveRelease(teamKey, request.releaseDateId()));
         }
         if (request.notes() != null) {
             entity.setNotes(convertNotes(request.notes()));
@@ -204,7 +189,8 @@ public class TaskService {
             reorderTask(teamKey, entity, request.order());
         }
         entity.setUpdatedAt(LocalDate.now());
-        return DtoMapper.toTaskDto(entity);
+        Map<UUID, LocalDate> releasePromDates = fetchReleasePromDates(teamKey, List.of(entity));
+        return toDto(teamKey, entity, sprints, releasePromDates);
     }
 
     @Transactional
@@ -214,7 +200,7 @@ public class TaskService {
         int order = entity.getDisplayOrder();
         taskRepository.delete(entity);
         taskRepository.decrementDisplayOrderAfter(teamKey, order);
-        return DtoMapper.toTaskDto(entity);
+        return toDto(teamKey, entity);
     }
 
     @Transactional
@@ -240,7 +226,7 @@ public class TaskService {
         allocation.setDays(maxOrZero(request.days()));
         recalcLoad(task, sprint);
         task.setUpdatedAt(LocalDate.now());
-        return DtoMapper.toTaskDto(task);
+        return toDto(teamKey, task);
     }
 
     private int resolveDisplayOrder(String teamKey, Integer requestedOrder) {
@@ -299,7 +285,7 @@ public class TaskService {
             recalcLoad(task, sprint);
         }
         task.setUpdatedAt(LocalDate.now());
-        return DtoMapper.toTaskDto(task);
+        return toDto(teamKey, task);
     }
 
     @Transactional
@@ -308,7 +294,7 @@ public class TaskService {
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         Map<String, Map<String, BigDecimal>> allocationsByParticipant = request.allocations();
         if (allocationsByParticipant == null || allocationsByParticipant.isEmpty()) {
-            return DtoMapper.toTaskDto(task);
+            return toDto(teamKey, task);
         }
         Map<UUID, SprintEntity> sprints = fetchSprintsForMulti(teamKey, allocationsByParticipant);
         for (Map.Entry<String, Map<String, BigDecimal>> participantEntry : allocationsByParticipant.entrySet()) {
@@ -341,7 +327,7 @@ public class TaskService {
             }
         }
         task.setUpdatedAt(LocalDate.now());
-        return DtoMapper.toTaskDto(task);
+        return toDto(teamKey, task);
     }
 
     @Transactional
@@ -363,7 +349,7 @@ public class TaskService {
             });
         load.setDays(maxOrZero(request.days()));
         task.setUpdatedAt(LocalDate.now());
-        return DtoMapper.toTaskDto(task);
+        return toDto(teamKey, task);
     }
 
     private void updateParticipants(String teamKey, TaskEntity entity, List<String> participantIds, List<SprintEntity> sprints) {
@@ -546,8 +532,95 @@ public class TaskService {
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
     }
 
+    private ReleaseEntity resolveRelease(String teamKey, String releaseDateId) {
+        if (releaseDateId == null || releaseDateId.isBlank()) {
+            return null;
+        }
+        return releaseRepository.findByIdAndTeamKey(UUID.fromString(releaseDateId), teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Release not found"));
+    }
+
     private List<SprintEntity> fetchAllSprints(String teamKey) {
         return sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey);
+    }
+
+    private List<TaskDto> toDtos(String teamKey, List<TaskEntity> tasks) {
+        if (tasks.isEmpty()) {
+            return List.of();
+        }
+        List<SprintEntity> sprints = fetchAllSprints(teamKey);
+        Map<UUID, LocalDate> releasePromDates = fetchReleasePromDates(teamKey, tasks);
+        return tasks.stream()
+            .map(task -> toDto(teamKey, task, sprints, releasePromDates))
+            .toList();
+    }
+
+    private TaskDto toDto(String teamKey, TaskEntity entity) {
+        List<SprintEntity> sprints = fetchAllSprints(teamKey);
+        Map<UUID, LocalDate> releasePromDates = fetchReleasePromDates(teamKey, List.of(entity));
+        return toDto(teamKey, entity, sprints, releasePromDates);
+    }
+
+    private TaskDto toDto(
+        String teamKey,
+        TaskEntity entity,
+        List<SprintEntity> sprints,
+        Map<UUID, LocalDate> releasePromDates
+    ) {
+        entity.setStatus(normalizeStatus(entity.getStatus()));
+        LocalDate promDate = resolvePromDate(teamKey, entity, releasePromDates);
+        String releaseSprintId = resolveReleaseSprintId(sprints, promDate);
+        return DtoMapper.toTaskDto(entity, releaseSprintId);
+    }
+
+    private Map<UUID, LocalDate> fetchReleasePromDates(String teamKey, List<TaskEntity> tasks) {
+        Set<UUID> releaseIds = tasks.stream()
+            .map(TaskEntity::getReleaseDate)
+            .filter(Objects::nonNull)
+            .map(ReleaseEntity::getId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+        if (releaseIds.isEmpty()) {
+            return Map.of();
+        }
+        return releaseRepository.findByTeamKeyAndIdIn(teamKey, releaseIds).stream()
+            .collect(Collectors.toMap(ReleaseEntity::getId, ReleaseEntity::getPromDate));
+    }
+
+    private LocalDate resolvePromDate(String teamKey, TaskEntity entity, Map<UUID, LocalDate> releasePromDates) {
+        ReleaseEntity release = entity.getReleaseDate();
+        if (release == null) {
+            return null;
+        }
+        UUID releaseId = release.getId();
+        if (releaseId != null) {
+            LocalDate cached = releasePromDates.get(releaseId);
+            if (cached != null) {
+                return cached;
+            }
+        }
+        LocalDate promDate = release.getPromDate();
+        if (promDate != null) {
+            return promDate;
+        }
+        if (releaseId == null) {
+            return null;
+        }
+        return releaseRepository.findByIdAndTeamKey(releaseId, teamKey)
+            .map(ReleaseEntity::getPromDate)
+            .orElse(null);
+    }
+
+    private String resolveReleaseSprintId(List<SprintEntity> sprints, LocalDate releaseDate) {
+        if (releaseDate == null) {
+            return null;
+        }
+        return sprints.stream()
+            .filter(sprint -> !releaseDate.isBefore(sprint.getStartDate())
+                && !releaseDate.isAfter(sprint.getEndDate()))
+            .map(sprint -> sprint.getId().toString())
+            .findFirst()
+            .orElse(null);
     }
 
     private Map<UUID, SprintEntity> indexSprints(List<SprintEntity> sprints) {

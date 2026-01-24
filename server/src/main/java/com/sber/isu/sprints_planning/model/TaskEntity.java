@@ -54,12 +54,9 @@ public class TaskEntity {
     @Column(nullable = false)
     private String stream;
 
-    @Column(name = "release_date")
-    private LocalDate releaseDate;
-
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "release_sprint_id")
-    private SprintEntity releaseSprint;
+    @JoinColumn(name = "release_date_id")
+    private ReleaseEntity releaseDate;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
@@ -154,20 +151,12 @@ public class TaskEntity {
         this.stream = stream;
     }
 
-    public LocalDate getReleaseDate() {
+    public ReleaseEntity getReleaseDate() {
         return releaseDate;
     }
 
-    public void setReleaseDate(LocalDate releaseDate) {
+    public void setReleaseDate(ReleaseEntity releaseDate) {
         this.releaseDate = releaseDate;
-    }
-
-    public SprintEntity getReleaseSprint() {
-        return releaseSprint;
-    }
-
-    public void setReleaseSprint(SprintEntity releaseSprint) {
-        this.releaseSprint = releaseSprint;
     }
 
     public Map<UUID, String> getNotes() {

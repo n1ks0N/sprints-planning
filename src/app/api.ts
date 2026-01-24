@@ -804,7 +804,7 @@ export const api = createApi({
           quarterIds?: string[];
           priority?: number[];
           statuses?: string[];
-          releaseDate?: string;
+          releaseDateId?: string;
           stream?: string;
           search?: string;
           participantIds?: string[];
@@ -832,8 +832,8 @@ export const api = createApi({
         const statuses = joinOrUndefined(arg?.statuses);
         if (statuses) params.status = statuses;
 
-        const releaseDate = (arg?.releaseDate || "").trim();
-        if (releaseDate) params.releaseDate = releaseDate;
+        const releaseDateId = (arg?.releaseDateId || "").trim();
+        if (releaseDateId) params.releaseDateId = releaseDateId;
 
         const stream = (arg?.stream || "").trim();
         if (stream) params.stream = stream;
@@ -945,7 +945,7 @@ export const api = createApi({
           allocations: arg.allocations ? { ...arg.allocations } : undefined,
           notes: arg.notes ? { ...arg.notes } : undefined,
           quarterIds: arg.quarterIds ? [...arg.quarterIds] : undefined,
-          releaseDate: arg.releaseDate,
+          releaseDateId: arg.releaseDateId,
           releaseSprintId: arg.releaseSprintId,
           leaderId: arg.leaderId ?? null,
           createdAt: now,

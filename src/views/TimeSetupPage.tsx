@@ -653,7 +653,7 @@ export default function TimeSetupPage() {
               {s.name || `Sprint ${indexInQuarter + 1}`}
             </Typography>
             <Typography variant="body2" sx={{ mt: 0.5 }}>
-              Рабочих дней (пн–пт): <b>{s.workingDays}</b>
+              Рабочих дней: <b>{s.workingDays}</b>
             </Typography>
           </>
         ) : (
