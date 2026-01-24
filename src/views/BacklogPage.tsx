@@ -417,6 +417,13 @@ function deriveTaskQuarters(
     }
   }
 
+  if (task.releaseSprintId) {
+    const releaseSprint = allSprints.find((s) => s.id === task.releaseSprintId);
+    if (releaseSprint) {
+      fromAllocations.add(releaseSprint.quarterId);
+    }
+  }
+
   if (fromAllocations.size) return Array.from(fromAllocations);
   return currentQuarterId ? [currentQuarterId] : [];
 }
