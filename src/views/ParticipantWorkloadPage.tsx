@@ -11,26 +11,49 @@ import {
   TableCell,
   TableContainer,
   Tooltip,
-  Box,
 } from "@mui/material";
 import {
   useGetParticipantsQuery,
   useGetQuartersQuery,
   useGetSprintsQuery,
+  useGetCapacityQuery,
   useGetTasksQuery,
   useUpsertTaskAllocationMutation,
 } from "../app/api";
 import EditableNumberCell from "../components/EditableNumberCell";
-import type { Sprint, BacklogItem, Allocations } from "../types";
+import type {
+  Sprint,
+  BacklogItem,
+  Allocations,
+  CapacityCell,
+} from "../types";
 import { setParticipantWorkloadFilters } from "../app/uiSlice";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAppDispatch, useAppSelector } from "./hooks";
+import { selectCurrentTeamKey } from "../app/teamSlice";
 
 function byStart(a: Sprint, b: Sprint) {
   return a.startDate.localeCompare(b.startDate);
 }
 const toInt = (n: any) =>
   Number.isFinite(Number(n)) ? Math.round(Number(n)) : 0;
+
+const round1 = (v: number) => Math.round(v * 10) / 10;
+
+function cellColor(
+  workload: number,
+  available: number,
+  capacityFactor: number
+): string {
+  if (available === 0) {
+    return workload > 0 ? "#ffebee" : "#e8f5e9";
+  }
+  const low = capacityFactor * available;
+  const high = (2 - capacityFactor) * available;
+  if (workload < low) return "#fff3e0";
+  if (workload > high) return "#ffebee";
+  return "#e8f5e9";
+}
 
 function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   if (a.length !== b.length) return false;
@@ -42,6 +65,7 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
 
 export default function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
+  const currentTeamKey = useAppSelector(selectCurrentTeamKey);
   const ui = useAppSelector((s) => s.ui.participantWorkload);
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [allocations, setAllocations] = React.useState<Allocations>({});
@@ -180,6 +204,47 @@ export default function ParticipantWorkloadPage() {
     ui.rolesFilter,
     ui.userStreamsFilter,
   ]);
+
+  const capacityParticipantIds = React.useMemo(
+    () => participantsInScope.map((p) => p.id),
+    [participantsInScope]
+  );
+
+  const { data: capacityRows = [] } = useGetCapacityQuery({
+    quarterIds: ui.selectedQuarterIds.length ? ui.selectedQuarterIds : undefined,
+    participantIds: capacityParticipantIds.length
+      ? capacityParticipantIds
+      : undefined,
+    roles: ui.rolesFilter.length ? ui.rolesFilter : undefined,
+    userStreams: ui.userStreamsFilter.length ? ui.userStreamsFilter : undefined,
+  });
+
+  const capacityCellMap = React.useMemo(() => {
+    const map = new Map<string, CapacityCell>();
+    capacityRows.forEach((row) => {
+      row.cells.forEach((cell) => {
+        map.set(`${row.participant.id}|${cell.sprintId}`, cell);
+      });
+    });
+    return map;
+  }, [capacityRows]);
+
+  const getCapacityCell = React.useCallback(
+    (pid: string, sid: string) => capacityCellMap.get(`${pid}|${sid}`),
+    [capacityCellMap]
+  );
+
+  const buildBacklogHref = React.useCallback(
+    (taskId: string) => {
+      const encodedId = encodeURIComponent(taskId);
+      if (typeof window === "undefined") {
+        return `#/${currentTeamKey}/?pinnedTaskId=${encodedId}`;
+      }
+      const base = window.location.href.split("#")[0];
+      return `${base}#/${currentTeamKey}/?pinnedTaskId=${encodedId}`;
+    },
+    [currentTeamKey]
+  );
 
   React.useEffect(() => {
     setAllocations((prev) => {
@@ -404,6 +469,11 @@ export default function ParticipantWorkloadPage() {
           const totalsBySprint = sprintsInScope.map((_, idx) =>
             rows.reduce((sum, r) => sum + r.perSprint[idx], 0)
           );
+          const totalWork = totalsBySprint.reduce((sum, v) => sum + v, 0);
+          const totalAvailable = sprintsInScope.reduce((sum, s) => {
+            const cell = getCapacityCell(p.id, s.id);
+            return sum + (cell?.availableDays ?? 0);
+          }, 0);
 
           return (
             <Paper key={p.id} variant="outlined" sx={{ p: 2 }}>
@@ -450,9 +520,15 @@ export default function ParticipantWorkloadPage() {
                   <TableBody>
                     {rows.map((r) => {
                       const total = r.perSprint.reduce((a, b) => a + b, 0);
+                      const isLeader = r.task.leaderId === p.id;
+                      const backlogHref = buildBacklogHref(r.task.id);
                       return (
                         <TableRow key={`${p.id}-${r.task.id}`}>
-                          <TableCell>
+                          <TableCell
+                            sx={{
+                              bgcolor: isLeader ? "warning.light" : undefined,
+                            }}
+                          >
                             <Stack
                               direction="row"
                               spacing={1}
@@ -474,6 +550,10 @@ export default function ParticipantWorkloadPage() {
                                 arrow
                               >
                                 <Typography
+                                  component="a"
+                                  href={backlogHref}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
                                   sx={{
                                     display: "-webkit-box",
                                     WebkitLineClamp: 2,
@@ -481,6 +561,11 @@ export default function ParticipantWorkloadPage() {
                                     overflow: "hidden",
                                     wordBreak: "break-word",
                                     maxWidth: 300,
+                                    color: "inherit",
+                                    textDecoration: "none",
+                                    "&:hover": {
+                                      textDecoration: "none",
+                                    },
                                   }}
                                 >
                                   {r.task.title}
@@ -524,17 +609,35 @@ export default function ParticipantWorkloadPage() {
                         <TableCell sx={{ fontWeight: 700 }}>
                           Итого по спринтам
                         </TableCell>
-                        {totalsBySprint.map((v, i) => (
-                          <TableCell
-                            key={i}
-                            align="center"
-                            sx={{ fontWeight: 700 }}
-                          >
-                            {v}
-                          </TableCell>
-                        ))}
+                        {totalsBySprint.map((v, i) => {
+                          const sprint = sprintsInScope[i];
+                          const cell = sprint
+                            ? getCapacityCell(p.id, sprint.id)
+                            : undefined;
+                          const availRaw = cell?.availableDays ?? 0;
+                          const capacityFactor = cell?.capacityFactor ?? 0.85;
+                          const bg = cellColor(v, availRaw, capacityFactor);
+                          const work = round1(v);
+                          const avail = round1(availRaw);
+                          return (
+                            <TableCell
+                              key={sprint?.id ?? i}
+                              align="center"
+                              sx={{
+                                fontWeight: 700,
+                                backgroundColor: bg,
+                              }}
+                              title={`Нагрузка: ${work.toFixed(
+                                1
+                              )} дн • Доступно: ${avail.toFixed(1)} дн`}
+                            >
+                              {work.toFixed(1)} / {avail.toFixed(1)}
+                            </TableCell>
+                          );
+                        })}
                         <TableCell align="center" sx={{ fontWeight: 700 }}>
-                          {totalsBySprint.reduce((a, b) => a + b, 0)}
+                          {round1(totalWork).toFixed(1)} /{" "}
+                          {round1(totalAvailable).toFixed(1)}
                         </TableCell>
                       </TableRow>
                     )}
