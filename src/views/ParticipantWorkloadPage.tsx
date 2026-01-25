@@ -562,7 +562,10 @@ export default function ParticipantWorkloadPage() {
                                     wordBreak: "break-word",
                                     maxWidth: 300,
                                     color: "inherit",
-                                    textDecoration: "underline",
+                                    textDecoration: "none",
+                                    "&:hover": {
+                                      textDecoration: "none",
+                                    },
                                   }}
                                 >
                                   {r.task.title}
