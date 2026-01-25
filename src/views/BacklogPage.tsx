@@ -43,6 +43,7 @@ import {
   Visibility,
   VisibilityOff,
 } from "@mui/icons-material";
+import { useLocation } from "react-router-dom";
 import moment from "moment";
 import "moment/locale/ru";
 
@@ -1418,6 +1419,7 @@ function SortableTaskCard({
 // ---------- BacklogPage ----------
 
 export default function BacklogPage() {
+  const location = useLocation();
   const { data: quarters = [], isLoading: isQuartersLoading } =
     useGetQuartersQuery();
   const { data: participants = [], isLoading: isParticipantsLoading } =
@@ -1523,6 +1525,12 @@ export default function BacklogPage() {
   const normalizedSearch = React.useMemo(() => searchQuery.trim(), [searchQuery]);
   const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
   const [pinnedTaskId, setPinnedTaskId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const fromQuery = (params.get("pinnedTaskId") || "").trim();
+    setPinnedTaskId(fromQuery || null);
+  }, [location.search]);
 
   const filtersSignature = React.useMemo(
     () =>
