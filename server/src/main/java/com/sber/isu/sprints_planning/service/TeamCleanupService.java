@@ -14,6 +14,8 @@ public class TeamCleanupService {
         "task_allocations",
         "task_loads",
         "task_participants",
+        "task_customers",
+        "task_streams",
         "tasks",
         "releases",
         "api_call_history",

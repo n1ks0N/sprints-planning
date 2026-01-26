@@ -10,6 +10,7 @@ import type {
   Release,
   ApiSessionHistory,
   Team,
+  TaskFilters,
 } from "../types";
 import { DEFAULT_TEAM_KEY } from "../teams";
 import { selectCurrentTeamKey } from "./teamSlice";
@@ -805,7 +806,8 @@ export const api = createApi({
           priority?: number[];
           statuses?: string[];
           releaseDateId?: string;
-          stream?: string;
+          stream?: string[];
+          customer?: string[];
           search?: string;
           participantIds?: string[];
           roles?: string[];
@@ -835,8 +837,11 @@ export const api = createApi({
         const releaseDateId = (arg?.releaseDateId || "").trim();
         if (releaseDateId) params.releaseDateId = releaseDateId;
 
-        const stream = (arg?.stream || "").trim();
+        const stream = joinOrUndefined(arg?.stream);
         if (stream) params.stream = stream;
+
+        const customer = joinOrUndefined(arg?.customer);
+        if (customer) params.customer = customer;
 
         const search = (arg?.search || "").trim();
         if (search) params.search = search;
@@ -913,6 +918,10 @@ export const api = createApi({
             ]
           : [{ type: "Task" as const, id: "LIST" as const }],
     }),
+    getTaskFilters: b.query<TaskFilters, void>({
+      query: () => ({ url: "/tasks/filters", method: "GET" }),
+      providesTags: [{ type: "Task" as const, id: "FILTERS" as const }],
+    }),
     getTask: b.query<BacklogItem, string>({
       query: (id) => ({ url: `/tasks/${id}`, method: "GET" }),
       providesTags: (result, error, id) => [
@@ -924,6 +933,7 @@ export const api = createApi({
       query: (body) => ({ url: "/tasks", method: "POST", body }),
       invalidatesTags: (result) => [
         listTag("Task"),
+        entityTag("Task", "FILTERS"),
         ...(result ? [entityTag("Task", result.id)] : []),
         listTag("Capacity"),
       ],
@@ -936,8 +946,8 @@ export const api = createApi({
           dod: arg.dod ?? "",
           priority: (arg.priority as BacklogItem["priority"]) ?? 2,
           status: (arg.status as BacklogItem["status"]) ?? "inprogress",
-          customer: arg.customer ?? "",
-          stream: arg.stream ?? "",
+          customer: arg.customer ?? [],
+          stream: arg.stream ?? [],
           participantIds: Array.isArray(arg.participantIds)
             ? [...arg.participantIds]
             : [],
@@ -990,6 +1000,7 @@ export const api = createApi({
         invalidatesTags: (result, error, arg) => [
           { type: "Task" as const, id: arg.id },
           { type: "Task" as const, id: "LIST" as const },
+          { type: "Task" as const, id: "FILTERS" as const },
           { type: "Capacity" as const, id: "LIST" as const },
         ],
         async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
@@ -1629,6 +1640,7 @@ export const {
 
   useGetTaskQuery,
   useGetTasksQuery,
+  useGetTaskFiltersQuery,
   useAddTaskMutation,
   useUpdateTaskMutation,
   useDeleteTaskMutation,

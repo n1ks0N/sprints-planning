@@ -80,7 +80,7 @@ export default function ParticipantWorkloadPage() {
     roles: ui.rolesFilter,
     userStreams: ui.userStreamsFilter,
     priority: ui.priorityFilter,
-    stream: ui.taskStreamFilter,
+    stream: ui.taskStreamFilter ? [ui.taskStreamFilter] : undefined,
   });
   const tasks: BacklogItem[] = tasksPage?.content ?? [];
 
@@ -135,7 +135,7 @@ export default function ParticipantWorkloadPage() {
 
   const taskStreamOptions = React.useMemo(() => {
     const streams = tasks
-      .map((t) => t.stream)
+      .flatMap((t) => t.stream || [])
       .filter((stream): stream is string => Boolean(stream && stream.trim()));
     return Array.from(new Set(streams)).sort();
   }, [tasks]);

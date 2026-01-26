@@ -189,8 +189,8 @@ public class ExportService {
             row.createCell(col++).setCellValue(task.getDisplayOrder());
             row.createCell(col++).setCellValue(task.getTitle());
             row.createCell(col++).setCellValue(task.getPriority());
-            row.createCell(col++).setCellValue(task.getCustomer());
-            row.createCell(col++).setCellValue(task.getStream());
+            row.createCell(col++).setCellValue(joinValues(task.getCustomer()));
+            row.createCell(col++).setCellValue(joinValues(task.getStream()));
             row.createCell(col++).setCellValue(joinParticipants(task.getParticipants(), participantIndex));
             row.createCell(col++).setCellValue(task.getLeaderParticipant() != null
                 ? participantIndex.getOrDefault(task.getLeaderParticipant().getId(), task.getLeaderParticipant()).getFullName()
@@ -272,6 +272,13 @@ public class ExportService {
             cell.setCellValue(titles[i]);
             cell.setCellStyle(style);
         }
+    }
+
+    private String joinValues(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return "";
+        }
+        return String.join(", ", values);
     }
 
     private String joinParticipants(Iterable<TaskParticipantEntity> participants, Map<UUID, ParticipantEntity> participantIndex) {

@@ -14,6 +14,7 @@ import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.Order;
+import jakarta.persistence.criteria.Path;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.SetJoin;
@@ -217,8 +218,12 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             predicates.add(cb.equal(task.get("releaseDate").get("id"), filter.releaseDateId()));
         }
 
-        if (filter.stream() != null) {
-            predicates.add(cb.like(cb.lower(task.get("stream")), "%" + filter.stream() + "%"));
+        if (!filter.streams().isEmpty()) {
+            predicates.add(jsonArrayContainsAny(cb, task.get("stream"), filter.streams()));
+        }
+
+        if (!filter.customers().isEmpty()) {
+            predicates.add(jsonArrayContainsAny(cb, task.get("customer"), filter.customers()));
         }
 
         if (filter.searchQuery() != null) {
@@ -227,8 +232,8 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
                 cb.like(cb.lower(task.get("title")), like),
                 cb.like(cb.lower(task.get("description")), like),
                 cb.like(cb.lower(task.get("dod")), like),
-                cb.like(cb.lower(task.get("customer")), like),
-                cb.like(cb.lower(task.get("stream")), like)
+                cb.like(cb.lower(task.get("customer").as(String.class)), like),
+                cb.like(cb.lower(task.get("stream").as(String.class)), like)
             ));
         }
 
@@ -321,5 +326,28 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             );
 
         return cb.or(cb.exists(loadSub), cb.exists(allocationSub));
+    }
+
+    private Predicate jsonArrayContainsAny(CriteriaBuilder cb, Path<?> field, Set<String> values) {
+        if (values == null || values.isEmpty()) {
+            return cb.conjunction();
+        }
+        Expression<String> asText = cb.lower(field.as(String.class));
+        List<Predicate> predicates = values.stream()
+            .map(value -> {
+                String escaped = escapeLike(value);
+                String pattern = "%\"" + escaped + "\"%";
+                return cb.like(asText, pattern, '\\');
+            })
+            .toList();
+        return cb.or(predicates.toArray(new Predicate[0]));
+    }
+
+    private String escapeLike(String value) {
+        return value
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+            .toLowerCase();
     }
 }
