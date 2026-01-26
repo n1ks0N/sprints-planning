@@ -13,7 +13,9 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -48,11 +50,13 @@ public class TaskEntity {
     @Column(nullable = false)
     private String status;
 
-    @Column(nullable = false)
-    private String customer;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(nullable = false, columnDefinition = "jsonb")
+    private List<String> customer = new ArrayList<>();
 
-    @Column(nullable = false)
-    private String stream;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(nullable = false, columnDefinition = "jsonb")
+    private List<String> stream = new ArrayList<>();
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "release_date_id")
@@ -135,19 +139,19 @@ public class TaskEntity {
         this.status = status;
     }
 
-    public String getCustomer() {
+    public List<String> getCustomer() {
         return customer;
     }
 
-    public void setCustomer(String customer) {
+    public void setCustomer(List<String> customer) {
         this.customer = customer;
     }
 
-    public String getStream() {
+    public List<String> getStream() {
         return stream;
     }
 
-    public void setStream(String stream) {
+    public void setStream(List<String> stream) {
         this.stream = stream;
     }
 

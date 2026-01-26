@@ -1,10 +1,12 @@
 package com.sber.isu.sprints_planning.controller;
 
 import com.sber.isu.sprints_planning.dto.TaskDto;
+import com.sber.isu.sprints_planning.dto.TaskFiltersDto;
 import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
 import com.sber.isu.sprints_planning.service.TaskFilter;
+import com.sber.isu.sprints_planning.service.TaskFiltersService;
 import com.sber.isu.sprints_planning.service.TaskService;
 import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
@@ -23,9 +25,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class TaskController {
 
     private final TaskService taskService;
+    private final TaskFiltersService taskFiltersService;
 
-    public TaskController(TaskService taskService) {
+    public TaskController(TaskService taskService, TaskFiltersService taskFiltersService) {
         this.taskService = taskService;
+        this.taskFiltersService = taskFiltersService;
     }
 
     @GetMapping("/tasks")
@@ -35,6 +39,7 @@ public class TaskController {
         @RequestParam(value = "status", required = false) String status,
         @RequestParam(value = "releaseDateId", required = false) String releaseDateId,
         @RequestParam(value = "stream", required = false) String stream,
+        @RequestParam(value = "customer", required = false) String customer,
         @RequestParam(value = "search", required = false) String search,
         @RequestParam(value = "participantId", required = false) String participantId,
         @RequestParam(value = "role", required = false) String role,
@@ -49,6 +54,7 @@ public class TaskController {
             status,
             releaseDateId,
             stream,
+            customer,
             participantId,
             role,
             userStream,
@@ -56,6 +62,12 @@ public class TaskController {
             pinnedTaskId
         );
         return taskService.findPage(normalizedTeamKey, filter, page, size);
+    }
+
+    @GetMapping("/tasks/filters")
+    public TaskFiltersDto getTaskFilters(@PathVariable String teamKey) {
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskFiltersService.getFilters(normalizedTeamKey);
     }
 
     @GetMapping("/tasks/{id}")

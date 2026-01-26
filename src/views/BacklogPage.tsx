@@ -53,6 +53,7 @@ import {
   useGetQuartersQuery,
   useGetSprintsQuery,
   useGetTasksQuery,
+  useGetTaskFiltersQuery,
   useAddTaskMutation,
   useUpdateTaskMutation,
   useDeleteTaskMutation,
@@ -602,18 +603,22 @@ const TaskCard = React.memo(function TaskCard({
   const releaseDateId = task.releaseDateId || "";
   const relSprintId = task.releaseSprintId || "";
 
-  const [customerDraft, setCustomerDraft] = React.useState(task.customer || "");
-  const [streamDraft, setStreamDraft] = React.useState(task.stream || "");
+  const [customerDraft, setCustomerDraft] = React.useState<string[]>(
+    task.customer || []
+  );
+  const [streamDraft, setStreamDraft] = React.useState<string[]>(
+    task.stream || []
+  );
   const [noteParticipant, setNoteParticipant] =
     React.useState<Participant | null>(null);
   const [noteDraft, setNoteDraft] = React.useState("");
 
   React.useEffect(() => {
-    setCustomerDraft(task.customer || "");
+    setCustomerDraft(task.customer || []);
   }, [task.customer]);
 
   React.useEffect(() => {
-    setStreamDraft(task.stream || "");
+    setStreamDraft(task.stream || []);
   }, [task.stream]);
 
   const handleOpenNote = React.useCallback(
@@ -878,54 +883,34 @@ const TaskCard = React.memo(function TaskCard({
           />
 
           {/* Заказчик */}
-          <Autocomplete
-            size="small"
-            freeSolo
+          <FilterAutocomplete
+            multiple
+            allowCustom
+            label="Заказчик"
             options={customerOptions}
             value={customerDraft}
-            onInputChange={(_, v) => setCustomerDraft(v || "")}
-            onChange={(_, v) => {
-              const next = v ?? "";
-              setCustomerDraft(next);
-              if (next !== (task.customer || "")) {
-                onUpdateTaskPatch(task, { customer: next });
+            onChange={(values) => {
+              setCustomerDraft(values);
+              if (!shallowArrayEqual(values, task.customer || [])) {
+                onUpdateTaskPatch(task, { customer: values });
               }
             }}
-            onBlur={() => {
-              const trimmed = customerDraft.trim();
-              if (trimmed !== (task.customer || "")) {
-                onUpdateTaskPatch(task, { customer: trimmed });
-              }
-            }}
-            renderInput={(params) => (
-              <TextField {...params} label="Заказчик" size="small" />
-            )}
             sx={{ minWidth: 180, maxWidth: 240, flexShrink: 0 }}
           />
 
           {/* Стрим */}
-          <Autocomplete
-            size="small"
-            freeSolo
+          <FilterAutocomplete
+            multiple
+            allowCustom
+            label="Стрим"
             options={streamOptions}
             value={streamDraft}
-            onInputChange={(_, v) => setStreamDraft(v || "")}
-            onChange={(_, v) => {
-              const next = v ?? "";
-              setStreamDraft(next);
-              if (next !== (task.stream || "")) {
-                onUpdateTaskPatch(task, { stream: next });
+            onChange={(values) => {
+              setStreamDraft(values);
+              if (!shallowArrayEqual(values, task.stream || [])) {
+                onUpdateTaskPatch(task, { stream: values });
               }
             }}
-            onBlur={() => {
-              const trimmed = streamDraft.trim();
-              if (trimmed !== (task.stream || "")) {
-                onUpdateTaskPatch(task, { stream: trimmed });
-              }
-            }}
-            renderInput={(params) => (
-              <TextField {...params} label="Стрим" size="small" />
-            )}
             sx={{ minWidth: 180, maxWidth: 220, flexShrink: 0 }}
           />
 
@@ -1432,6 +1417,7 @@ export default function BacklogPage() {
   const allSprints = sprintsData;
   const { data: releases = [], isLoading: isReleasesLoading } =
     useGetReleasesQuery();
+  const { data: taskFilters } = useGetTaskFiltersQuery();
   const quarterIdsKey = React.useMemo(
     () => quarters.map((q) => q.id).join("|"),
     [quarters]
@@ -1450,6 +1436,7 @@ export default function BacklogPage() {
   const {
     priorityFilter,
     streamFilter,
+    customerFilter,
     statusFilter,
     releaseSprintFilter,
     searchQuery,
@@ -1540,6 +1527,7 @@ export default function BacklogPage() {
         statusFilter,
         releaseSprintFilter,
         streamFilter,
+        customerFilter,
         normalizedSearch,
         pinnedTaskId,
         tasksPageSize: TASKS_PAGE_SIZE,
@@ -1551,6 +1539,7 @@ export default function BacklogPage() {
       selectedQuarterIds,
       statusFilter,
       streamFilter,
+      customerFilter,
       pinnedTaskId,
       TASKS_PAGE_SIZE,
     ]
@@ -1571,7 +1560,8 @@ export default function BacklogPage() {
       statuses: statusFilter,
       releaseDateId:
         releaseSprintFilter === "all" ? undefined : releaseSprintFilter.trim(),
-      stream: streamFilter.trim(),
+      stream: streamFilter,
+      customer: customerFilter,
       search: normalizedSearch,
       pinnedId: pinnedTaskId ?? undefined,
       page: effectiveTasksPageNumber,
@@ -1583,6 +1573,7 @@ export default function BacklogPage() {
       statusFilter,
       releaseSprintFilter,
       streamFilter,
+      customerFilter,
       normalizedSearch,
       pinnedTaskId,
       effectiveTasksPageNumber,
@@ -1857,17 +1848,15 @@ export default function BacklogPage() {
     [taskQuartersMap]
   );
 
-  const streamOptions = React.useMemo(() => {
-    const s = new Set<string>();
-    for (const t of allTasks) if (t.stream?.trim()) s.add(t.stream.trim());
-    return Array.from(s).sort();
-  }, [allTasks]);
+  const streamOptions = React.useMemo(
+    () => (taskFilters?.streams ?? []).slice().sort(),
+    [taskFilters]
+  );
 
-  const customerOptions = React.useMemo(() => {
-    const s = new Set<string>();
-    for (const t of allTasks) if (t.customer?.trim()) s.add(t.customer.trim());
-    return Array.from(s).sort();
-  }, [allTasks]);
+  const customerOptions = React.useMemo(
+    () => (taskFilters?.customers ?? []).slice().sort(),
+    [taskFilters]
+  );
 
   const getTaskQuarters = React.useCallback(
     (task: BacklogItem): string[] => {
@@ -1912,12 +1901,16 @@ export default function BacklogPage() {
   );
 
   const statusOptions = React.useMemo(
-    () =>
-      (Object.keys(STATUS_LABEL) as TaskStatus[]).map((st) => ({
+    () => {
+      const statuses = (taskFilters?.statuses?.length
+        ? taskFilters.statuses
+        : (Object.keys(STATUS_LABEL) as TaskStatus[])) as TaskStatus[];
+      return statuses.map((st) => ({
         value: st,
         label: STATUS_LABEL[st],
-      })),
-    []
+      }));
+    },
+    [taskFilters]
   );
 
   const releaseFilterOptions = React.useMemo(() => {
@@ -1994,13 +1987,23 @@ export default function BacklogPage() {
   );
 
   const handleStreamFilterChange = React.useCallback(
-    (value: string) => {
-      if (value === streamFilter) return;
+    (values: string[]) => {
+      if (shallowArrayEqual(values, streamFilter)) return;
       startFiltersTransition(() => {
-        dispatch(setBacklogFilters({ streamFilter: value }));
+        dispatch(setBacklogFilters({ streamFilter: values }));
       });
     },
     [dispatch, streamFilter, startFiltersTransition]
+  );
+
+  const handleCustomerFilterChange = React.useCallback(
+    (values: string[]) => {
+      if (shallowArrayEqual(values, customerFilter)) return;
+      startFiltersTransition(() => {
+        dispatch(setBacklogFilters({ customerFilter: values }));
+      });
+    },
+    [dispatch, customerFilter, startFiltersTransition]
   );
 
   const handleTasksPageSizeChange = React.useCallback(
@@ -2157,8 +2160,8 @@ export default function BacklogPage() {
       dod: "",
       priority: 1 as TaskPriority,
       status: "inprogress" as TaskStatus,
-      customer: "",
-      stream: "",
+      customer: [],
+      stream: [],
       participantIds: [],
       releaseDateId: null,
     }).unwrap();
@@ -2791,8 +2794,23 @@ export default function BacklogPage() {
               props: {
                 label: "Стрим по задаче",
                 options: streamOptions,
+                multiple: true,
+                allowCustom: false,
                 value: streamFilter,
                 onChange: handleStreamFilterChange,
+              },
+            },
+            {
+              type: "autocomplete",
+              key: "customer",
+              minWidth: 200,
+              props: {
+                label: "Заказчик",
+                options: customerOptions,
+                multiple: true,
+                allowCustom: false,
+                value: customerFilter,
+                onChange: handleCustomerFilterChange,
               },
             },
             {
@@ -2912,7 +2930,9 @@ export default function BacklogPage() {
                   <Stack spacing={0.25}>
                     <Typography fontWeight={700}>{activeTask.title}</Typography>
                     <Typography variant="body2" color="text.secondary">
-                      {activeTask.stream || "Без стрима"}
+                      {activeTask.stream?.length
+                        ? activeTask.stream.join(", ")
+                        : "Без стрима"}
                     </Typography>
                   </Stack>
                 </Stack>

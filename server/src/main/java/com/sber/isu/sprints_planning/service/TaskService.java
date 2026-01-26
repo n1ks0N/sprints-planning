@@ -24,6 +24,7 @@ import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskAllocationRepository;
 import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
+import com.sber.isu.sprints_planning.repository.TaskLookupRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
@@ -53,19 +54,22 @@ public class TaskService {
     private final ParticipantRepository participantRepository;
     private final SprintRepository sprintRepository;
     private final ReleaseRepository releaseRepository;
+    private final TaskLookupRepository taskLookupRepository;
 
     public TaskService(TaskRepository taskRepository,
         TaskLoadRepository taskLoadRepository,
         TaskAllocationRepository taskAllocationRepository,
         ParticipantRepository participantRepository,
         SprintRepository sprintRepository,
-        ReleaseRepository releaseRepository) {
+        ReleaseRepository releaseRepository,
+        TaskLookupRepository taskLookupRepository) {
         this.taskRepository = taskRepository;
         this.taskLoadRepository = taskLoadRepository;
         this.taskAllocationRepository = taskAllocationRepository;
         this.participantRepository = participantRepository;
         this.sprintRepository = sprintRepository;
         this.releaseRepository = releaseRepository;
+        this.taskLookupRepository = taskLookupRepository;
     }
 
     @Transactional
@@ -111,8 +115,10 @@ public class TaskService {
         entity.setDod(request.dod() != null ? request.dod() : "");
         entity.setPriority(request.priority() != null ? request.priority() : (short) 2);
         entity.setStatus(normalizeStatus(request.status()));
-        entity.setCustomer(request.customer() != null ? request.customer() : "");
-        entity.setStream(request.stream() != null ? request.stream() : "");
+        List<String> customers = normalizeValues(request.customer());
+        List<String> streams = normalizeValues(request.stream());
+        entity.setCustomer(customers);
+        entity.setStream(streams);
         entity.setCreatedAt(LocalDate.now());
         entity.setUpdatedAt(LocalDate.now());
         entity.setNotes(convertNotes(request.notes()));
@@ -125,6 +131,8 @@ public class TaskService {
         entity.setTeamKey(teamKey);
         entity.setDisplayOrder(resolveDisplayOrder(teamKey, request.order()));
         TaskEntity saved = taskRepository.save(entity);
+        taskLookupRepository.ensureCustomers(teamKey, customers);
+        taskLookupRepository.ensureStreams(teamKey, streams);
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
         updateParticipants(teamKey, saved, request.participantIds(), sprints);
@@ -156,10 +164,14 @@ public class TaskService {
             entity.setStatus(normalizeStatus(request.status()));
         }
         if (request.customer() != null) {
-            entity.setCustomer(request.customer());
+            List<String> customers = normalizeValues(request.customer());
+            entity.setCustomer(customers);
+            taskLookupRepository.ensureCustomers(teamKey, customers);
         }
         if (request.stream() != null) {
-            entity.setStream(request.stream());
+            List<String> streams = normalizeValues(request.stream());
+            entity.setStream(streams);
+            taskLookupRepository.ensureStreams(teamKey, streams);
         }
         if (request.releaseDateId() != null) {
             entity.setReleaseDate(resolveRelease(teamKey, request.releaseDateId()));
@@ -449,6 +461,23 @@ public class TaskService {
             return "inprogress";
         }
         return status.trim().toLowerCase();
+    }
+
+    private List<String> normalizeValues(List<String> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        for (String value : raw) {
+            if (value == null) {
+                continue;
+            }
+            String trimmed = value.trim();
+            if (!trimmed.isEmpty()) {
+                seen.add(trimmed);
+            }
+        }
+        return new java.util.ArrayList<>(seen);
     }
 
     private void recalcLoad(TaskEntity task, SprintEntity sprint) {

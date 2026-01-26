@@ -7,7 +7,8 @@ export type UIState = {
     selectedQuarterIds: string[];
     releaseSprintFilter: string; // "all" | "" | releaseDateId
     priorityFilter: number[]; // [1,2,3]
-    streamFilter: string;
+    streamFilter: string[];
+    customerFilter: string[];
     statusFilter: TaskStatus[];
     searchQuery: string;
     tasksPageSize: string;
@@ -54,7 +55,8 @@ function defaultState(): UIState {
       selectedQuarterIds: [],
       releaseSprintFilter: "all",
       priorityFilter: [],
-      streamFilter: "",
+      streamFilter: [],
+      customerFilter: [],
       statusFilter: [],
       searchQuery: "",
       tasksPageSize: "20",
@@ -108,10 +110,16 @@ function sanitizeBacklog(
         ? input.releaseSprintFilter
         : defaults.releaseSprintFilter,
     priorityFilter,
-    streamFilter:
-      typeof input?.streamFilter === "string"
-        ? input.streamFilter
-        : defaults.streamFilter,
+    streamFilter: Array.isArray(input?.streamFilter)
+      ? input.streamFilter.filter((value: any): value is string =>
+          typeof value === "string" && value.trim()
+        )
+      : defaults.streamFilter.slice(),
+    customerFilter: Array.isArray(input?.customerFilter)
+      ? input.customerFilter.filter((value: any): value is string =>
+          typeof value === "string" && value.trim()
+        )
+      : defaults.customerFilter.slice(),
     statusFilter,
     searchQuery:
       typeof input?.searchQuery === "string"

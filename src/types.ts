@@ -60,8 +60,8 @@ export type BacklogItem = {
   dod: string;
   priority: TaskPriority;
   status: TaskStatus;
-  customer: string;
-  stream: string;
+  customer: string[];
+  stream: string[];
   participantIds: string[];
   loads: Record<string, number>;
   allocations?: Record<string, Record<string, number>>;
@@ -73,6 +73,13 @@ export type BacklogItem = {
   order?: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type TaskFilters = {
+  quarters: Quarter[];
+  statuses: TaskStatus[];
+  customers: string[];
+  streams: string[];
 };
 
 export type Allocations = Record<
