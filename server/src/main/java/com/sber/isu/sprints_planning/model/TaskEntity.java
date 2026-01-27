@@ -8,6 +8,8 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
@@ -53,6 +55,22 @@ public class TaskEntity {
 
     @Column(nullable = false)
     private String stream;
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "task_customer_values",
+        joinColumns = @JoinColumn(name = "task_id"),
+        inverseJoinColumns = @JoinColumn(name = "customer_id")
+    )
+    private Set<TaskCustomerEntity> customers = new HashSet<>();
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "task_stream_values",
+        joinColumns = @JoinColumn(name = "task_id"),
+        inverseJoinColumns = @JoinColumn(name = "stream_id")
+    )
+    private Set<TaskStreamEntity> streams = new HashSet<>();
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "release_date_id")
@@ -149,6 +167,22 @@ public class TaskEntity {
 
     public void setStream(String stream) {
         this.stream = stream;
+    }
+
+    public Set<TaskCustomerEntity> getCustomers() {
+        return customers;
+    }
+
+    public void setCustomers(Set<TaskCustomerEntity> customers) {
+        this.customers = customers;
+    }
+
+    public Set<TaskStreamEntity> getStreams() {
+        return streams;
+    }
+
+    public void setStreams(Set<TaskStreamEntity> streams) {
+        this.streams = streams;
     }
 
     public ReleaseEntity getReleaseDate() {

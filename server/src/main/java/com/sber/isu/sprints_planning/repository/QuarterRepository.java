@@ -12,4 +12,6 @@ public interface QuarterRepository extends JpaRepository<QuarterEntity, UUID> {
     Optional<QuarterEntity> findByIdAndTeamKey(UUID id, String teamKey);
 
     List<QuarterEntity> findByTeamKeyOrderByStartDateAsc(String teamKey);
+
+    List<QuarterEntity> findByTeamKeyOrderByEndDateAsc(String teamKey);
 }

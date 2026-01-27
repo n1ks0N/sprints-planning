@@ -12,9 +12,11 @@ import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.ReleaseEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
+import com.sber.isu.sprints_planning.model.TaskCustomerEntity;
 import com.sber.isu.sprints_planning.model.TaskEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadEntity;
 import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
+import com.sber.isu.sprints_planning.model.TaskStreamEntity;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -87,6 +89,19 @@ public final class DtoMapper {
         String releaseDateId = entity.getReleaseDate() != null
             ? entity.getReleaseDate().getId().toString()
             : null;
+
+        // Extract customer names from many-to-many relationship
+        List<String> customers = entity.getCustomers().stream()
+            .map(TaskCustomerEntity::getName)
+            .sorted()
+            .toList();
+
+        // Extract stream names from many-to-many relationship
+        List<String> streams = entity.getStreams().stream()
+            .map(TaskStreamEntity::getName)
+            .sorted()
+            .toList();
+
         return new TaskDto(
             entity.getId().toString(),
             entity.getTitle(),
@@ -94,8 +109,8 @@ public final class DtoMapper {
             entity.getDod(),
             entity.getPriority(),
             entity.getStatus(),
-            entity.getCustomer(),
-            entity.getStream(),
+            customers,
+            streams,
             participantIds,
             loads,
             allocations,
