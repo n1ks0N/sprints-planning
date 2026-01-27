@@ -1482,7 +1482,6 @@ export const api = createApi({
       providesTags: [
         listTag("Quarter"),
         listTag("Release"),
-        listTag("Task"),
       ],
     }),
 

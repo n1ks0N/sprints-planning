@@ -609,6 +609,8 @@ const TaskCard = React.memo(function TaskCard({
   const [streamsDraft, setStreamsDraft] = React.useState<string[]>(
     task.streams || []
   );
+  const [customersInput, setCustomersInput] = React.useState("");
+  const [streamsInput, setStreamsInput] = React.useState("");
   const [noteParticipant, setNoteParticipant] =
     React.useState<Participant | null>(null);
   const [noteDraft, setNoteDraft] = React.useState("");
@@ -889,17 +891,29 @@ const TaskCard = React.memo(function TaskCard({
             freeSolo
             options={customerOptions}
             value={customersDraft}
+            inputValue={customersInput}
+            onInputChange={(_, value) => setCustomersInput(value)}
             onChange={(_, values) => {
               const filtered = (values as string[]).filter(
                 (v) => typeof v === "string" && v.trim()
               );
               setCustomersDraft(filtered);
+              setCustomersInput("");
               const prev = task.customers || [];
               if (
                 filtered.length !== prev.length ||
                 !filtered.every((v, i) => prev[i] === v)
               ) {
                 onUpdateTaskPatch(task, { customers: filtered });
+              }
+            }}
+            onBlur={() => {
+              const trimmed = customersInput.trim();
+              if (trimmed && !customersDraft.includes(trimmed)) {
+                const next = [...customersDraft, trimmed];
+                setCustomersDraft(next);
+                setCustomersInput("");
+                onUpdateTaskPatch(task, { customers: next });
               }
             }}
             renderInput={(params) => (
@@ -915,17 +929,29 @@ const TaskCard = React.memo(function TaskCard({
             freeSolo
             options={streamOptions}
             value={streamsDraft}
+            inputValue={streamsInput}
+            onInputChange={(_, value) => setStreamsInput(value)}
             onChange={(_, values) => {
               const filtered = (values as string[]).filter(
                 (v) => typeof v === "string" && v.trim()
               );
               setStreamsDraft(filtered);
+              setStreamsInput("");
               const prev = task.streams || [];
               if (
                 filtered.length !== prev.length ||
                 !filtered.every((v, i) => prev[i] === v)
               ) {
                 onUpdateTaskPatch(task, { streams: filtered });
+              }
+            }}
+            onBlur={() => {
+              const trimmed = streamsInput.trim();
+              if (trimmed && !streamsDraft.includes(trimmed)) {
+                const next = [...streamsDraft, trimmed];
+                setStreamsDraft(next);
+                setStreamsInput("");
+                onUpdateTaskPatch(task, { streams: next });
               }
             }}
             renderInput={(params) => (
