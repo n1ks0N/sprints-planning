@@ -12,6 +12,7 @@ export type UIState = {
     statusFilter: TaskStatus[];
     searchQuery: string;
     tasksPageSize: string;
+    hideAllParticipants: boolean;
   };
   capacity: {
     selectedQuarterIds: string[];
@@ -60,6 +61,7 @@ function defaultState(): UIState {
       statusFilter: [],
       searchQuery: "",
       tasksPageSize: "20",
+      hideAllParticipants: false,
     },
     capacity: {
       selectedQuarterIds: [],
@@ -133,6 +135,10 @@ function sanitizeBacklog(
           (id: any): id is string => typeof id === "string"
         )
       : defaults.selectedQuarterIds.slice(),
+    hideAllParticipants:
+      typeof input?.hideAllParticipants === "boolean"
+        ? input.hideAllParticipants
+        : defaults.hideAllParticipants,
   };
 }
 

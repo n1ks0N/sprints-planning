@@ -1503,6 +1503,7 @@ export default function BacklogPage() {
     searchQuery,
     selectedQuarterIds,
     tasksPageSize,
+    hideAllParticipants,
   } = useAppSelector((s) => s.ui.backlog);
 
   const [, startFiltersTransition] = React.useTransition();
@@ -2704,6 +2705,18 @@ export default function BacklogPage() {
 
   const toggleParticipantsVisibility = React.useCallback(
     (taskId: string, hidden: boolean) => {
+      // Если показываем участников конкретной задачи, а глобально они скрыты -
+      // сбрасываем глобальное скрытие
+      if (!hidden && hideAllParticipants) {
+        dispatch(setBacklogFilters({ hideAllParticipants: false }));
+        // Очищаем localStorage и локальный state
+        writeLS(LS_HIDDEN_PARTICIPANTS, []);
+        setHiddenParticipantsTaskIds(new Set());
+        return;
+      }
+
+      // Если скрываем участников конкретной задачи (hideAllParticipants = false)
+      // просто добавляем в список скрытых
       setHiddenParticipantsTaskIds((prev) => {
         const next = new Set(prev);
         if (hidden) {
@@ -2715,8 +2728,16 @@ export default function BacklogPage() {
         return next;
       });
     },
-    []
+    [hideAllParticipants, dispatch]
   );
+
+  const handleToggleAllParticipants = React.useCallback(() => {
+    const nextHideAll = !hideAllParticipants;
+    dispatch(setBacklogFilters({ hideAllParticipants: nextHideAll }));
+    // Очищаем localStorage и локальный state при глобальном переключении
+    writeLS(LS_HIDDEN_PARTICIPANTS, []);
+    setHiddenParticipantsTaskIds(new Set());
+  }, [hideAllParticipants, dispatch]);
 
   const taskSensors = useSensors(
     useSensor(PointerSensor, {
@@ -2935,6 +2956,19 @@ export default function BacklogPage() {
           ]}
         />
 
+        <Box sx={{ display: "flex", justifyContent: "flex-start" }}>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={hideAllParticipants ? <Visibility /> : <VisibilityOff />}
+            onClick={handleToggleAllParticipants}
+          >
+            {hideAllParticipants
+              ? "Показать всех участников"
+              : "Скрыть всех участников"}
+          </Button>
+        </Box>
+
         {/* Список задач с DnD */}
         <DndContext
           sensors={taskSensors}
@@ -2994,7 +3028,10 @@ export default function BacklogPage() {
                           }));
                           applyParticipantOrderOptimistic(taskId, order);
                         }}
-                        hiddenParticipants={hiddenParticipantsTaskIds.has(t.id)}
+                        hiddenParticipants={
+                          hideAllParticipants ||
+                          hiddenParticipantsTaskIds.has(t.id)
+                        }
                         onToggleParticipantsVisibility={
                           toggleParticipantsVisibility
                         }
