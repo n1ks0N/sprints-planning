@@ -892,7 +892,10 @@ const TaskCard = React.memo(function TaskCard({
             options={customerOptions}
             value={customersDraft}
             inputValue={customersInput}
-            onInputChange={(_, value) => setCustomersInput(value)}
+            onInputChange={(_, value, reason) => {
+              if (reason === "input") setCustomersInput(value);
+              else if (reason === "reset" || reason === "clear") setCustomersInput("");
+            }}
             onChange={(_, values) => {
               const filtered = (values as string[]).filter(
                 (v) => typeof v === "string" && v.trim()
@@ -909,11 +912,16 @@ const TaskCard = React.memo(function TaskCard({
             }}
             onBlur={() => {
               const trimmed = customersInput.trim();
-              if (trimmed && !customersDraft.includes(trimmed)) {
+              const alreadyExists = customersDraft.some(
+                (c) => c.toLowerCase() === trimmed.toLowerCase()
+              );
+              if (trimmed && !alreadyExists) {
                 const next = [...customersDraft, trimmed];
                 setCustomersDraft(next);
                 setCustomersInput("");
                 onUpdateTaskPatch(task, { customers: next });
+              } else {
+                setCustomersInput("");
               }
             }}
             renderInput={(params) => (
@@ -930,7 +938,10 @@ const TaskCard = React.memo(function TaskCard({
             options={streamOptions}
             value={streamsDraft}
             inputValue={streamsInput}
-            onInputChange={(_, value) => setStreamsInput(value)}
+            onInputChange={(_, value, reason) => {
+              if (reason === "input") setStreamsInput(value);
+              else if (reason === "reset" || reason === "clear") setStreamsInput("");
+            }}
             onChange={(_, values) => {
               const filtered = (values as string[]).filter(
                 (v) => typeof v === "string" && v.trim()
@@ -947,11 +958,16 @@ const TaskCard = React.memo(function TaskCard({
             }}
             onBlur={() => {
               const trimmed = streamsInput.trim();
-              if (trimmed && !streamsDraft.includes(trimmed)) {
+              const alreadyExists = streamsDraft.some(
+                (s) => s.toLowerCase() === trimmed.toLowerCase()
+              );
+              if (trimmed && !alreadyExists) {
                 const next = [...streamsDraft, trimmed];
                 setStreamsDraft(next);
                 setStreamsInput("");
                 onUpdateTaskPatch(task, { streams: next });
+              } else {
+                setStreamsInput("");
               }
             }}
             renderInput={(params) => (
