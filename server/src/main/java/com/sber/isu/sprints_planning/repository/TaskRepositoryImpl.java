@@ -2,9 +2,11 @@ package com.sber.isu.sprints_planning.repository;
 
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
+import com.sber.isu.sprints_planning.model.TaskCustomerEntity;
 import com.sber.isu.sprints_planning.model.TaskEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadEntity;
 import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
+import com.sber.isu.sprints_planning.model.TaskStreamEntity;
 import com.sber.isu.sprints_planning.service.TaskFilter;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -126,6 +128,8 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         fetchParticipants(ids);
         fetchAllocations(ids);
         fetchLoads(ids);
+        fetchCustomers(ids);
+        fetchStreams(ids);
         return base;
     }
 
@@ -186,6 +190,32 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             .getResultList();
     }
 
+    private void fetchCustomers(List<UUID> ids) {
+        entityManager.createQuery(
+                """
+                    select distinct t from TaskEntity t
+                    left join fetch t.customers c
+                    where t.id in :ids
+                """,
+                TaskEntity.class
+            )
+            .setParameter("ids", ids)
+            .getResultList();
+    }
+
+    private void fetchStreams(List<UUID> ids) {
+        entityManager.createQuery(
+                """
+                    select distinct t from TaskEntity t
+                    left join fetch t.streams s
+                    where t.id in :ids
+                """,
+                TaskEntity.class
+            )
+            .setParameter("ids", ids)
+            .getResultList();
+    }
+
     private Predicate buildPredicate(
         String teamKey,
         TaskFilter filter,
@@ -217,8 +247,12 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             predicates.add(cb.equal(task.get("releaseDate").get("id"), filter.releaseDateId()));
         }
 
-        if (filter.stream() != null) {
-            predicates.add(cb.like(cb.lower(task.get("stream")), "%" + filter.stream() + "%"));
+        if (!filter.streams().isEmpty()) {
+            predicates.add(streamExists(query, cb, task, filter.streams()));
+        }
+
+        if (!filter.customers().isEmpty()) {
+            predicates.add(customerExists(query, cb, task, filter.customers()));
         }
 
         if (filter.searchQuery() != null) {
@@ -298,6 +332,44 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             .where(
                 cb.equal(tp.get("task").get("id"), task.get("id")),
                 streamFilter
+            );
+        return cb.exists(sub);
+    }
+
+    private Predicate streamExists(
+        CriteriaQuery<?> query,
+        CriteriaBuilder cb,
+        Root<TaskEntity> task,
+        Iterable<String> streamNames
+    ) {
+        var sub = query.subquery(UUID.class);
+        Root<TaskEntity> subTask = sub.from(TaskEntity.class);
+        Join<TaskEntity, TaskStreamEntity> stream = subTask.join("streams");
+        CriteriaBuilder.In<String> streamFilter = cb.in(stream.get("name"));
+        streamNames.forEach(streamFilter::value);
+        sub.select(subTask.get("id"))
+            .where(
+                cb.equal(subTask.get("id"), task.get("id")),
+                streamFilter
+            );
+        return cb.exists(sub);
+    }
+
+    private Predicate customerExists(
+        CriteriaQuery<?> query,
+        CriteriaBuilder cb,
+        Root<TaskEntity> task,
+        Iterable<String> customerNames
+    ) {
+        var sub = query.subquery(UUID.class);
+        Root<TaskEntity> subTask = sub.from(TaskEntity.class);
+        Join<TaskEntity, TaskCustomerEntity> customer = subTask.join("customers");
+        CriteriaBuilder.In<String> customerFilter = cb.in(customer.get("name"));
+        customerNames.forEach(customerFilter::value);
+        sub.select(subTask.get("id"))
+            .where(
+                cb.equal(subTask.get("id"), task.get("id")),
+                customerFilter
             );
         return cb.exists(sub);
     }

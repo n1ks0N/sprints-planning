@@ -14,17 +14,21 @@ import com.sber.isu.sprints_planning.model.ReleaseEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationId;
+import com.sber.isu.sprints_planning.model.TaskCustomerEntity;
 import com.sber.isu.sprints_planning.model.TaskEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadId;
 import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
 import com.sber.isu.sprints_planning.model.TaskParticipantId;
+import com.sber.isu.sprints_planning.model.TaskStreamEntity;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskAllocationRepository;
+import com.sber.isu.sprints_planning.repository.TaskCustomerRepository;
 import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
+import com.sber.isu.sprints_planning.repository.TaskStreamRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
@@ -32,6 +36,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -53,19 +58,25 @@ public class TaskService {
     private final ParticipantRepository participantRepository;
     private final SprintRepository sprintRepository;
     private final ReleaseRepository releaseRepository;
+    private final TaskStreamRepository taskStreamRepository;
+    private final TaskCustomerRepository taskCustomerRepository;
 
     public TaskService(TaskRepository taskRepository,
         TaskLoadRepository taskLoadRepository,
         TaskAllocationRepository taskAllocationRepository,
         ParticipantRepository participantRepository,
         SprintRepository sprintRepository,
-        ReleaseRepository releaseRepository) {
+        ReleaseRepository releaseRepository,
+        TaskStreamRepository taskStreamRepository,
+        TaskCustomerRepository taskCustomerRepository) {
         this.taskRepository = taskRepository;
         this.taskLoadRepository = taskLoadRepository;
         this.taskAllocationRepository = taskAllocationRepository;
         this.participantRepository = participantRepository;
         this.sprintRepository = sprintRepository;
         this.releaseRepository = releaseRepository;
+        this.taskStreamRepository = taskStreamRepository;
+        this.taskCustomerRepository = taskCustomerRepository;
     }
 
     @Transactional
@@ -111,8 +122,8 @@ public class TaskService {
         entity.setDod(request.dod() != null ? request.dod() : "");
         entity.setPriority(request.priority() != null ? request.priority() : (short) 2);
         entity.setStatus(normalizeStatus(request.status()));
-        entity.setCustomer(request.customer() != null ? request.customer() : "");
-        entity.setStream(request.stream() != null ? request.stream() : "");
+        entity.setCustomer("");
+        entity.setStream("");
         entity.setCreatedAt(LocalDate.now());
         entity.setUpdatedAt(LocalDate.now());
         entity.setNotes(convertNotes(request.notes()));
@@ -125,6 +136,16 @@ public class TaskService {
         entity.setTeamKey(teamKey);
         entity.setDisplayOrder(resolveDisplayOrder(teamKey, request.order()));
         TaskEntity saved = taskRepository.save(entity);
+
+        // Handle customers (multi-value)
+        if (request.customers() != null) {
+            updateTaskCustomers(teamKey, saved, request.customers());
+        }
+        // Handle streams (multi-value)
+        if (request.streams() != null) {
+            updateTaskStreams(teamKey, saved, request.streams());
+        }
+
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
         updateParticipants(teamKey, saved, request.participantIds(), sprints);
@@ -155,11 +176,11 @@ public class TaskService {
         if (request.status() != null) {
             entity.setStatus(normalizeStatus(request.status()));
         }
-        if (request.customer() != null) {
-            entity.setCustomer(request.customer());
+        if (request.customers() != null) {
+            updateTaskCustomers(teamKey, entity, request.customers());
         }
-        if (request.stream() != null) {
-            entity.setStream(request.stream());
+        if (request.streams() != null) {
+            updateTaskStreams(teamKey, entity, request.streams());
         }
         if (request.releaseDateId() != null) {
             entity.setReleaseDate(resolveRelease(teamKey, request.releaseDateId()));
@@ -449,6 +470,68 @@ public class TaskService {
             return "inprogress";
         }
         return status.trim().toLowerCase();
+    }
+
+    private void updateTaskCustomers(String teamKey, TaskEntity entity, List<String> customerNames) {
+        Set<String> newNames = customerNames.stream()
+            .filter(name -> name != null && !name.isBlank())
+            .map(String::trim)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        entity.getCustomers().clear();
+
+        if (newNames.isEmpty()) {
+            return;
+        }
+
+        // Find existing customers
+        List<TaskCustomerEntity> existing = taskCustomerRepository.findByNamesAndTeamKey(newNames, teamKey);
+        Map<String, TaskCustomerEntity> existingByName = existing.stream()
+            .collect(Collectors.toMap(TaskCustomerEntity::getName, Function.identity()));
+
+        // Add or create customers
+        for (String name : newNames) {
+            TaskCustomerEntity customer = existingByName.get(name);
+            if (customer == null) {
+                customer = new TaskCustomerEntity();
+                customer.setName(name);
+                customer.setTeamKey(teamKey);
+                customer.setCreatedAt(LocalDateTime.now());
+                customer = taskCustomerRepository.save(customer);
+            }
+            entity.getCustomers().add(customer);
+        }
+    }
+
+    private void updateTaskStreams(String teamKey, TaskEntity entity, List<String> streamNames) {
+        Set<String> newNames = streamNames.stream()
+            .filter(name -> name != null && !name.isBlank())
+            .map(String::trim)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        entity.getStreams().clear();
+
+        if (newNames.isEmpty()) {
+            return;
+        }
+
+        // Find existing streams
+        List<TaskStreamEntity> existing = taskStreamRepository.findByNamesAndTeamKey(newNames, teamKey);
+        Map<String, TaskStreamEntity> existingByName = existing.stream()
+            .collect(Collectors.toMap(TaskStreamEntity::getName, Function.identity()));
+
+        // Add or create streams
+        for (String name : newNames) {
+            TaskStreamEntity stream = existingByName.get(name);
+            if (stream == null) {
+                stream = new TaskStreamEntity();
+                stream.setName(name);
+                stream.setTeamKey(teamKey);
+                stream.setCreatedAt(LocalDateTime.now());
+                stream = taskStreamRepository.save(stream);
+            }
+            entity.getStreams().add(stream);
+        }
     }
 
     private void recalcLoad(TaskEntity task, SprintEntity sprint) {

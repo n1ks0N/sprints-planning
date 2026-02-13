@@ -60,8 +60,8 @@ export type BacklogItem = {
   dod: string;
   priority: TaskPriority;
   status: TaskStatus;
-  customer: string;
-  stream: string;
+  customers: string[];
+  streams: string[];
   participantIds: string[];
   loads: Record<string, number>;
   allocations?: Record<string, Record<string, number>>;
@@ -150,4 +150,13 @@ export type ApiSessionHistory = {
 export type Team = {
   key: string;
   name: string;
+};
+
+export type FiltersData = {
+  quarters: { id: string; name: string }[];
+  statuses: string[];
+  priorities: number[];
+  streams: string[];
+  customers: string[];
+  releases: { id: string; promDate: string }[];
 };

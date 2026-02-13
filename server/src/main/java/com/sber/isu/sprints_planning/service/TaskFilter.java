@@ -10,7 +10,8 @@ public record TaskFilter(
     Set<Short> priorities,
     Set<String> statuses,
     UUID releaseDateId,
-    String stream,
+    Set<String> streams,
+    Set<String> customers,
     Set<UUID> participantIds,
     Set<String> roles,
     Set<String> userStreams,
@@ -24,7 +25,8 @@ public record TaskFilter(
             Collections.emptySet(),
             Collections.emptySet(),
             null,
-            null,
+            Collections.emptySet(),
+            Collections.emptySet(),
             Collections.emptySet(),
             Collections.emptySet(),
             Collections.emptySet(),
@@ -38,7 +40,8 @@ public record TaskFilter(
         String priorities,
         String statuses,
         String releaseDateId,
-        String stream,
+        String streams,
+        String customers,
         String participantIds,
         String roles,
         String userStreams,
@@ -50,7 +53,8 @@ public record TaskFilter(
             parseShortSet(priorities),
             parseStringSet(statuses),
             parseUuid(releaseDateId),
-            normalize(stream),
+            parseStringSetPreserveCase(streams),
+            parseStringSetPreserveCase(customers),
             parseUuidSet(participantIds),
             parseStringSet(roles),
             parseStringSet(userStreams),
@@ -103,6 +107,19 @@ public record TaskFilter(
         for (String part : raw.split(",")) {
             if (part != null && !part.isBlank()) {
                 values.add(part.trim().toLowerCase());
+            }
+        }
+        return values;
+    }
+
+    private static Set<String> parseStringSetPreserveCase(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Collections.emptySet();
+        }
+        Set<String> values = new LinkedHashSet<>();
+        for (String part : raw.split(",")) {
+            if (part != null && !part.isBlank()) {
+                values.add(part.trim());
             }
         }
         return values;

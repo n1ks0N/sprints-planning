@@ -10,6 +10,7 @@ import type {
   Release,
   ApiSessionHistory,
   Team,
+  FiltersData,
 } from "../types";
 import { DEFAULT_TEAM_KEY } from "../teams";
 import { selectCurrentTeamKey } from "./teamSlice";
@@ -805,7 +806,8 @@ export const api = createApi({
           priority?: number[];
           statuses?: string[];
           releaseDateId?: string;
-          stream?: string;
+          streams?: string[];
+          customers?: string[];
           search?: string;
           participantIds?: string[];
           roles?: string[];
@@ -835,8 +837,11 @@ export const api = createApi({
         const releaseDateId = (arg?.releaseDateId || "").trim();
         if (releaseDateId) params.releaseDateId = releaseDateId;
 
-        const stream = (arg?.stream || "").trim();
-        if (stream) params.stream = stream;
+        const streams = joinOrUndefined(arg?.streams);
+        if (streams) params.stream = streams;
+
+        const customers = joinOrUndefined(arg?.customers);
+        if (customers) params.customer = customers;
 
         const search = (arg?.search || "").trim();
         if (search) params.search = search;
@@ -936,8 +941,8 @@ export const api = createApi({
           dod: arg.dod ?? "",
           priority: (arg.priority as BacklogItem["priority"]) ?? 2,
           status: (arg.status as BacklogItem["status"]) ?? "inprogress",
-          customer: arg.customer ?? "",
-          stream: arg.stream ?? "",
+          customers: Array.isArray(arg.customers) ? [...arg.customers] : [],
+          streams: Array.isArray(arg.streams) ? [...arg.streams] : [],
           participantIds: Array.isArray(arg.participantIds)
             ? [...arg.participantIds]
             : [],
@@ -1471,6 +1476,15 @@ export const api = createApi({
       keepUnusedDataFor: 0,
     }),
 
+    // ---- Filters ----
+    getFilters: b.query<FiltersData, void>({
+      query: () => ({ url: "/filters", method: "GET" }),
+      providesTags: [
+        listTag("Quarter"),
+        listTag("Release"),
+      ],
+    }),
+
     // ---- Export ----
     exportExcel: b.query<Blob, void>({
       async queryFn(_arg, { getState }) {
@@ -1648,6 +1662,8 @@ export const {
   useDeleteTeamMutation,
 
   useGetHistoryQuery,
+
+  useGetFiltersQuery,
 
   useLazyExportExcelQuery,
 } = api;

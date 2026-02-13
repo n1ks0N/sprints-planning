@@ -26,3 +26,6 @@ databaseChangeLog:
   - include:
       file: 1.0.0/1.0.0_9_task_release_date_id.sql
       relativeToChangelogFile: true
+  - include:
+      file: 1.0.0/1.0.0_10_task_streams_customers.sql
+      relativeToChangelogFile: true
