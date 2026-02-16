@@ -2705,21 +2705,14 @@ export default function BacklogPage() {
 
   const toggleParticipantsVisibility = React.useCallback(
     (taskId: string, hidden: boolean) => {
-      // Если показываем участников конкретной задачи, а глобально они скрыты -
-      // сбрасываем глобальное скрытие
-      if (!hidden && hideAllParticipants) {
-        dispatch(setBacklogFilters({ hideAllParticipants: false }));
-        // Очищаем localStorage и локальный state
-        writeLS(LS_HIDDEN_PARTICIPANTS, []);
-        setHiddenParticipantsTaskIds(new Set());
-        return;
-      }
+      // hiddenParticipantsTaskIds используется как набор исключений:
+      // - hideAllParticipants=true: исключения = задачи, которые ПОКАЗАНЫ
+      // - hideAllParticipants=false: исключения = задачи, которые СКРЫТЫ
+      const isException = hideAllParticipants ? !hidden : hidden;
 
-      // Если скрываем участников конкретной задачи (hideAllParticipants = false)
-      // просто добавляем в список скрытых
       setHiddenParticipantsTaskIds((prev) => {
         const next = new Set(prev);
-        if (hidden) {
+        if (isException) {
           next.add(taskId);
         } else {
           next.delete(taskId);
@@ -2728,16 +2721,25 @@ export default function BacklogPage() {
         return next;
       });
     },
-    [hideAllParticipants, dispatch]
+    [hideAllParticipants]
   );
 
+  // Кнопка показывает "Показать всех" только когда hideAll=true И нет исключений
+  const showsHideAll =
+    !hideAllParticipants || hiddenParticipantsTaskIds.size > 0;
+
   const handleToggleAllParticipants = React.useCallback(() => {
-    const nextHideAll = !hideAllParticipants;
-    dispatch(setBacklogFilters({ hideAllParticipants: nextHideAll }));
-    // Очищаем localStorage и локальный state при глобальном переключении
+    if (showsHideAll) {
+      // Кнопка "Скрыть всех участников" → скрыть все
+      dispatch(setBacklogFilters({ hideAllParticipants: true }));
+    } else {
+      // Кнопка "Показать всех участников" → показать все
+      dispatch(setBacklogFilters({ hideAllParticipants: false }));
+    }
+    // Очищаем исключения при глобальном переключении
     writeLS(LS_HIDDEN_PARTICIPANTS, []);
     setHiddenParticipantsTaskIds(new Set());
-  }, [hideAllParticipants, dispatch]);
+  }, [showsHideAll, dispatch]);
 
   const taskSensors = useSensors(
     useSensor(PointerSensor, {
@@ -2960,12 +2962,12 @@ export default function BacklogPage() {
           <Button
             variant="outlined"
             size="small"
-            startIcon={hideAllParticipants ? <Visibility /> : <VisibilityOff />}
+            startIcon={showsHideAll ? <VisibilityOff /> : <Visibility />}
             onClick={handleToggleAllParticipants}
           >
-            {hideAllParticipants
-              ? "Показать всех участников"
-              : "Скрыть всех участников"}
+            {showsHideAll
+              ? "Скрыть всех участников"
+              : "Показать всех участников"}
           </Button>
         </Box>
 
@@ -3029,8 +3031,9 @@ export default function BacklogPage() {
                           applyParticipantOrderOptimistic(taskId, order);
                         }}
                         hiddenParticipants={
-                          hideAllParticipants ||
-                          hiddenParticipantsTaskIds.has(t.id)
+                          hideAllParticipants
+                            ? !hiddenParticipantsTaskIds.has(t.id)
+                            : hiddenParticipantsTaskIds.has(t.id)
                         }
                         onToggleParticipantsVisibility={
                           toggleParticipantsVisibility
