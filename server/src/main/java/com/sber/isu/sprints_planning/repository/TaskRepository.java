@@ -17,8 +17,17 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID>, TaskRep
             "participants",
             "participants.participant",
             "participants.participant.userStreams",
+            "leaderParticipant",
+            "leaderParticipant.userStreams",
+            "releaseDate",
+            "customers",
+            "streams",
             "loads",
-            "allocations"
+            "loads.sprint",
+            "allocations",
+            "allocations.participant",
+            "allocations.participant.userStreams",
+            "allocations.sprint"
         }
     )
     List<TaskEntity> findAllByTeamKeyOrderByDisplayOrderAsc(String teamKey);

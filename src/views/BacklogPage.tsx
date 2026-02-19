@@ -989,6 +989,7 @@ const TaskCard = React.memo(function TaskCard({
               });
             }}
             sx={{ minWidth: 180, maxWidth: 220, flexShrink: 0 }}
+            InputLabelProps={{ shrink: true }}
             SelectProps={{ displayEmpty: true }}
           >
             <MenuItem value="">
@@ -1432,14 +1433,11 @@ const TaskCard = React.memo(function TaskCard({
 
 // ---------- Обёртка для DnD задач ----------
 
-type SortableTaskCardProps = {
-  task: BacklogItem;
-  children: (dragProps: DragHandleProps) => React.ReactNode;
-};
+type SortableTaskCardProps = Omit<TaskCardProps, "dragHandle">;
 
-function SortableTaskCard({
+const SortableTaskCard = React.memo(function SortableTaskCard({
   task,
-  children,
+  ...taskCardProps
 }: SortableTaskCardProps): JSX.Element {
   const {
     attributes,
@@ -1458,10 +1456,145 @@ function SortableTaskCard({
 
   return (
     <Box ref={setNodeRef} style={style} sx={{ width: "100%" }}>
-      {children({ attributes, listeners })}
+      <TaskCard
+        task={task}
+        {...taskCardProps}
+        dragHandle={{ attributes, listeners }}
+      />
     </Box>
   );
-}
+});
+
+type TaskCardsListProps = {
+  tasks: BacklogItem[];
+  allocations: Allocations;
+  participantOrders: Record<string, string[]>;
+  hideAllParticipants: boolean;
+  hiddenParticipantsTaskIds: Set<string>;
+  isFetching: boolean;
+  onPersistTaskOrder: (orderedIds: string[], movedTaskId: string) => Promise<void>;
+} & Omit<
+  TaskCardProps,
+  | "task"
+  | "allocationsByParticipant"
+  | "participantOrder"
+  | "hiddenParticipants"
+  | "dragHandle"
+  | "participantSensors"
+>;
+
+const TaskCardsList = React.memo(function TaskCardsList({
+  tasks,
+  allocations,
+  participantOrders,
+  hideAllParticipants,
+  hiddenParticipantsTaskIds,
+  isFetching,
+  onPersistTaskOrder,
+  ...taskCardProps
+}: TaskCardsListProps) {
+  const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
+
+  const taskSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    })
+  );
+  const participantSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    })
+  );
+
+  const activeTask = React.useMemo(
+    () => tasks.find((t) => t.id === activeTaskId) || null,
+    [activeTaskId, tasks]
+  );
+
+  const handleTaskDragStart = React.useCallback((event: DragStartEvent) => {
+    setActiveTaskId(String(event.active.id));
+  }, []);
+
+  const handleTaskDragCancel = React.useCallback(() => {
+    setActiveTaskId(null);
+  }, []);
+
+  const handleTaskDragEnd = React.useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      setActiveTaskId(null);
+      if (!over || active.id === over.id) return;
+
+      const currentIds = tasks.map((t) => t.id);
+      const oldIndex = currentIds.indexOf(String(active.id));
+      const newIndex = currentIds.indexOf(String(over.id));
+      if (oldIndex < 0 || newIndex < 0) return;
+
+      const reordered = arrayMove(currentIds, oldIndex, newIndex);
+      void onPersistTaskOrder(reordered, String(active.id));
+    },
+    [onPersistTaskOrder, tasks]
+  );
+
+  return (
+    <DndContext
+      sensors={taskSensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleTaskDragStart}
+      onDragEnd={handleTaskDragEnd}
+      onDragCancel={handleTaskDragCancel}
+    >
+      <SortableContext
+        items={tasks.map((t) => t.id)}
+        strategy={verticalListSortingStrategy}
+      >
+        <Stack spacing={2}>
+          {tasks.map((task) => (
+            <SortableTaskCard
+              key={task.id}
+              task={task}
+              allocationsByParticipant={
+                allocations[task.id] || EMPTY_ALLOCATIONS_ROW
+              }
+              participantOrder={participantOrders[task.id] || []}
+              participantSensors={participantSensors}
+              hiddenParticipants={
+                hideAllParticipants
+                  ? !hiddenParticipantsTaskIds.has(task.id)
+                  : hiddenParticipantsTaskIds.has(task.id)
+              }
+              {...taskCardProps}
+            />
+          ))}
+
+          {!tasks.length && !isFetching && (
+            <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
+              <Typography color="text.secondary">
+                Нет задач по текущим фильтрам
+              </Typography>
+            </Paper>
+          )}
+        </Stack>
+      </SortableContext>
+
+      <DragOverlay dropAnimation={null}>
+        {activeTask ? (
+          <Paper variant="outlined" sx={{ p: 1.5, maxWidth: 960 }}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <DragIndicator fontSize="small" color="disabled" />
+              <Stack spacing={0.25}>
+                <Typography fontWeight={700}>{activeTask.title}</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {activeTask.streams?.join(", ") || "Без стрима"}
+                </Typography>
+              </Stack>
+            </Stack>
+          </Paper>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
+  );
+});
 
 // ---------- BacklogPage ----------
 
@@ -1749,14 +1882,7 @@ export default function BacklogPage() {
     loadNextTasksPage,
   ]);
 
-  const allTasks = React.useMemo(
-    () =>
-      fetchedTasks.map((task) => ({
-        ...task,
-        status: (task.status as TaskStatus | undefined) ?? "inprogress",
-      })),
-    [fetchedTasks]
-  );
+  const allTasks = fetchedTasks;
   const [taskQuartersMap, setTaskQuartersMap] = React.useState<
     Record<string, string[]>
   >(() => readLS<Record<string, string[]>>(LS_TASK_QUARTERS, {}));
@@ -1769,7 +1895,6 @@ export default function BacklogPage() {
     React.useState<Set<string>>(
       () => new Set(readLS<string[]>(LS_HIDDEN_PARTICIPANTS, []))
     );
-  const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
   const [newTaskQuarterId, setNewTaskQuarterId] = React.useState<string>("");
   const [addTaskQuarterError, setAddTaskQuarterError] = React.useState(false);
 
@@ -2280,88 +2405,97 @@ export default function BacklogPage() {
     }
   };
 
-  const duplicateTask = async (task: BacklogItem) => {
-    const taskQuarters = getTaskQuarters(task);
-    const taskAllocations = allocations[task.id] || {};
-    const allocationsPayload = Object.entries(taskAllocations).reduce<
-      Record<string, Record<string, number>>
-    >((acc, [pid, row]) => {
-      const positive = Object.entries(row)
-        .map(([sid, value]) => [sid, toInt(Number(value) || 0)] as const)
-        .filter(([, days]) => days > 0);
-      if (positive.length) {
-        acc[pid] = Object.fromEntries(positive);
+  const duplicateTask = React.useCallback(
+    async (task: BacklogItem) => {
+      const taskQuarters = getTaskQuarters(task);
+      const taskAllocations = allocations[task.id] || {};
+      const allocationsPayload = Object.entries(taskAllocations).reduce<
+        Record<string, Record<string, number>>
+      >((acc, [pid, row]) => {
+        const positive = Object.entries(row)
+          .map(([sid, value]) => [sid, toInt(Number(value) || 0)] as const)
+          .filter(([, days]) => days > 0);
+        if (positive.length) {
+          acc[pid] = Object.fromEntries(positive);
+        }
+        return acc;
+      }, {});
+
+      const loadsPayload = task.loads
+        ? Object.fromEntries(
+            Object.entries(task.loads)
+              .map(([sid, days]) => [sid, toInt(Number(days) || 0)] as const)
+              .filter(([, days]) => days > 0)
+          )
+        : undefined;
+
+      const baseOrder = Number.isFinite(task.order)
+        ? Number(task.order)
+        : allTasks.length;
+      const copy = await addTask({
+        title: `${task.title} (копия)`,
+        description: (task as any).description,
+        dod: task.dod,
+        priority: task.priority,
+        status: task.status ?? "inprogress",
+        customers: task.customers?.slice() || [],
+        streams: task.streams?.slice() || [],
+        participantIds: task.participantIds.slice(),
+        releaseDateId: task.releaseDateId ?? null,
+        leaderId: (task as any).leaderId ?? undefined,
+        quarterIds: taskQuarters,
+        order: baseOrder + 1,
+        loads: loadsPayload,
+        allocations: Object.keys(allocationsPayload).length
+          ? allocationsPayload
+          : undefined,
+      }).unwrap();
+
+      if (taskQuarters.length) {
+        setTaskQuartersMap((prev) => ({ ...prev, [copy.id]: taskQuarters }));
       }
-      return acc;
-    }, {});
 
-    const loadsPayload = task.loads
-      ? Object.fromEntries(
-          Object.entries(task.loads)
-            .map(([sid, days]) => [sid, toInt(Number(days) || 0)] as const)
-            .filter(([, days]) => days > 0)
-        )
-      : undefined;
-
-    const baseOrder = Number.isFinite(task.order)
-      ? Number(task.order)
-      : allTasks.length;
-    const copy = await addTask({
-      title: `${task.title} (копия)`,
-      description: (task as any).description,
-      dod: task.dod,
-      priority: task.priority,
-      status: task.status ?? "inprogress",
-      customers: task.customers?.slice() || [],
-      streams: task.streams?.slice() || [],
-      participantIds: task.participantIds.slice(),
-      releaseDateId: task.releaseDateId ?? null,
-      leaderId: (task as any).leaderId ?? undefined,
-      quarterIds: taskQuarters,
-      order: baseOrder + 1,
-      loads: loadsPayload,
-      allocations: Object.keys(allocationsPayload).length
-        ? allocationsPayload
-        : undefined,
-    }).unwrap();
-
-    if (taskQuarters.length) {
-      setTaskQuartersMap((prev) => ({ ...prev, [copy.id]: taskQuarters }));
-    }
-
-    return copy;
-  };
-
-  const removeTask = async (t: BacklogItem) => {
-    if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
-    await deleteTask({ id: t.id }).unwrap();
-
-    setAllocations((prev) => {
-      const copy = { ...prev };
-      delete copy[t.id];
       return copy;
-    });
-  };
+    },
+    [addTask, allocations, allTasks.length, getTaskQuarters]
+  );
 
-  const commitCell = (
-    taskId: string,
-    participantId: string,
-    sprintId: string,
-    value: number
-  ) => {
-    startTaskTransition(() => {
-      upsertTaskAllocation({
-        taskId,
-        participantId,
-        sprintId,
-        days: toInt(Number(value) || 0),
-      })
-        .unwrap()
-        .catch((e) => {
-          console.error("Failed to save allocation", e);
-        });
-    });
-  };
+  const removeTask = React.useCallback(
+    async (t: BacklogItem) => {
+      if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
+      await deleteTask({ id: t.id }).unwrap();
+
+      setAllocations((prev) => {
+        const copy = { ...prev };
+        delete copy[t.id];
+        return copy;
+      });
+    },
+    [deleteTask]
+  );
+
+  const commitCell = React.useCallback(
+    (
+      taskId: string,
+      participantId: string,
+      sprintId: string,
+      value: number
+    ) => {
+      startTaskTransition(() => {
+        upsertTaskAllocation({
+          taskId,
+          participantId,
+          sprintId,
+          days: toInt(Number(value) || 0),
+        })
+          .unwrap()
+          .catch((e) => {
+            console.error("Failed to save allocation", e);
+          });
+      });
+    },
+    [startTaskTransition, upsertTaskAllocation]
+  );
 
   const handleAllocChange = React.useCallback(
     (
@@ -2383,191 +2517,135 @@ export default function BacklogPage() {
     []
   );
 
-  const addParticipantToTask = (task: BacklogItem, pid: string) => {
-    if (!pid) return;
-    if (task.participantIds?.includes(pid)) return;
+  const addParticipantToTask = React.useCallback(
+    (task: BacklogItem, pid: string) => {
+      if (!pid) return;
+      if (task.participantIds?.includes(pid)) return;
 
-    updateField(task, { participantIds: [...task.participantIds, pid] });
+      updateField(task, { participantIds: [...task.participantIds, pid] });
 
-    setParticipantOrders((prev) => ({
-      ...prev,
-      [task.id]: [...(prev[task.id] || task.participantIds), pid],
-    }));
-
-    setAllocations((prev) => {
-      const prevTask = prev[task.id] || {};
-      if (prevTask[pid]) return prev;
-      const newRow: Record<string, number> = {};
-      for (const s of allSprints) newRow[s.id] = 0;
-      return {
+      setParticipantOrders((prev) => ({
         ...prev,
-        [task.id]: {
-          ...prevTask,
-          [pid]: newRow,
-        },
+        [task.id]: [...(prev[task.id] || task.participantIds), pid],
+      }));
+
+      setAllocations((prev) => {
+        const prevTask = prev[task.id] || {};
+        if (prevTask[pid]) return prev;
+        const newRow: Record<string, number> = {};
+        for (const s of allSprints) newRow[s.id] = 0;
+        return {
+          ...prev,
+          [task.id]: {
+            ...prevTask,
+            [pid]: newRow,
+          },
+        };
+      });
+    },
+    [allSprints, updateField]
+  );
+
+  const removeParticipantFromTask = React.useCallback(
+    async (task: BacklogItem, pid: string) => {
+      setAllocations((prev) => {
+        const prevTask = prev[task.id];
+        if (!prevTask || !prevTask[pid]) return prev;
+        const { [pid]: _, ...restRows } = prevTask;
+        return { ...prev, [task.id]: restRows };
+      });
+
+      setParticipantOrders((prev) => {
+        const next = { ...prev };
+        if (next[task.id]) {
+          next[task.id] = next[task.id].filter((id) => id !== pid);
+        }
+        return next;
+      });
+
+      const patch: Partial<BacklogItem> = {
+        participantIds: task.participantIds.filter((x) => x !== pid),
       };
-    });
-  };
-
-  const removeParticipantFromTask = async (task: BacklogItem, pid: string) => {
-    setAllocations((prev) => {
-      const prevTask = prev[task.id];
-      if (!prevTask || !prevTask[pid]) return prev;
-      const { [pid]: _, ...restRows } = prevTask;
-      return { ...prev, [task.id]: restRows };
-    });
-
-    setParticipantOrders((prev) => {
-      const next = { ...prev };
-      if (next[task.id]) {
-        next[task.id] = next[task.id].filter((id) => id !== pid);
+      if ((task as any).leaderId === pid) {
+        (patch as any).leaderId = "";
       }
-      return next;
-    });
 
-    const patch: Partial<BacklogItem> = {
-      participantIds: task.participantIds.filter((x) => x !== pid),
-    };
-    if ((task as any).leaderId === pid) {
-      (patch as any).leaderId = "";
-    }
-
-    try {
-      await updateField(task, patch);
-    } catch (error) {
-      console.error("Failed to remove participant from task", error);
-    }
-  };
-
-  const replaceParticipantInTask = async (
-    task: BacklogItem,
-    fromPid: string,
-    toPid: string
-  ) => {
-    if (!toPid || fromPid === toPid) return;
-    if (!task.participantIds.includes(fromPid)) return;
-    if (task.participantIds.includes(toPid)) return;
-
-    const participantIds = task.participantIds.map((id) =>
-      id === fromPid ? toPid : id
-    );
-    const taskAllocations = allocations[task.id] || {};
-    const rowToMove = taskAllocations[fromPid] || {};
-    const nextAllocations = Object.entries(taskAllocations).reduce<
-      Record<string, Record<string, number>>
-    >((acc, [pid, row]) => {
-      if (pid === fromPid) return acc;
-      acc[pid] = { ...row };
-      return acc;
-    }, {});
-
-    nextAllocations[toPid] = { ...rowToMove };
-
-    setAllocations((prev) => {
-      const prevTask = prev[task.id] || {};
-      const movedRow = prevTask[fromPid] || rowToMove;
-      const { [fromPid]: _, ...rest } = prevTask;
-      return {
-        ...prev,
-        [task.id]: {
-          ...rest,
-          [toPid]: { ...movedRow },
-        },
-      };
-    });
-
-    setParticipantOrders((prev) => {
-      const currentOrder = prev[task.id] || task.participantIds;
-      return {
-        ...prev,
-        [task.id]: currentOrder.map((id) => (id === fromPid ? toPid : id)),
-      };
-    });
-
-    const patch: Partial<BacklogItem> = {
-      participantIds,
-      allocations: nextAllocations,
-    };
-
-    if ((task as any).leaderId === fromPid) {
-      (patch as any).leaderId = toPid;
-    }
-
-    try {
-      await updateField(task, patch);
-    } catch (error) {
-      console.error("Failed to replace participant", error);
-    }
-  };
-
-  const shiftRow = (
-    taskId: string,
-    participantId: string,
-    dir: "left" | "right"
-  ) => {
-    const row = allocations[taskId]?.[participantId] || {};
-    const ids = sprintsGlobalOrdered.map((s) => s.id);
-    if (!ids.length) return;
-
-    const next: Record<string, number> = ids.reduce<Record<string, number>>(
-      (acc, sid) => {
-        acc[sid] = 0;
-        return acc;
-      },
-      {}
-    );
-
-    for (let i = 0; i < ids.length; i++) {
-      const fromSid = ids[i];
-      const targetIdx = dir === "left" ? i - 1 : i + 1;
-      const targetSid =
-        targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
-      const val = Number(row[fromSid] || 0);
-      next[targetSid] = (next[targetSid] || 0) + val;
-    }
-
-    setAllocations((prev) => {
-      const prevTask = prev[taskId] || {};
-      return {
-        ...prev,
-        [taskId]: {
-          ...prevTask,
-          [participantId]: next,
-        },
-      };
-    });
-
-    (async () => {
       try {
-        const bulkAllocations = ids.reduce<Record<string, number>>(
-          (acc, sid) => {
-            acc[sid] = toInt(Number(next[sid] || 0));
-            return acc;
-          },
-          {}
-        );
-        await upsertTaskAllocationMulti({
-          taskId,
-          allocations: {
-            [participantId]: bulkAllocations,
-          },
-        }).unwrap();
+        await updateField(task, patch);
       } catch (error) {
-        console.error("Failed to bulk save allocations", error);
+        console.error("Failed to remove participant from task", error);
       }
-    })();
-  };
+    },
+    [updateField]
+  );
 
-  const shiftTaskAllocations = (task: BacklogItem, dir: "left" | "right") => {
-    const ids = sprintsGlobalOrdered.map((s) => s.id);
-    if (!ids.length) return;
-    const taskAllocations = allocations[task.id] || {};
-    const participantIds = task.participantIds || [];
-    const nextTaskAllocations: Record<string, Record<string, number>> = {};
+  const replaceParticipantInTask = React.useCallback(
+    async (task: BacklogItem, fromPid: string, toPid: string) => {
+      if (!toPid || fromPid === toPid) return;
+      if (!task.participantIds.includes(fromPid)) return;
+      if (task.participantIds.includes(toPid)) return;
 
-    for (const participantId of participantIds) {
-      const row = taskAllocations[participantId] || {};
-      const nextRow: Record<string, number> = ids.reduce<Record<string, number>>(
+      const participantIds = task.participantIds.map((id) =>
+        id === fromPid ? toPid : id
+      );
+      const taskAllocations = allocations[task.id] || {};
+      const rowToMove = taskAllocations[fromPid] || {};
+      const nextAllocations = Object.entries(taskAllocations).reduce<
+        Record<string, Record<string, number>>
+      >((acc, [pid, row]) => {
+        if (pid === fromPid) return acc;
+        acc[pid] = { ...row };
+        return acc;
+      }, {});
+
+      nextAllocations[toPid] = { ...rowToMove };
+
+      setAllocations((prev) => {
+        const prevTask = prev[task.id] || {};
+        const movedRow = prevTask[fromPid] || rowToMove;
+        const { [fromPid]: _, ...rest } = prevTask;
+        return {
+          ...prev,
+          [task.id]: {
+            ...rest,
+            [toPid]: { ...movedRow },
+          },
+        };
+      });
+
+      setParticipantOrders((prev) => {
+        const currentOrder = prev[task.id] || task.participantIds;
+        return {
+          ...prev,
+          [task.id]: currentOrder.map((id) => (id === fromPid ? toPid : id)),
+        };
+      });
+
+      const patch: Partial<BacklogItem> = {
+        participantIds,
+        allocations: nextAllocations,
+      };
+
+      if ((task as any).leaderId === fromPid) {
+        (patch as any).leaderId = toPid;
+      }
+
+      try {
+        await updateField(task, patch);
+      } catch (error) {
+        console.error("Failed to replace participant", error);
+      }
+    },
+    [allocations, updateField]
+  );
+
+  const shiftRow = React.useCallback(
+    (taskId: string, participantId: string, dir: "left" | "right") => {
+      const row = allocations[taskId]?.[participantId] || {};
+      const ids = sprintsGlobalOrdered.map((s) => s.id);
+      if (!ids.length) return;
+
+      const next: Record<string, number> = ids.reduce<Record<string, number>>(
         (acc, sid) => {
           acc[sid] = 0;
           return acc;
@@ -2581,127 +2659,211 @@ export default function BacklogPage() {
         const targetSid =
           targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
         const val = Number(row[fromSid] || 0);
-        nextRow[targetSid] = (nextRow[targetSid] || 0) + val;
+        next[targetSid] = (next[targetSid] || 0) + val;
       }
 
-      nextTaskAllocations[participantId] = nextRow;
-    }
+      setAllocations((prev) => {
+        const prevTask = prev[taskId] || {};
+        return {
+          ...prev,
+          [taskId]: {
+            ...prevTask,
+            [participantId]: next,
+          },
+        };
+      });
 
-    if (!Object.keys(nextTaskAllocations).length) return;
-
-    setAllocations((prev) => {
-      const prevTask = prev[task.id] || {};
-      return {
-        ...prev,
-        [task.id]: { ...prevTask, ...nextTaskAllocations },
-      };
-    });
-
-    (async () => {
-      try {
-        const bulkAllocations = Object.entries(nextTaskAllocations).reduce<
-          Record<string, Record<string, number>>
-        >((acc, [participantId, row]) => {
-          acc[participantId] = ids.reduce<Record<string, number>>(
-            (inner, sid) => {
-              inner[sid] = toInt(Number(row[sid] || 0));
-              return inner;
+      (async () => {
+        try {
+          const bulkAllocations = ids.reduce<Record<string, number>>(
+            (acc, sid) => {
+              acc[sid] = toInt(Number(next[sid] || 0));
+              return acc;
             },
             {}
           );
-          return acc;
-        }, {});
-        await upsertTaskAllocationMulti({
-          taskId: task.id,
-          allocations: bulkAllocations,
-        }).unwrap();
-      } catch (error) {
-        console.error("Failed to bulk save allocations", error);
-      }
-    })();
-  };
+          await upsertTaskAllocationMulti({
+            taskId,
+            allocations: {
+              [participantId]: bulkAllocations,
+            },
+          }).unwrap();
+        } catch (error) {
+          console.error("Failed to bulk save allocations", error);
+        }
+      })();
+    },
+    [allocations, sprintsGlobalOrdered, upsertTaskAllocationMulti]
+  );
 
-  const copyRowToNextQuarter = (taskId: string, participantId: string) => {
-    const row = allocations[taskId]?.[participantId] || {};
-    if (!Object.keys(row).length) return;
+  const shiftTaskAllocations = React.useCallback(
+    (task: BacklogItem, dir: "left" | "right") => {
+      const ids = sprintsGlobalOrdered.map((s) => s.id);
+      if (!ids.length) return;
+      const taskAllocations = allocations[task.id] || {};
+      const participantIds = task.participantIds || [];
+      const nextTaskAllocations: Record<string, Record<string, number>> = {};
 
-    const quartersWithLoad = new Set<string>();
-    for (const [sid, days] of Object.entries(row)) {
-      if (Number(days) > 0) {
-        const sprint = sprintById.get(sid);
-        if (sprint) quartersWithLoad.add(sprint.quarterId);
-      }
-    }
-    if (!quartersWithLoad.size) return;
-
-    let srcQuarterIndex = -1;
-    for (let i = 0; i < quartersSorted.length; i++) {
-      if (quartersWithLoad.has(quartersSorted[i].id)) {
-        srcQuarterIndex = i;
-      }
-    }
-    if (srcQuarterIndex < 0 || srcQuarterIndex >= quartersSorted.length - 1) {
-      return;
-    }
-
-    const srcQuarter = quartersSorted[srcQuarterIndex];
-    const dstQuarter = quartersSorted[srcQuarterIndex + 1];
-
-    const srcSprints = sprintsByQuarter.get(srcQuarter.id) || [];
-    const dstSprints = sprintsByQuarter.get(dstQuarter.id) || [];
-    if (!srcSprints.length || !dstSprints.length) return;
-
-    const maxLen = Math.min(srcSprints.length, dstSprints.length);
-    const nextRow: Record<string, number> = { ...row };
-
-    for (let i = 0; i < maxLen; i++) {
-      const srcSid = srcSprints[i].id;
-      const dstSid = dstSprints[i].id;
-      const val = Number(row[srcSid] || 0);
-      if (val > 0) {
-        nextRow[dstSid] = (nextRow[dstSid] || 0) + val;
-      }
-    }
-
-    setAllocations((prev) => {
-      const prevTask = prev[taskId] || {};
-      return {
-        ...prev,
-        [taskId]: { ...prevTask, [participantId]: nextRow },
-      };
-    });
-
-    (async () => {
-      try {
-        const bulkAllocations = Object.entries(nextRow).reduce<
+      for (const participantId of participantIds) {
+        const row = taskAllocations[participantId] || {};
+        const nextRow: Record<string, number> = ids.reduce<
           Record<string, number>
-        >((acc, [sid, days]) => {
-          acc[sid] = toInt(Number(days) || 0);
+        >((acc, sid) => {
+          acc[sid] = 0;
           return acc;
         }, {});
-        await upsertTaskAllocationBulk({
-          taskId,
-          participantId,
-          allocations: bulkAllocations,
-        }).unwrap();
-      } catch (error) {
-        console.error("Failed to copy allocations to next quarter", error);
+
+        for (let i = 0; i < ids.length; i++) {
+          const fromSid = ids[i];
+          const targetIdx = dir === "left" ? i - 1 : i + 1;
+          const targetSid =
+            targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
+          const val = Number(row[fromSid] || 0);
+          nextRow[targetSid] = (nextRow[targetSid] || 0) + val;
+        }
+
+        nextTaskAllocations[participantId] = nextRow;
       }
-    })();
-  };
 
-  const moveTask = (id: string, dir: "up" | "down") => {
-    const current = filteredTasks.map((t) => t.id);
-    const idx = current.indexOf(id);
-    if (idx < 0) return;
-    const swapIdx = dir === "up" ? idx - 1 : idx + 1;
-    if (swapIdx < 0 || swapIdx >= current.length) return;
-    const A = current[idx];
-    const B = current[swapIdx];
+      if (!Object.keys(nextTaskAllocations).length) return;
 
-    const reordered = arrayMove(current, idx, swapIdx);
-    void persistTaskOrder(reordered, id);
-  };
+      setAllocations((prev) => {
+        const prevTask = prev[task.id] || {};
+        return {
+          ...prev,
+          [task.id]: { ...prevTask, ...nextTaskAllocations },
+        };
+      });
+
+      (async () => {
+        try {
+          const bulkAllocations = Object.entries(nextTaskAllocations).reduce<
+            Record<string, Record<string, number>>
+          >((acc, [participantId, row]) => {
+            acc[participantId] = ids.reduce<Record<string, number>>(
+              (inner, sid) => {
+                inner[sid] = toInt(Number(row[sid] || 0));
+                return inner;
+              },
+              {}
+            );
+            return acc;
+          }, {});
+          await upsertTaskAllocationMulti({
+            taskId: task.id,
+            allocations: bulkAllocations,
+          }).unwrap();
+        } catch (error) {
+          console.error("Failed to bulk save allocations", error);
+        }
+      })();
+    },
+    [allocations, sprintsGlobalOrdered, upsertTaskAllocationMulti]
+  );
+
+  const copyRowToNextQuarter = React.useCallback(
+    (taskId: string, participantId: string) => {
+      const row = allocations[taskId]?.[participantId] || {};
+      if (!Object.keys(row).length) return;
+
+      const quartersWithLoad = new Set<string>();
+      for (const [sid, days] of Object.entries(row)) {
+        if (Number(days) > 0) {
+          const sprint = sprintById.get(sid);
+          if (sprint) quartersWithLoad.add(sprint.quarterId);
+        }
+      }
+      if (!quartersWithLoad.size) return;
+
+      let srcQuarterIndex = -1;
+      for (let i = 0; i < quartersSorted.length; i++) {
+        if (quartersWithLoad.has(quartersSorted[i].id)) {
+          srcQuarterIndex = i;
+        }
+      }
+      if (srcQuarterIndex < 0 || srcQuarterIndex >= quartersSorted.length - 1) {
+        return;
+      }
+
+      const srcQuarter = quartersSorted[srcQuarterIndex];
+      const dstQuarter = quartersSorted[srcQuarterIndex + 1];
+
+      const srcSprints = sprintsByQuarter.get(srcQuarter.id) || [];
+      const dstSprints = sprintsByQuarter.get(dstQuarter.id) || [];
+      if (!srcSprints.length || !dstSprints.length) return;
+
+      const maxLen = Math.min(srcSprints.length, dstSprints.length);
+      const nextRow: Record<string, number> = { ...row };
+
+      for (let i = 0; i < maxLen; i++) {
+        const srcSid = srcSprints[i].id;
+        const dstSid = dstSprints[i].id;
+        const val = Number(row[srcSid] || 0);
+        if (val > 0) {
+          nextRow[dstSid] = (nextRow[dstSid] || 0) + val;
+        }
+      }
+
+      setAllocations((prev) => {
+        const prevTask = prev[taskId] || {};
+        return {
+          ...prev,
+          [taskId]: { ...prevTask, [participantId]: nextRow },
+        };
+      });
+
+      (async () => {
+        try {
+          const bulkAllocations = Object.entries(nextRow).reduce<
+            Record<string, number>
+          >((acc, [sid, days]) => {
+            acc[sid] = toInt(Number(days) || 0);
+            return acc;
+          }, {});
+          await upsertTaskAllocationBulk({
+            taskId,
+            participantId,
+            allocations: bulkAllocations,
+          }).unwrap();
+        } catch (error) {
+          console.error("Failed to copy allocations to next quarter", error);
+        }
+      })();
+    },
+    [
+      allocations,
+      sprintById,
+      quartersSorted,
+      sprintsByQuarter,
+      upsertTaskAllocationBulk,
+    ]
+  );
+
+  const moveTask = React.useCallback(
+    (id: string, dir: "up" | "down") => {
+      const current = filteredTasks.map((t) => t.id);
+      const idx = current.indexOf(id);
+      if (idx < 0) return;
+      const swapIdx = dir === "up" ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= current.length) return;
+
+      const reordered = arrayMove(current, idx, swapIdx);
+      void persistTaskOrder(reordered, id);
+    },
+    [filteredTasks, persistTaskOrder]
+  );
+
+  const handleParticipantOrderChange = React.useCallback(
+    (taskId: string, order: string[]) => {
+      setParticipantOrders((prev) => {
+        const current = prev[taskId];
+        if (current && shallowArrayEqual(current, order)) return prev;
+        return { ...prev, [taskId]: order };
+      });
+      applyParticipantOrderOptimistic(taskId, order);
+    },
+    [applyParticipantOrderOptimistic]
+  );
 
   const toggleParticipantsVisibility = React.useCallback(
     (taskId: string, hidden: boolean) => {
@@ -2740,47 +2902,6 @@ export default function BacklogPage() {
     writeLS(LS_HIDDEN_PARTICIPANTS, []);
     setHiddenParticipantsTaskIds(new Set());
   }, [showsHideAll, dispatch]);
-
-  const taskSensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    })
-  );
-  const participantSensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
-    })
-  );
-
-  const activeTask = React.useMemo(
-    () => filteredTasks.find((t) => t.id === activeTaskId) || null,
-    [activeTaskId, filteredTasks]
-  );
-
-  const handleTaskDragStart = React.useCallback((event: DragStartEvent) => {
-    setActiveTaskId(String(event.active.id));
-  }, []);
-
-  const handleTaskDragCancel = React.useCallback(() => {
-    setActiveTaskId(null);
-  }, []);
-
-  const handleTaskDragEnd = React.useCallback(
-    (event: DragEndEvent) => {
-      const { active, over } = event;
-      setActiveTaskId(null);
-      if (!over || active.id === over.id) return;
-
-      const currentIds = filteredTasks.map((t) => t.id);
-      const oldIndex = currentIds.indexOf(String(active.id));
-      const newIndex = currentIds.indexOf(String(over.id));
-      if (oldIndex < 0 || newIndex < 0) return;
-
-      const reordered = arrayMove(currentIds, oldIndex, newIndex);
-      void persistTaskOrder(reordered, String(active.id));
-    },
-    [filteredTasks, persistTaskOrder]
-  );
 
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
@@ -2972,105 +3093,43 @@ export default function BacklogPage() {
         </Box>
 
         {/* Список задач с DnD */}
-        <DndContext
-          sensors={taskSensors}
-          collisionDetection={closestCenter}
-          onDragStart={handleTaskDragStart}
-          onDragEnd={handleTaskDragEnd}
-          onDragCancel={handleTaskDragCancel}
-        >
-          <SortableContext
-            items={filteredTasks.map((t) => t.id)}
-            strategy={verticalListSortingStrategy}
-          >
-            <Stack spacing={2}>
-              {filteredTasks.map((t) => {
-                const allocationsByParticipant =
-                  allocations[t.id] || EMPTY_ALLOCATIONS_ROW;
-                const participantOrder = participantOrders[t.id] || [];
-
-                return (
-                  <SortableTaskCard key={t.id} task={t}>
-                    {(dragProps) => (
-                      <TaskCard
-                        task={t}
-                        allocationsByParticipant={allocationsByParticipant}
-                        participants={participants}
-                        participantMap={participantMap}
-                        participantOrder={participantOrder}
-                        sprintsGlobalOrdered={sprintsGlobalOrdered}
-                        sprintsByQuarter={sprintsByQuarter}
-                        quartersSorted={quartersSorted}
-                        selectedQuarterIds={selectedQuarterIds}
-                        quarterFilterOptions={quarterFilterOptions}
-                        customerOptions={customerOptions}
-                        streamOptions={streamOptions}
-                        releaseOptions={releaseFilterOptions}
-                        participantSensors={participantSensors}
-                        onStatusChange={handleStatusChange}
-                        onPriorityChange={handlePriorityChange}
-                        onUpdateTaskPatch={handleUpdateTaskPatch}
-                        onDuplicateTask={duplicateTask}
-                        onMoveTask={moveTask}
-                        onRemoveTask={removeTask}
-                        onChangeTaskQuarters={updateTaskQuarters}
-                        getTaskQuarters={getTaskQuarters}
-                        onAllocChange={handleAllocChange}
-                        onAllocCommit={commitCell}
-                        onShiftRow={shiftRow}
-                        onShiftTaskAllocations={shiftTaskAllocations}
-                        onCopyRowToNextQuarter={copyRowToNextQuarter}
-                        onAddParticipant={addParticipantToTask}
-                        onRemoveParticipant={removeParticipantFromTask}
-                        onChangeParticipant={replaceParticipantInTask}
-                        onParticipantOrderChange={(taskId, order) => {
-                          setParticipantOrders((prev) => ({
-                            ...prev,
-                            [taskId]: order,
-                          }));
-                          applyParticipantOrderOptimistic(taskId, order);
-                        }}
-                        hiddenParticipants={
-                          hideAllParticipants
-                            ? !hiddenParticipantsTaskIds.has(t.id)
-                            : hiddenParticipantsTaskIds.has(t.id)
-                        }
-                        onToggleParticipantsVisibility={
-                          toggleParticipantsVisibility
-                        }
-                        dragHandle={dragProps}
-                      />
-                    )}
-                  </SortableTaskCard>
-                );
-              })}
-
-              {!filteredTasks.length && !isFetching && (
-                <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
-                  <Typography color="text.secondary">
-                    Нет задач по текущим фильтрам
-                  </Typography>
-                </Paper>
-              )}
-            </Stack>
-          </SortableContext>
-
-          <DragOverlay dropAnimation={null}>
-            {activeTask ? (
-              <Paper variant="outlined" sx={{ p: 1.5, maxWidth: 960 }}>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <DragIndicator fontSize="small" color="disabled" />
-                  <Stack spacing={0.25}>
-                    <Typography fontWeight={700}>{activeTask.title}</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {activeTask.streams?.join(", ") || "Без стрима"}
-                    </Typography>
-                  </Stack>
-                </Stack>
-              </Paper>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
+        <TaskCardsList
+          tasks={filteredTasks}
+          allocations={allocations}
+          participantOrders={participantOrders}
+          hideAllParticipants={hideAllParticipants}
+          hiddenParticipantsTaskIds={hiddenParticipantsTaskIds}
+          isFetching={isFetching}
+          onPersistTaskOrder={persistTaskOrder}
+          participants={participants}
+          participantMap={participantMap}
+          sprintsGlobalOrdered={sprintsGlobalOrdered}
+          sprintsByQuarter={sprintsByQuarter}
+          quartersSorted={quartersSorted}
+          selectedQuarterIds={selectedQuarterIds}
+          quarterFilterOptions={quarterFilterOptions}
+          customerOptions={customerOptions}
+          streamOptions={streamOptions}
+          releaseOptions={releaseFilterOptions}
+          onStatusChange={handleStatusChange}
+          onPriorityChange={handlePriorityChange}
+          onUpdateTaskPatch={handleUpdateTaskPatch}
+          onDuplicateTask={duplicateTask}
+          onMoveTask={moveTask}
+          onRemoveTask={removeTask}
+          onChangeTaskQuarters={updateTaskQuarters}
+          getTaskQuarters={getTaskQuarters}
+          onAllocChange={handleAllocChange}
+          onAllocCommit={commitCell}
+          onShiftRow={shiftRow}
+          onShiftTaskAllocations={shiftTaskAllocations}
+          onCopyRowToNextQuarter={copyRowToNextQuarter}
+          onAddParticipant={addParticipantToTask}
+          onRemoveParticipant={removeParticipantFromTask}
+          onChangeParticipant={replaceParticipantInTask}
+          onParticipantOrderChange={handleParticipantOrderChange}
+          onToggleParticipantsVisibility={toggleParticipantsVisibility}
+        />
 
         <Stack
           direction={{ xs: "column", sm: "row" }}

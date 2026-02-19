@@ -1,110 +1,110 @@
---liquibase formatted sql
+-- --liquibase formatted sql
 
---changeset sprints:1.0.0-1
-CREATE TABLE quarters (
-    id UUID PRIMARY KEY,
-    year INT NOT NULL,
-    number SMALLINT NOT NULL CHECK (number BETWEEN 1 AND 4),
-    name TEXT NOT NULL UNIQUE,
-    start_date DATE NOT NULL,
-    end_date DATE NOT NULL,
-    CONSTRAINT quarters_dates_chk CHECK (start_date <= end_date)
-);
+-- --changeset sprints:1.0.0-1
+-- CREATE TABLE quarters (
+--     id UUID PRIMARY KEY,
+--     year INT NOT NULL,
+--     number SMALLINT NOT NULL CHECK (number BETWEEN 1 AND 4),
+--     name TEXT NOT NULL UNIQUE,
+--     start_date DATE NOT NULL,
+--     end_date DATE NOT NULL,
+--     CONSTRAINT quarters_dates_chk CHECK (start_date <= end_date)
+-- );
 
-CREATE TABLE sprints (
-    id UUID PRIMARY KEY,
-    quarter_id UUID NOT NULL REFERENCES quarters(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    start_date DATE NOT NULL,
-    end_date DATE NOT NULL,
-    working_days INT NOT NULL,
-    "order" INT NOT NULL,
-    CONSTRAINT sprints_dates_chk CHECK (start_date <= end_date)
-);
-CREATE INDEX sprints_quarter_idx ON sprints(quarter_id);
-CREATE INDEX sprints_enddate_idx ON sprints(end_date);
+-- CREATE TABLE sprints (
+--     id UUID PRIMARY KEY,
+--     quarter_id UUID NOT NULL REFERENCES quarters(id) ON DELETE CASCADE,
+--     name TEXT NOT NULL,
+--     start_date DATE NOT NULL,
+--     end_date DATE NOT NULL,
+--     working_days INT NOT NULL,
+--     "order" INT NOT NULL,
+--     CONSTRAINT sprints_dates_chk CHECK (start_date <= end_date)
+-- );
+-- CREATE INDEX sprints_quarter_idx ON sprints(quarter_id);
+-- CREATE INDEX sprints_enddate_idx ON sprints(end_date);
 
-CREATE TABLE participants (
-    id UUID PRIMARY KEY,
-    full_name TEXT NOT NULL,
-    role TEXT NOT NULL,
-    rate NUMERIC(4,2) NOT NULL CHECK (rate >= 0 AND rate <= 1),
-    display_order INT NOT NULL
-);
-CREATE INDEX participants_role_idx ON participants(role);
+-- CREATE TABLE participants (
+--     id UUID PRIMARY KEY,
+--     full_name TEXT NOT NULL,
+--     role TEXT NOT NULL,
+--     rate NUMERIC(4,2) NOT NULL CHECK (rate >= 0 AND rate <= 1),
+--     display_order INT NOT NULL
+-- );
+-- CREATE INDEX participants_role_idx ON participants(role);
 
-CREATE TABLE run_vacation (
-    participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-    sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
-    run_days INT NOT NULL DEFAULT 0,
-    vacation_norm_days INT NOT NULL DEFAULT 0,
-    PRIMARY KEY (participant_id, sprint_id)
-);
-CREATE INDEX runvac_sprint_idx ON run_vacation(sprint_id);
+-- CREATE TABLE run_vacation (
+--     participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+--     sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
+--     run_days INT NOT NULL DEFAULT 0,
+--     vacation_norm_days INT NOT NULL DEFAULT 0,
+--     PRIMARY KEY (participant_id, sprint_id)
+-- );
+-- CREATE INDEX runvac_sprint_idx ON run_vacation(sprint_id);
 
-CREATE TABLE tasks (
-    id UUID PRIMARY KEY,
-    title TEXT NOT NULL,
-    dod TEXT NOT NULL DEFAULT '',
-    priority SMALLINT NOT NULL CHECK (priority IN (1,2,3)),
-    customer TEXT NOT NULL DEFAULT '',
-    stream TEXT NOT NULL DEFAULT '',
-    release_date DATE,
-    release_sprint_id UUID REFERENCES sprints(id),
-    notes JSONB,
-    created_at DATE NOT NULL,
-    updated_at DATE NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    leader_participant_id UUID REFERENCES participants(id)
-);
-CREATE INDEX tasks_priority_idx ON tasks(priority);
-CREATE INDEX tasks_stream_idx ON tasks(stream);
-CREATE INDEX tasks_release_sprint_idx ON tasks(release_sprint_id);
+-- CREATE TABLE tasks (
+--     id UUID PRIMARY KEY,
+--     title TEXT NOT NULL,
+--     dod TEXT NOT NULL DEFAULT '',
+--     priority SMALLINT NOT NULL CHECK (priority IN (1,2,3)),
+--     customer TEXT NOT NULL DEFAULT '',
+--     stream TEXT NOT NULL DEFAULT '',
+--     release_date DATE,
+--     release_sprint_id UUID REFERENCES sprints(id),
+--     notes JSONB,
+--     created_at DATE NOT NULL,
+--     updated_at DATE NOT NULL,
+--     description TEXT NOT NULL DEFAULT '',
+--     leader_participant_id UUID REFERENCES participants(id)
+-- );
+-- CREATE INDEX tasks_priority_idx ON tasks(priority);
+-- CREATE INDEX tasks_stream_idx ON tasks(stream);
+-- CREATE INDEX tasks_release_sprint_idx ON tasks(release_sprint_id);
 
-CREATE TABLE task_participants (
-    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-    display_order INT NOT NULL DEFAULT 0,
-    PRIMARY KEY (task_id, participant_id)
-);
+-- CREATE TABLE task_participants (
+--     task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+--     participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+--     display_order INT NOT NULL DEFAULT 0,
+--     PRIMARY KEY (task_id, participant_id)
+-- );
 
-CREATE TABLE task_loads (
-    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
-    days NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
-    PRIMARY KEY (task_id, sprint_id)
-);
-CREATE INDEX task_loads_sprint_idx ON task_loads(sprint_id);
+-- CREATE TABLE task_loads (
+--     task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+--     sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
+--     days NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+--     PRIMARY KEY (task_id, sprint_id)
+-- );
+-- CREATE INDEX task_loads_sprint_idx ON task_loads(sprint_id);
 
-CREATE TABLE task_allocations (
-    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-    sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
-    days NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
-    PRIMARY KEY (task_id, participant_id, sprint_id)
-);
-CREATE INDEX task_alloc_sprint_idx ON task_allocations(sprint_id);
-CREATE INDEX task_alloc_participant_idx ON task_allocations(participant_id);
+-- CREATE TABLE task_allocations (
+--     task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+--     participant_id UUID NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+--     sprint_id UUID NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
+--     days NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+--     PRIMARY KEY (task_id, participant_id, sprint_id)
+-- );
+-- CREATE INDEX task_alloc_sprint_idx ON task_allocations(sprint_id);
+-- CREATE INDEX task_alloc_participant_idx ON task_allocations(participant_id);
 
-CREATE TABLE releases (
-    id UUID PRIMARY KEY,
-    name TEXT,
-    prom_date DATE NOT NULL,
-    psi_date DATE,
-    ops_start DATE,
-    ops_end DATE,
-    regress_start DATE,
-    regress_end DATE,
-    ff_date DATE,
-    ff_inner_date DATE,
-    ift_start DATE,
-    ift_end DATE,
-    build_date DATE,
-    cr_date DATE,
-    dev_start DATE,
-    dev_end DATE,
-    st_date DATE,
-    created_at DATE NOT NULL,
-    updated_at DATE NOT NULL
-);
-CREATE INDEX releases_prom_idx ON releases(prom_date);
+-- CREATE TABLE releases (
+--     id UUID PRIMARY KEY,
+--     name TEXT,
+--     prom_date DATE NOT NULL,
+--     psi_date DATE,
+--     ops_start DATE,
+--     ops_end DATE,
+--     regress_start DATE,
+--     regress_end DATE,
+--     ff_date DATE,
+--     ff_inner_date DATE,
+--     ift_start DATE,
+--     ift_end DATE,
+--     build_date DATE,
+--     cr_date DATE,
+--     dev_start DATE,
+--     dev_end DATE,
+--     st_date DATE,
+--     created_at DATE NOT NULL,
+--     updated_at DATE NOT NULL
+-- );
+-- CREATE INDEX releases_prom_idx ON releases(prom_date);

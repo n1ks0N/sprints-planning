@@ -345,6 +345,22 @@ const applySprintLoad = (task: BacklogItem, sprintId: string, days: number) => {
   task.updatedAt = new Date().toISOString().slice(0, 10);
 };
 
+const TASK_LIST_AFFECTING_FIELDS = new Set([
+  "quarterIds",
+  "priority",
+  "status",
+  "releaseDateId",
+  "streams",
+  "customers",
+  "participantIds",
+  "title",
+  "description",
+  "dod",
+]);
+
+const shouldInvalidateTaskList = (arg: Partial<BacklogItem> & { id: string }) =>
+  Object.keys(arg).some((key) => TASK_LIST_AFFECTING_FIELDS.has(key));
+
 export const api = createApi({
   reducerPath: "api",
   baseQuery,
@@ -993,18 +1009,16 @@ export const api = createApi({
       {
         query: (body) => ({ url: "/tasks/update", method: "POST", body }),
         invalidatesTags: (result, error, arg) => [
-          { type: "Task" as const, id: arg.id },
-          { type: "Task" as const, id: "LIST" as const },
+          ...(shouldInvalidateTaskList(arg)
+            ? [{ type: "Task" as const, id: "LIST" as const }]
+            : []),
           { type: "Capacity" as const, id: "LIST" as const },
         ],
         async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
           const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
             getState,
             "getTasks",
-            [
-              { type: "Task", id: "LIST" },
-              { type: "Task", id: arg.id },
-            ]
+            [{ type: "Task", id: arg.id }]
           );
 
           const patches = applyPatches(
@@ -1097,19 +1111,12 @@ export const api = createApi({
       { taskId: string; participantId: string; sprintId: string; days: number }
     >({
       query: (body) => ({ url: "/taskalloc", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
-        { type: "Task" as const, id: arg.taskId },
-        { type: "Task" as const, id: "LIST" as const },
-        { type: "Capacity" as const, id: "LIST" as const },
-      ],
+      invalidatesTags: [{ type: "Capacity" as const, id: "LIST" as const }],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
           getState,
           "getTasks",
-          [
-            { type: "Task", id: "LIST" },
-            { type: "Task", id: arg.taskId },
-          ]
+          [{ type: "Task", id: arg.taskId }]
         );
 
         const patches = applyPatches(
@@ -1164,19 +1171,12 @@ export const api = createApi({
       { taskId: string; participantId: string; allocations: Record<string, number> }
     >({
       query: (body) => ({ url: "/taskalloc/bulk", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
-        { type: "Task" as const, id: arg.taskId },
-        { type: "Task" as const, id: "LIST" as const },
-        { type: "Capacity" as const, id: "LIST" as const },
-      ],
+      invalidatesTags: [{ type: "Capacity" as const, id: "LIST" as const }],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
           getState,
           "getTasks",
-          [
-            { type: "Task", id: "LIST" },
-            { type: "Task", id: arg.taskId },
-          ]
+          [{ type: "Task", id: arg.taskId }]
         );
 
         const patches = applyPatches(
@@ -1225,19 +1225,12 @@ export const api = createApi({
       { taskId: string; allocations: Record<string, Record<string, number>> }
     >({
       query: (body) => ({ url: "/taskalloc/bulk/multi", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
-        { type: "Task" as const, id: arg.taskId },
-        { type: "Task" as const, id: "LIST" as const },
-        { type: "Capacity" as const, id: "LIST" as const },
-      ],
+      invalidatesTags: [{ type: "Capacity" as const, id: "LIST" as const }],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
           getState,
           "getTasks",
-          [
-            { type: "Task", id: "LIST" },
-            { type: "Task", id: arg.taskId },
-          ]
+          [{ type: "Task", id: arg.taskId }]
         );
 
         const patches = applyPatches(
@@ -1293,19 +1286,12 @@ export const api = createApi({
       { taskId: string; sprintId: string; days: number }
     >({
       query: (body) => ({ url: "/taskload", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
-        { type: "Task" as const, id: arg.taskId },
-        { type: "Task" as const, id: "LIST" as const },
-        { type: "Capacity" as const, id: "LIST" as const },
-      ],
+      invalidatesTags: [{ type: "Capacity" as const, id: "LIST" as const }],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
           getState,
           "getTasks",
-          [
-            { type: "Task", id: "LIST" },
-            { type: "Task", id: arg.taskId },
-          ]
+          [{ type: "Task", id: arg.taskId }]
         );
 
         const patches = applyPatches(
