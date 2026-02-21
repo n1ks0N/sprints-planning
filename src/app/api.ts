@@ -9,6 +9,7 @@ import type {
   Page,
   Release,
   ApiSessionHistory,
+  TaskHistoryItem,
   Team,
   FiltersData,
 } from "../types";
@@ -941,6 +942,20 @@ export const api = createApi({
         { type: "Task" as const, id: "LIST" as const },
       ],
     }),
+    getTaskHistory: b.query<
+      Page<TaskHistoryItem>,
+      { taskId: string; page: number; size: number }
+    >({
+      query: ({ taskId, page, size }) => ({
+        url: `/tasks/${taskId}/history`,
+        method: "GET",
+        params: { page, size },
+      }),
+      providesTags: (_result, _error, arg) => [
+        { type: "Task" as const, id: arg.taskId },
+      ],
+      keepUnusedDataFor: 0,
+    }),
     addTask: b.mutation<BacklogItem, Partial<BacklogItem>>({
       query: (body) => ({ url: "/tasks", method: "POST", body }),
       invalidatesTags: (result) => [
@@ -1628,6 +1643,7 @@ export const {
   useGetCapacityQuery,
 
   useGetTaskQuery,
+  useGetTaskHistoryQuery,
   useGetTasksQuery,
   useAddTaskMutation,
   useUpdateTaskMutation,

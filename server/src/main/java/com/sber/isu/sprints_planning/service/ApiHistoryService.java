@@ -2,6 +2,8 @@ package com.sber.isu.sprints_planning.service;
 
 import com.sber.isu.sprints_planning.dto.ApiCallHistoryDto;
 import com.sber.isu.sprints_planning.dto.ApiSessionHistoryDto;
+import com.sber.isu.sprints_planning.dto.TaskHistoryChangeDto;
+import com.sber.isu.sprints_planning.dto.TaskHistoryItemDto;
 import com.sber.isu.sprints_planning.mapper.DtoMapper;
 import com.sber.isu.sprints_planning.model.ApiCallHistoryEntity;
 import com.sber.isu.sprints_planning.repository.ApiCallHistoryRepository;
@@ -13,17 +15,26 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @Service
 public class ApiHistoryService {
 
     private static final Logger logger = LoggerFactory.getLogger(ApiHistoryService.class);
+    private static final String TASK_ENTITY_TYPE = "task";
 
     private final ApiCallHistoryRepository historyRepository;
     private final ApiActionDescriptionResolver actionDescriptionResolver;
@@ -100,6 +111,63 @@ public class ApiHistoryService {
         }
 
         return paginate(result, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<TaskHistoryItemDto> getTaskHistory(String teamKey, UUID taskId, int page, int size) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, size);
+        Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt"));
+        return historyRepository
+            .findAllByTeamKeyAndEntityTypeAndEntityId(teamKey, TASK_ENTITY_TYPE, taskId, pageable)
+            .map(this::toTaskHistoryItemDto);
+    }
+
+    @Transactional
+    public void logTaskChange(
+        String teamKey,
+        UUID taskId,
+        String eventType,
+        String action,
+        List<TaskHistoryChangeDto> changes,
+        Map<String, Object> meta
+    ) {
+        HttpServletRequest request = currentRequest();
+        if (request == null || taskId == null) {
+            return;
+        }
+
+        String sessionId = request.getHeader("X-Session-Id");
+        String userName = decodeUserName(request.getHeader("X-User-Name"));
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+
+        ApiCallHistoryEntity entity = new ApiCallHistoryEntity();
+        entity.setSessionId(sessionId);
+        entity.setUserName(userName == null || userName.isBlank() ? "unknown" : userName);
+        entity.setHttpMethod(request.getMethod());
+        String path = extractPath(request);
+        entity.setPath(path);
+        if (action != null && !action.isBlank()) {
+            entity.setAction(action);
+        } else {
+            entity.setAction(actionDescriptionResolver.resolve(entity.getHttpMethod(), path));
+        }
+        entity.setStatusCode(200);
+        entity.setCreatedAt(OffsetDateTime.now());
+        entity.setTeamKey(teamKey);
+        entity.setEntityType(TASK_ENTITY_TYPE);
+        entity.setEntityId(taskId);
+        entity.setEventType(eventType);
+        entity.setChangesJson(buildChangesJson(changes));
+        entity.setMetaJson(meta == null ? Map.of() : new LinkedHashMap<>(meta));
+
+        try {
+            historyRepository.save(entity);
+        } catch (Exception e) {
+            logger.warn("Failed to persist task change history", e);
+        }
     }
 
     private String decodeUserName(String rawHeader) {
@@ -184,7 +252,88 @@ public class ApiHistoryService {
     }
 
     private boolean isAction(ApiCallHistoryEntity entity) {
-        return !"GET".equalsIgnoreCase(entity.getHttpMethod());
+        if ("GET".equalsIgnoreCase(entity.getHttpMethod())) {
+            return false;
+        }
+        return entity.getEntityType() == null || entity.getEntityType().isBlank();
+    }
+
+    private TaskHistoryItemDto toTaskHistoryItemDto(ApiCallHistoryEntity entity) {
+        List<TaskHistoryChangeDto> changes = extractChanges(entity.getChangesJson());
+        Map<String, Object> meta = entity.getMetaJson() == null
+            ? Map.of()
+            : new LinkedHashMap<>(entity.getMetaJson());
+
+        return new TaskHistoryItemDto(
+            entity.getId(),
+            entity.getEntityId() != null ? entity.getEntityId().toString() : null,
+            entity.getEventType(),
+            entity.getAction(),
+            entity.getUserName(),
+            entity.getSessionId(),
+            entity.getStatusCode(),
+            entity.getCreatedAt(),
+            changes,
+            meta
+        );
+    }
+
+    private List<TaskHistoryChangeDto> extractChanges(Map<String, Object> changesJson) {
+        if (changesJson == null || changesJson.isEmpty()) {
+            return List.of();
+        }
+        Object rawChanges = changesJson.get("changes");
+        if (!(rawChanges instanceof List<?> list) || list.isEmpty()) {
+            return List.of();
+        }
+        List<TaskHistoryChangeDto> result = new ArrayList<>();
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> changeMap)) {
+                continue;
+            }
+            String field = asString(changeMap.get("field"));
+            String label = asString(changeMap.get("label"));
+            Object before = changeMap.get("before");
+            Object after = changeMap.get("after");
+            result.add(new TaskHistoryChangeDto(field, label, before, after));
+        }
+        return result;
+    }
+
+    private Map<String, Object> buildChangesJson(List<TaskHistoryChangeDto> changes) {
+        List<Map<String, Object>> list = new ArrayList<>();
+        if (changes != null) {
+            for (TaskHistoryChangeDto change : changes) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("field", change.field());
+                item.put("label", change.label());
+                item.put("before", change.before());
+                item.put("after", change.after());
+                list.add(item);
+            }
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("version", 1);
+        payload.put("changes", list);
+        return payload;
+    }
+
+    private String asString(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof String stringValue) {
+            return stringValue;
+        }
+        return String.valueOf(value);
+    }
+
+    private HttpServletRequest currentRequest() {
+        var requestAttributes = RequestContextHolder.getRequestAttributes();
+        if (!(requestAttributes instanceof ServletRequestAttributes servletAttributes)) {
+            return null;
+        }
+        return servletAttributes.getRequest();
     }
 
     private String extractPath(HttpServletRequest request) {

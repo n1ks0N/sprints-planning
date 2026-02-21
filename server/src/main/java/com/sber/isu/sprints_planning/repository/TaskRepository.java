@@ -46,6 +46,8 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID>, TaskRep
         "participants",
         "participants.participant",
         "participants.participant.userStreams",
+        "customers",
+        "streams",
         "loads",
         "loads.sprint",
         "allocations",

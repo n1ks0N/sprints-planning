@@ -147,6 +147,26 @@ export type ApiSessionHistory = {
   actions: ApiHistoryAction[];
 };
 
+export type TaskHistoryChange = {
+  field: string;
+  label: string;
+  before: unknown;
+  after: unknown;
+};
+
+export type TaskHistoryItem = {
+  id: string;
+  taskId: string | null;
+  eventType: string | null;
+  action: string;
+  userName: string;
+  sessionId: string;
+  statusCode: number;
+  createdAt: string;
+  changes: TaskHistoryChange[];
+  meta: Record<string, unknown>;
+};
+
 export type Team = {
   key: string;
   name: string;

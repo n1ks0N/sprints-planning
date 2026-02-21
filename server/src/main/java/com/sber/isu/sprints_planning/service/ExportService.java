@@ -14,7 +14,6 @@ import com.sber.isu.sprints_planning.model.TaskEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadEntity;
 import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
 import com.sber.isu.sprints_planning.model.TaskStreamEntity;
-import com.sber.isu.sprints_planning.repository.ApiCallHistoryRepository;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
 import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
@@ -47,7 +46,6 @@ import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.VerticalAlignment;
 import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -61,23 +59,17 @@ public class ExportService {
     private final SprintRepository sprintRepository;
     private final ParticipantRepository participantRepository;
     private final TaskRepository taskRepository;
-    private final CapacityService capacityService;
-    private final ApiCallHistoryRepository apiCallHistoryRepository;
 
     public ExportService(
         QuarterRepository quarterRepository,
         SprintRepository sprintRepository,
         ParticipantRepository participantRepository,
-        TaskRepository taskRepository,
-        CapacityService capacityService,
-        ApiCallHistoryRepository apiCallHistoryRepository
+        TaskRepository taskRepository
     ) {
         this.quarterRepository = quarterRepository;
         this.sprintRepository = sprintRepository;
         this.participantRepository = participantRepository;
         this.taskRepository = taskRepository;
-        this.capacityService = capacityService;
-        this.apiCallHistoryRepository = apiCallHistoryRepository;
     }
 
     @Transactional
@@ -101,25 +93,8 @@ public class ExportService {
                 .collect(Collectors.toMap(ParticipantEntity::getId, p -> p, (a, b) -> a, LinkedHashMap::new));
 
             List<TaskEntity> tasks = taskRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
-            int backlogFilterRows = countBacklogFilterRows(tasks, participantIndex);
-            List<CapacityRowDto> capacityRows = capacityService.calculate(
-                teamKey,
-                List.of(),
-                List.of(),
-                List.of(),
-                List.of()
-            );
-            List<ApiCallHistoryEntity> historyEntries = apiCallHistoryRepository.findAllByTeamKey(
-                teamKey,
-                Sort.by(Sort.Direction.DESC, "createdAt")
-            );
-
-            writeReadmeSheet(workbook, styles, teamKey, tasks, backlogFilterRows, capacityRows, historyEntries);
             writeViewBacklogSheet(workbook, styles, sprintIndex, quarterIndex, participantIndex, tasks);
             writeViewBacklogFilterSheet(workbook, styles, sprintIndex, quarterIndex, participantIndex, tasks);
-            writeViewCapacitySheet(workbook, styles, sprintIndex, quarterIndex, capacityRows);
-            writeViewParticipantsSheet(workbook, styles, sprintIndex, quarterIndex, participantIndex, tasks);
-            writeViewHistorySheet(workbook, styles, historyEntries);
 
             workbook.write(out);
             return out.toByteArray();
@@ -360,13 +335,12 @@ public class ExportService {
         Map<UUID, ParticipantEntity> participantIndex,
         List<TaskEntity> tasks
     ) {
-        final int columns = 17;
+        final int columns = 16;
         Sheet sheet = workbook.createSheet("View_Бэклог");
         Row header = sheet.createRow(0);
         createHeaderCells(
             header,
             styles.header(),
-            "ID",
             "Порядок",
             "Название",
             "Приоритет",
@@ -389,7 +363,6 @@ public class ExportService {
         for (TaskEntity task : tasks) {
             Row row = sheet.createRow(rowIdx++);
             int col = 0;
-            row.createCell(col++).setCellValue(task.getId().toString());
             setIntegerCell(row, col++, task.getDisplayOrder(), styles.integer());
             row.createCell(col++).setCellValue(nullToEmpty(task.getTitle()));
             setIntegerCell(row, col++, task.getPriority(), styles.integer());
@@ -423,13 +396,12 @@ public class ExportService {
         Map<UUID, ParticipantEntity> participantIndex,
         List<TaskEntity> tasks
     ) {
-        final int columns = 16;
+        final int columns = 14;
         Sheet sheet = workbook.createSheet("View_Бэклог_Фильтр");
         Row header = sheet.createRow(0);
         createHeaderCells(
             header,
             styles.header(),
-            "ID",
             "Порядок",
             "Название",
             "Статус",
@@ -438,7 +410,6 @@ public class ExportService {
             "Релизный спринт",
             "Дата релиза",
             "Кварталы по нагрузке",
-            "Участник ID",
             "Участник",
             "Роль участника",
             "Заказчик",
@@ -457,14 +428,13 @@ public class ExportService {
                 }
                 participantsForRows.add(
                     new FilterParticipantRow(
-                        participant.getId().toString(),
                         nullToEmpty(participant.getFullName()),
                         nullToEmpty(participant.getRole())
                     )
                 );
             }
             if (participantsForRows.isEmpty()) {
-                participantsForRows.add(new FilterParticipantRow("", PLACEHOLDER_NO_PARTICIPANT, ""));
+                participantsForRows.add(new FilterParticipantRow(PLACEHOLDER_NO_PARTICIPANT, ""));
             }
 
             List<String> customersForRows = withFallbackValue(collectTaskCustomers(task), PLACEHOLDER_NO_CUSTOMER);
@@ -476,7 +446,6 @@ public class ExportService {
                     for (String stream : streamsForRows) {
                         Row row = sheet.createRow(rowIdx++);
                         int col = 0;
-                        row.createCell(col++).setCellValue(task.getId().toString());
                         setIntegerCell(row, col++, task.getDisplayOrder(), styles.integer());
                         row.createCell(col++).setCellValue(nullToEmpty(task.getTitle()));
                         row.createCell(col++).setCellValue(nullToEmpty(task.getStatus()));
@@ -485,7 +454,6 @@ public class ExportService {
                         row.createCell(col++).setCellValue(resolveReleaseSprintName(task, sprintIndex));
                         setDateCell(row, col++, resolveReleasePromDate(task), styles.date());
                         row.createCell(col++).setCellValue(joinTaskQuarterNames(task, sprintIndex, quarterIndex));
-                        row.createCell(col++).setCellValue(nullToEmpty(participant.id()));
                         row.createCell(col++).setCellValue(nullToEmpty(participant.name()));
                         row.createCell(col++).setCellValue(nullToEmpty(participant.role()));
                         row.createCell(col++).setCellValue(nullToEmpty(customer));
@@ -1475,7 +1443,10 @@ public class ExportService {
     }
 
     private boolean isActionHistory(ApiCallHistoryEntity entity) {
-        return !"GET".equalsIgnoreCase(entity.getHttpMethod());
+        if ("GET".equalsIgnoreCase(entity.getHttpMethod())) {
+            return false;
+        }
+        return entity.getEntityType() == null || entity.getEntityType().isBlank();
     }
 
     private UUID parseUuid(String value) {
@@ -1534,6 +1505,6 @@ public class ExportService {
     ) {
     }
 
-    private record FilterParticipantRow(String id, String name, String role) {
+    private record FilterParticipantRow(String name, String role) {
     }
 }

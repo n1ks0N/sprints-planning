@@ -15,8 +15,9 @@ import {
   Button,
   Stack,
   Tooltip,
-  Box,
+  IconButton,
 } from "@mui/material";
+import { Visibility, VisibilityOff } from "@mui/icons-material";
 
 import TimeSetupPage from "./TimeSetupPage";
 import TeamPage from "./TeamPage";
@@ -43,6 +44,7 @@ import { PAGE_TITLES, buildTabTitle } from "../constants/pageTitles";
 import PageHelpDialog, {
   PageHelpContent,
 } from "../components/PageHelpDialog";
+import { setBacklogFilters } from "../app/uiSlice";
 
 function Hotkeys() {
   const dispatch = useDispatch();
@@ -68,6 +70,9 @@ function TeamScopedApp() {
   const location = useLocation();
   const dispatch = useDispatch();
   const teams = useSelector(selectAvailableTeams);
+  const hideAllParticipants = useSelector(
+    (state: any) => state.ui?.backlog?.hideAllParticipants ?? false
+  );
   const normalizedParam = (rawTeamKey || DEFAULT_TEAM_KEY).toLowerCase();
   const teamKey = teams.some((team) => team.key === normalizedParam)
     ? normalizedParam
@@ -80,6 +85,7 @@ function TeamScopedApp() {
     const trimmed = currentPathSuffix.replace(/\/$/, "");
     return trimmed === "" ? "/" : trimmed;
   }, [currentPathSuffix]);
+  const isBacklogPage = normalizedPathSuffix === "/";
 
   const teamScopedPageTitle = React.useMemo(() => {
     const titleMap: Record<string, string> = {
@@ -102,15 +108,18 @@ function TeamScopedApp() {
         description:
           "Здесь ведется список задач и распределение нагрузки по участникам и спринтам.",
         bullets: [
-          "Фильтры сверху ограничивают список по кварталам, приоритетам, статусам, релизным спринтам, стримам и поиску.",
-          "Кнопка «Добавить задачу» создает новую задачу в бэклоге.",
+          "Фильтры сверху ограничивают список по кварталам, приоритетам, статусам, релизам, стримам, заказчикам и поиску. Также можно задать количество задач на странице.",
+          "Перед добавлением задачи выбирается квартал в поле «Квартал задачи», затем используется кнопка «Добавить задачу».",
           "Иконка перетаскивания и стрелки вверх/вниз меняют порядок задач.",
-          "Иконка «показать/скрыть участников» открывает или прячет таблицу распределения.",
+          "В шапке страницы, слева от FAQ, иконка «глаз» переключает скрытие/показ участников сразу во всех задачах.",
+          "В карточке задачи иконка «глаз» управляет видимостью участников только для этой задачи (как локальное исключение).",
           "Стрелки влево/вправо сдвигают нагрузку по всем спринтам для задачи или участника.",
+          "Кнопка «История изменений» открывает модальное окно с журналом: пользователь, изменение, дата.",
           "Кнопки «Дублировать» и «Удалить» дублируют или удаляют задачу.",
           "Клик по ячейке нагрузки позволяет редактировать дни.",
           "В строке участника доступны: назначение лидера (звезда), замена участника, заметка, копирование в следующий квартал и удаление.",
           "Строка «Добавить участника» привязывает нового исполнителя к задаче.",
+          "Поле «Релиз (ПРОМ)» поддерживает пустое значение («—»), если задача без релиза.",
           "Поля «Заказчик» и «Стрим» поддерживают множественный выбор: можно выбрать из списка или ввести новое значение. Сохранение происходит автоматически при клике вне поля или нажатии Enter.",
         ],
       },
@@ -192,13 +201,19 @@ function TeamScopedApp() {
 
   const [exportExcel, { isFetching: isExporting }] = useLazyExportExcelQuery();
 
+  const handleToggleAllParticipants = React.useCallback(() => {
+    dispatch(setBacklogFilters({ hideAllParticipants: !hideAllParticipants }));
+  }, [dispatch, hideAllParticipants]);
+
   const handleExportExcel = React.useCallback(async () => {
     try {
       const blob = await exportExcel().unwrap();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `sprints-planning-${moment().format("YYYY-MM-DD")}.xlsx`;
+      link.download = `sprints-planning-${moment().format(
+        "YYYY-MM-DD_HH-mm-ss"
+      )}.xlsx`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -273,9 +288,30 @@ function TeamScopedApp() {
               </span>
             </Tooltip>
           </Stack>
-          <Box sx={{ ml: 2 }}>
+          <Stack direction="row" spacing={0.5} alignItems="center" sx={{ ml: 2 }}>
+            {isBacklogPage && (
+              <Tooltip
+                title={
+                  hideAllParticipants
+                    ? "Показать всех участников"
+                    : "Скрыть всех участников"
+                }
+              >
+                <IconButton
+                  size="small"
+                  onClick={handleToggleAllParticipants}
+                  sx={{ color: "success.main" }}
+                >
+                  {hideAllParticipants ? (
+                    <Visibility fontSize="small" />
+                  ) : (
+                    <VisibilityOff fontSize="small" />
+                  )}
+                </IconButton>
+              </Tooltip>
+            )}
             <PageHelpDialog content={helpContent} />
-          </Box>
+          </Stack>
         </Toolbar>
       </AppBar>
 

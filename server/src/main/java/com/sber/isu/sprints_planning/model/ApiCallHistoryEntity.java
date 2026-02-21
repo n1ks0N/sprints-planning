@@ -8,8 +8,11 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "api_call_history")
@@ -40,6 +43,23 @@ public class ApiCallHistoryEntity {
 
     @Column(name = "team_key")
     private String teamKey;
+
+    @Column(name = "entity_type")
+    private String entityType;
+
+    @Column(name = "entity_id")
+    private UUID entityId;
+
+    @Column(name = "event_type")
+    private String eventType;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "changes_json", columnDefinition = "jsonb")
+    private Map<String, Object> changesJson;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "meta_json", columnDefinition = "jsonb")
+    private Map<String, Object> metaJson;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
@@ -121,5 +141,45 @@ public class ApiCallHistoryEntity {
 
     public void setTeamKey(String teamKey) {
         this.teamKey = teamKey;
+    }
+
+    public String getEntityType() {
+        return entityType;
+    }
+
+    public void setEntityType(String entityType) {
+        this.entityType = entityType;
+    }
+
+    public UUID getEntityId() {
+        return entityId;
+    }
+
+    public void setEntityId(UUID entityId) {
+        this.entityId = entityId;
+    }
+
+    public String getEventType() {
+        return eventType;
+    }
+
+    public void setEventType(String eventType) {
+        this.eventType = eventType;
+    }
+
+    public Map<String, Object> getChangesJson() {
+        return changesJson;
+    }
+
+    public void setChangesJson(Map<String, Object> changesJson) {
+        this.changesJson = changesJson;
+    }
+
+    public Map<String, Object> getMetaJson() {
+        return metaJson;
+    }
+
+    public void setMetaJson(Map<String, Object> metaJson) {
+        this.metaJson = metaJson;
     }
 }

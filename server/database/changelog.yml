@@ -29,3 +29,6 @@ databaseChangeLog:
   - include:
       file: 1.0.0/1.0.0_10_task_streams_customers.sql
       relativeToChangelogFile: true
+  - include:
+      file: 1.0.0/1.0.0_11_task_history_enrichment.sql
+      relativeToChangelogFile: true

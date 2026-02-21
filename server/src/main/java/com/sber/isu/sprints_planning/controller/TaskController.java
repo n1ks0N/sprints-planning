@@ -1,9 +1,11 @@
 package com.sber.isu.sprints_planning.controller;
 
 import com.sber.isu.sprints_planning.dto.TaskDto;
+import com.sber.isu.sprints_planning.dto.TaskHistoryItemDto;
 import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
+import com.sber.isu.sprints_planning.service.ApiHistoryService;
 import com.sber.isu.sprints_planning.service.TaskFilter;
 import com.sber.isu.sprints_planning.service.TaskService;
 import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
@@ -23,9 +25,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class TaskController {
 
     private final TaskService taskService;
+    private final ApiHistoryService apiHistoryService;
 
-    public TaskController(TaskService taskService) {
+    public TaskController(TaskService taskService, ApiHistoryService apiHistoryService) {
         this.taskService = taskService;
+        this.apiHistoryService = apiHistoryService;
     }
 
     @GetMapping("/tasks")
@@ -64,6 +68,17 @@ public class TaskController {
     public TaskDto getTask(@PathVariable String teamKey, @PathVariable UUID id) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
         return taskService.findById(normalizedTeamKey, id);
+    }
+
+    @GetMapping("/tasks/{id}/history")
+    public Page<TaskHistoryItemDto> getTaskHistory(
+        @PathVariable String teamKey,
+        @PathVariable UUID id,
+        @RequestParam(defaultValue = "0") int page,
+        @RequestParam(defaultValue = "30") int size
+    ) {
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return apiHistoryService.getTaskHistory(normalizedTeamKey, id, page, size);
     }
 
     @PostMapping("/tasks")

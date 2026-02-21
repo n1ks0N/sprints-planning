@@ -27,6 +27,8 @@ import {
   FormHelperText,
   Select,
   MenuItem,
+  Alert,
+  CircularProgress,
 } from "@mui/material";
 import {
   Add,
@@ -42,7 +44,9 @@ import {
   EditNote,
   Visibility,
   VisibilityOff,
+  History,
 } from "@mui/icons-material";
+import { skipToken } from "@reduxjs/toolkit/query";
 import { useLocation } from "react-router-dom";
 import moment from "moment";
 import "moment/locale/ru";
@@ -61,6 +65,7 @@ import {
   useUpsertTaskAllocationMultiMutation,
   useGetReleasesQuery,
   useGetFiltersQuery,
+  useGetTaskHistoryQuery,
 } from "../app/api";
 import EditableNumberCell from "../components/EditableNumberCell";
 import type {
@@ -72,6 +77,7 @@ import type {
   Quarter,
   TaskStatus,
   Page,
+  TaskHistoryItem,
 } from "../types";
 import { setBacklogFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
@@ -146,6 +152,21 @@ function syncTasksPageMeta(draft: TasksPage) {
   draft.empty = draft.content.length === 0;
   draft.first = pageInfo.number <= 0;
   draft.last = pageInfo.number + 1 >= totalPages;
+}
+
+function formatDateTimeRu(value?: string | null) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 // ---------- Editable inputs (максимально локальное состояние) ----------
@@ -403,7 +424,8 @@ function deriveTaskQuarters(
 
   if (task.allocations) {
     for (const row of Object.values(task.allocations)) {
-      for (const sid of Object.keys(row)) {
+      for (const [sid, days] of Object.entries(row)) {
+        if (Number(days) <= 0) continue;
         const sprint = allSprints.find((s) => s.id === sid);
         if (sprint) fromAllocations.add(sprint.quarterId);
       }
@@ -454,6 +476,7 @@ type TaskCardProps = {
   onPriorityChange: (task: BacklogItem, priority: TaskPriority) => void;
   onUpdateTaskPatch: (task: BacklogItem, patch: Partial<BacklogItem>) => void;
   onDuplicateTask: (task: BacklogItem) => void;
+  onOpenTaskHistory: (task: BacklogItem) => void;
   onMoveTask: (id: string, dir: "up" | "down") => void;
   onRemoveTask: (task: BacklogItem) => void;
   onChangeTaskQuarters: (taskId: string, quarterIds: string[]) => void;
@@ -542,6 +565,7 @@ const TaskCard = React.memo(function TaskCard({
   onPriorityChange,
   onUpdateTaskPatch,
   onDuplicateTask,
+  onOpenTaskHistory,
   onMoveTask,
   onRemoveTask,
   onChangeTaskQuarters,
@@ -1049,6 +1073,15 @@ const TaskCard = React.memo(function TaskCard({
             <Tooltip title="Дублировать">
               <IconButton size="small" onClick={() => onDuplicateTask(task)}>
                 <CopyAll fontSize="small" />
+              </IconButton>
+            </Tooltip>
+
+            <Tooltip title="История изменений">
+              <IconButton
+                size="small"
+                onClick={() => onOpenTaskHistory(task)}
+              >
+                <History fontSize="small" />
               </IconButton>
             </Tooltip>
 
@@ -1596,6 +1629,214 @@ const TaskCardsList = React.memo(function TaskCardsList({
   );
 });
 
+const TASK_HISTORY_PAGE_SIZE = 20;
+
+type TaskHistoryDialogProps = {
+  task: BacklogItem | null;
+  open: boolean;
+  onClose: () => void;
+  participantMap: Map<string, Participant>;
+  releaseLabelById: Map<string, string>;
+};
+
+const TaskHistoryDialog = React.memo(function TaskHistoryDialog({
+  task,
+  open,
+  onClose,
+  participantMap,
+  releaseLabelById,
+}: TaskHistoryDialogProps) {
+  const [page, setPage] = React.useState(0);
+  const [totalPages, setTotalPages] = React.useState(0);
+  const [items, setItems] = React.useState<TaskHistoryItem[]>([]);
+
+  React.useEffect(() => {
+    if (!open || !task) return;
+    setPage(0);
+    setTotalPages(0);
+    setItems([]);
+  }, [open, task?.id]);
+
+  const queryArgs =
+    open && task
+      ? { taskId: task.id, page, size: TASK_HISTORY_PAGE_SIZE }
+      : skipToken;
+  const { data, isFetching, isError } = useGetTaskHistoryQuery(queryArgs);
+
+  React.useEffect(() => {
+    if (!data) return;
+    setTotalPages(Math.max(0, data.page?.totalPages ?? 0));
+    const incoming = data.content || [];
+    setItems((prev) => {
+      if (page === 0) return incoming;
+      const seen = new Set(prev.map((item) => item.id));
+      const merged = prev.slice();
+      for (const item of incoming) {
+        if (!seen.has(item.id)) {
+          merged.push(item);
+        }
+      }
+      return merged;
+    });
+  }, [data, page]);
+
+  const hasMore = totalPages > 0 && page + 1 < totalPages;
+  const isInitialLoading = isFetching && items.length === 0;
+
+  const formatHistoryValue = React.useCallback(
+    (field: string, value: unknown): string => {
+      if (value === null || value === undefined) return "—";
+
+      if (field === "status") {
+        const key = String(value) as TaskStatus;
+        return STATUS_LABEL[key] || String(value);
+      }
+
+      if (field === "releaseDateId") {
+        const key = String(value).trim();
+        if (!key) return "—";
+        return releaseLabelById.get(key) || key;
+      }
+
+      if (field === "leaderId") {
+        const key = String(value).trim();
+        if (!key) return "—";
+        return participantMap.get(key)?.fullName || key;
+      }
+
+      if (field === "participantIds" && Array.isArray(value)) {
+        const names = value
+          .map((entry) => {
+            const id = String(entry).trim();
+            if (!id) return "";
+            return participantMap.get(id)?.fullName || id;
+          })
+          .filter(Boolean);
+        return names.length ? names.join(", ") : "—";
+      }
+
+      if (field === "notes" && typeof value === "object" && !Array.isArray(value)) {
+        const entries = Object.entries(value as Record<string, unknown>)
+          .map(([participantId, note]) => {
+            const text = String(note ?? "").trim();
+            if (!text) return "";
+            const participantName =
+              participantMap.get(participantId)?.fullName || participantId;
+            return `${participantName}: ${text}`;
+          })
+          .filter(Boolean);
+        return entries.length ? entries.join(" | ") : "—";
+      }
+
+      if (Array.isArray(value)) {
+        const values = value
+          .map((entry) => String(entry ?? "").trim())
+          .filter(Boolean);
+        return values.length ? values.join(", ") : "—";
+      }
+
+      if (typeof value === "object") {
+        return JSON.stringify(value);
+      }
+
+      const normalized = String(value).trim();
+      return normalized || "—";
+    },
+    [participantMap, releaseLabelById]
+  );
+
+  const title = task?.title?.trim() ? task.title : "Задача";
+
+  const rows = React.useMemo(
+    () =>
+      items.flatMap((item) => {
+        const userName = item.userName || "unknown";
+        const date = formatDateTimeRu(item.createdAt);
+        if (!item.changes || item.changes.length === 0) {
+          return [
+            {
+              id: `${item.id}-action`,
+              userName,
+              changeText: item.action || "Изменение задачи",
+              date,
+            },
+          ];
+        }
+
+        return item.changes.map((change, index) => ({
+          id: `${item.id}-${change.field}-${index}`,
+          userName,
+          changeText: `${change.label || change.field}: ${formatHistoryValue(
+            change.field,
+            change.before
+          )} -> ${formatHistoryValue(change.field, change.after)}`,
+          date,
+        }));
+      }),
+    [formatHistoryValue, items]
+  );
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
+      <DialogTitle>История изменений: {title}</DialogTitle>
+      <DialogContent dividers>
+        {isInitialLoading && (
+          <Box sx={{ py: 4, display: "flex", justifyContent: "center" }}>
+            <CircularProgress size={26} />
+          </Box>
+        )}
+
+        {!isInitialLoading && isError && items.length === 0 && (
+          <Alert severity="error">Не удалось загрузить историю изменений</Alert>
+        )}
+
+        {!isInitialLoading && !isError && items.length === 0 && (
+          <Alert severity="info">По этой задаче пока нет изменений</Alert>
+        )}
+
+        {rows.length > 0 && (
+          <TableContainer component={Paper} variant="outlined">
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ width: 220 }}>Пользователь</TableCell>
+                  <TableCell>Изменение</TableCell>
+                  <TableCell sx={{ width: 170 }}>Дата</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {rows.map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell sx={{ whiteSpace: "nowrap" }}>
+                      {row.userName}
+                    </TableCell>
+                    <TableCell>{row.changeText}</TableCell>
+                    <TableCell sx={{ whiteSpace: "nowrap" }}>
+                      {row.date}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </DialogContent>
+      <DialogActions>
+        {hasMore && (
+          <Button
+            variant="outlined"
+            onClick={() => setPage((prev) => prev + 1)}
+            disabled={isFetching}
+          >
+            {isFetching ? "Загрузка..." : "Загрузить еще"}
+          </Button>
+        )}
+        <Button onClick={onClose}>Закрыть</Button>
+      </DialogActions>
+    </Dialog>
+  );
+});
+
 // ---------- BacklogPage ----------
 
 export default function BacklogPage() {
@@ -1707,6 +1948,7 @@ export default function BacklogPage() {
   const normalizedSearch = React.useMemo(() => searchQuery.trim(), [searchQuery]);
   const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
   const [pinnedTaskId, setPinnedTaskId] = React.useState<string | null>(null);
+  const [historyTask, setHistoryTask] = React.useState<BacklogItem | null>(null);
 
   React.useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -1895,8 +2137,16 @@ export default function BacklogPage() {
     React.useState<Set<string>>(
       () => new Set(readLS<string[]>(LS_HIDDEN_PARTICIPANTS, []))
     );
+  const prevHideAllParticipants = React.useRef(hideAllParticipants);
   const [newTaskQuarterId, setNewTaskQuarterId] = React.useState<string>("");
   const [addTaskQuarterError, setAddTaskQuarterError] = React.useState(false);
+
+  React.useEffect(() => {
+    if (prevHideAllParticipants.current === hideAllParticipants) return;
+    prevHideAllParticipants.current = hideAllParticipants;
+    writeLS(LS_HIDDEN_PARTICIPANTS, []);
+    setHiddenParticipantsTaskIds(new Set());
+  }, [hideAllParticipants]);
 
   React.useEffect(() => {
     if (quarterIdSet.size === 0) return;
@@ -2138,6 +2388,11 @@ export default function BacklogPage() {
       }));
   }, [releases]);
 
+  const releaseLabelById = React.useMemo(
+    () => new Map(releaseFilterOptions.map((option) => [option.value, option.label])),
+    [releaseFilterOptions]
+  );
+
   const tasksPageSizeOptions = React.useMemo(
     () =>
       [20, 50, 100].map((size) => ({
@@ -2287,6 +2542,14 @@ export default function BacklogPage() {
   }, [deferredTasks, deferredStatusFilter, pinnedTaskId]);
 
   const displayedTasksCount = filteredTasks.length;
+
+  const handleOpenTaskHistory = React.useCallback((task: BacklogItem) => {
+    setHistoryTask(task);
+  }, []);
+
+  const handleCloseTaskHistory = React.useCallback(() => {
+    setHistoryTask(null);
+  }, []);
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
@@ -2886,23 +3149,6 @@ export default function BacklogPage() {
     [hideAllParticipants]
   );
 
-  // Кнопка показывает "Показать всех" только когда hideAll=true И нет исключений
-  const showsHideAll =
-    !hideAllParticipants || hiddenParticipantsTaskIds.size > 0;
-
-  const handleToggleAllParticipants = React.useCallback(() => {
-    if (showsHideAll) {
-      // Кнопка "Скрыть всех участников" → скрыть все
-      dispatch(setBacklogFilters({ hideAllParticipants: true }));
-    } else {
-      // Кнопка "Показать всех участников" → показать все
-      dispatch(setBacklogFilters({ hideAllParticipants: false }));
-    }
-    // Очищаем исключения при глобальном переключении
-    writeLS(LS_HIDDEN_PARTICIPANTS, []);
-    setHiddenParticipantsTaskIds(new Set());
-  }, [showsHideAll, dispatch]);
-
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
       <Stack spacing={2}>
@@ -3079,19 +3325,6 @@ export default function BacklogPage() {
           ]}
         />
 
-        <Box sx={{ display: "flex", justifyContent: "flex-start" }}>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={showsHideAll ? <VisibilityOff /> : <Visibility />}
-            onClick={handleToggleAllParticipants}
-          >
-            {showsHideAll
-              ? "Скрыть всех участников"
-              : "Показать всех участников"}
-          </Button>
-        </Box>
-
         {/* Список задач с DnD */}
         <TaskCardsList
           tasks={filteredTasks}
@@ -3115,6 +3348,7 @@ export default function BacklogPage() {
           onPriorityChange={handlePriorityChange}
           onUpdateTaskPatch={handleUpdateTaskPatch}
           onDuplicateTask={duplicateTask}
+          onOpenTaskHistory={handleOpenTaskHistory}
           onMoveTask={moveTask}
           onRemoveTask={removeTask}
           onChangeTaskQuarters={updateTaskQuarters}
@@ -3129,6 +3363,14 @@ export default function BacklogPage() {
           onChangeParticipant={replaceParticipantInTask}
           onParticipantOrderChange={handleParticipantOrderChange}
           onToggleParticipantsVisibility={toggleParticipantsVisibility}
+        />
+
+        <TaskHistoryDialog
+          task={historyTask}
+          open={Boolean(historyTask)}
+          onClose={handleCloseTaskHistory}
+          participantMap={participantMap}
+          releaseLabelById={releaseLabelById}
         />
 
         <Stack
