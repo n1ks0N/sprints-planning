@@ -211,9 +211,7 @@ function TeamScopedApp() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `sprints-planning-${moment().format(
-        "YYYY-MM-DD_HH-mm-ss"
-      )}.xlsx`;
+      link.download = `sprints-planning-${moment().format("YYYY-MM-DD")}.xlsx`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
