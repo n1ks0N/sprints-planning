@@ -316,18 +316,28 @@ const EditableParticipant = React.memo(function EditableParticipant({
     setEditing(true);
   }, [value]);
 
-  const handleClose = React.useCallback(() => {
-    setEditing(false);
-  }, []);
-
   const handleCommit = React.useCallback(
     (_: unknown, next: Participant | null) => {
-      if (next && next.id !== value.id) {
+      setDraft(next);
+      if (!next) {
+        return;
+      }
+      if (next.id !== value.id) {
         onCommit?.(next);
       }
       setEditing(false);
     },
     [onCommit, value.id]
+  );
+
+  const handleAutocompleteClose = React.useCallback(
+    (_: unknown, reason: string) => {
+      if (reason === "selectOption") return;
+      if (reason === "blur" || reason === "escape") {
+        setEditing(false);
+      }
+    },
+    []
   );
 
   if (!editing) {
@@ -349,7 +359,7 @@ const EditableParticipant = React.memo(function EditableParticipant({
       options={options}
       value={draft}
       onChange={handleCommit}
-      onClose={handleClose}
+      onClose={handleAutocompleteClose}
       isOptionEqualToValue={(a, b) => a?.id === b?.id}
       getOptionLabel={(p) => (p ? `${p.fullName} (${p.role})` : "")}
       renderInput={(params) => (
@@ -364,6 +374,11 @@ const EditableParticipant = React.memo(function EditableParticipant({
 
 const LS_TASK_QUARTERS = "backlog.quartersMap";
 const LS_HIDDEN_PARTICIPANTS = "backlog.hiddenParticipants";
+const LS_TASK_QUARTERS_SESSION = `${LS_TASK_QUARTERS}:session`;
+const LS_TASK_QUARTERS_DATA = `${LS_TASK_QUARTERS}:data`;
+const TASK_QUARTERS_SESSION_ID = `${Date.now()}-${Math.random()
+  .toString(36)
+  .slice(2, 10)}`;
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   inprogress: "В работе",
@@ -403,6 +418,43 @@ function readLS<T>(key: string, def: T): T {
 function writeLS<T>(key: string, val: T) {
   try {
     localStorage.setItem(key, JSON.stringify(val));
+  } catch {
+    // ignore
+  }
+}
+
+function readTaskQuartersLS(): Record<string, string[]> {
+  try {
+    const currentSession = localStorage.getItem(LS_TASK_QUARTERS_SESSION);
+    if (currentSession !== TASK_QUARTERS_SESSION_ID) {
+      localStorage.setItem(LS_TASK_QUARTERS_SESSION, TASK_QUARTERS_SESSION_ID);
+      localStorage.removeItem(LS_TASK_QUARTERS_DATA);
+      return {};
+    }
+
+    const raw = localStorage.getItem(LS_TASK_QUARTERS_DATA);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") return {};
+
+    const normalized: Record<string, string[]> = {};
+    for (const [taskId, value] of Object.entries(parsed)) {
+      if (!Array.isArray(value)) continue;
+      const ids = value.filter((id): id is string => typeof id === "string");
+      if (ids.length) {
+        normalized[taskId] = ids;
+      }
+    }
+    return normalized;
+  } catch {
+    return {};
+  }
+}
+
+function writeTaskQuartersLS(data: Record<string, string[]>) {
+  try {
+    localStorage.setItem(LS_TASK_QUARTERS_SESSION, TASK_QUARTERS_SESSION_ID);
+    localStorage.setItem(LS_TASK_QUARTERS_DATA, JSON.stringify(data));
   } catch {
     // ignore
   }
@@ -481,6 +533,7 @@ type TaskCardProps = {
   onRemoveTask: (task: BacklogItem) => void;
   onChangeTaskQuarters: (taskId: string, quarterIds: string[]) => void;
   getTaskQuarters: (task: BacklogItem) => string[];
+  hasTaskQuarterOverride: (taskId: string) => boolean;
   onAllocChange: (
     taskId: string,
     participantId: string,
@@ -570,6 +623,7 @@ const TaskCard = React.memo(function TaskCard({
   onRemoveTask,
   onChangeTaskQuarters,
   getTaskQuarters,
+  hasTaskQuarterOverride,
   onAllocChange,
   onAllocCommit,
   onShiftRow,
@@ -586,28 +640,29 @@ const TaskCard = React.memo(function TaskCard({
   const rows = allocationsByParticipant || {};
   const taskStatus = task.status ?? "inprogress";
   const taskQuarterIds = getTaskQuarters(task);
+  const taskHasQuarterOverride = hasTaskQuarterOverride(task.id);
   const [selectedParticipantToAdd, setSelectedParticipantToAdd] =
     React.useState<Participant | null>(null);
   const addParticipantInputRef = React.useRef<HTMLInputElement | null>(null);
 
-  const allowedSprints = React.useMemo(
-    () =>
-      (taskQuarterIds.length
-        ? sprintsGlobalOrdered.filter((s) =>
-            taskQuarterIds.includes(s.quarterId)
-          )
-        : sprintsGlobalOrdered
-      ).slice(),
-    [sprintsGlobalOrdered, taskQuarterIds]
-  );
+  const effectiveSprints = React.useMemo(() => {
+    const quarterIdsForTask = taskHasQuarterOverride
+      ? taskQuarterIds
+      : selectedQuarterIds;
 
-  const taskVisibleSprints =
-    selectedQuarterIds.length > 0
-      ? allowedSprints.filter((s) => selectedQuarterIds.includes(s.quarterId))
-      : allowedSprints;
+    if (quarterIdsForTask.length > 0) {
+      return sprintsGlobalOrdered.filter((s) =>
+        quarterIdsForTask.includes(s.quarterId)
+      );
+    }
 
-  const effectiveSprints =
-    taskVisibleSprints.length > 0 ? taskVisibleSprints : allowedSprints;
+    return sprintsGlobalOrdered.slice();
+  }, [
+    sprintsGlobalOrdered,
+    selectedQuarterIds,
+    taskQuarterIds,
+    taskHasQuarterOverride,
+  ]);
 
   const orderedParticipantIds =
     participantOrder.length > 0 ? participantOrder : task.participantIds || [];
@@ -2127,7 +2182,7 @@ export default function BacklogPage() {
   const allTasks = fetchedTasks;
   const [taskQuartersMap, setTaskQuartersMap] = React.useState<
     Record<string, string[]>
-  >(() => readLS<Record<string, string[]>>(LS_TASK_QUARTERS, {}));
+  >(() => readTaskQuartersLS());
 
   const [allocations, setAllocations] = React.useState<Allocations>({});
   const [participantOrders, setParticipantOrders] = React.useState<
@@ -2187,38 +2242,28 @@ export default function BacklogPage() {
   ]);
 
   React.useEffect(() => {
-    if (!allTasks.length) return;
-
-    const taskMap = new Map(allTasks.map((t) => [t.id, t]));
-
+    if (!quarterIdSet.size) return;
     setTaskQuartersMap((prev) => {
-      const next = { ...prev };
       let changed = false;
+      const next: Record<string, string[]> = {};
 
-      for (const t of allTasks) {
-        if (!next[t.id] || next[t.id].length === 0) {
-          const derived = deriveTaskQuarters(
-            t,
-            allSprints,
-            selectedQuarterIds[0] || currentQ?.id
-          );
-          if (derived.length) {
-            next[t.id] = derived;
+      for (const [taskId, quarterIds] of Object.entries(prev)) {
+        const filtered = Array.from(
+          new Set(quarterIds.filter((id) => quarterIdSet.has(id)))
+        );
+        if (filtered.length) {
+          next[taskId] = filtered;
+          if (!shallowArrayEqual(filtered, quarterIds)) {
             changed = true;
           }
+        } else if (quarterIds.length) {
+          changed = true;
         }
       }
 
-      Object.keys(next).forEach((id) => {
-        if (!taskMap.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      });
-
       return changed ? next : prev;
     });
-  }, [allTasks, allSprints, selectedQuarterIds, currentQ]);
+  }, [quarterIdSet, quarterIdsKey]);
 
   // Синхронизация локального состояния allocations с данными задач
   React.useEffect(() => {
@@ -2280,10 +2325,7 @@ export default function BacklogPage() {
     });
   }, [allTasks]);
 
-  React.useEffect(
-    () => writeLS(LS_TASK_QUARTERS, taskQuartersMap),
-    [taskQuartersMap]
-  );
+  React.useEffect(() => writeTaskQuartersLS(taskQuartersMap), [taskQuartersMap]);
 
   const { data: filtersData } = useGetFiltersQuery();
 
@@ -2325,24 +2367,49 @@ export default function BacklogPage() {
     (task: BacklogItem): string[] => {
       const fromMap = taskQuartersMap[task.id];
       if (fromMap && fromMap.length) return fromMap;
-      const derived = deriveTaskQuarters(
-        task,
-        allSprints,
-        selectedQuarterIds[0] || currentQ?.id
+      if (selectedQuarterIds.length) {
+        const fromFilter = selectedQuarterIds.filter((id) =>
+          quarterIdSet.has(id)
+        );
+        if (fromFilter.length) return fromFilter;
+      }
+      const derived = deriveTaskQuarters(task, allSprints, currentQ?.id).filter(
+        (id) => quarterIdSet.has(id)
       );
       if (derived.length) return derived;
       return quartersSorted.map((q) => q.id);
     },
-    [taskQuartersMap, allSprints, selectedQuarterIds, currentQ, quartersSorted]
+    [
+      taskQuartersMap,
+      selectedQuarterIds,
+      quarterIdSet,
+      allSprints,
+      currentQ,
+      quartersSorted,
+    ]
+  );
+
+  const hasTaskQuarterOverride = React.useCallback(
+    (taskId: string) => {
+      const fromMap = taskQuartersMap[taskId];
+      return Array.isArray(fromMap) && fromMap.length > 0;
+    },
+    [taskQuartersMap]
   );
 
   const updateTaskQuarters = React.useCallback(
     (taskId: string, quarterIds: string[]) => {
-      const filtered = quarterIds.filter(Boolean);
+      const filtered = Array.from(
+        new Set(quarterIds.filter((id) => id && quarterIdSet.has(id)))
+      );
       if (!filtered.length) return;
-      setTaskQuartersMap((prev) => ({ ...prev, [taskId]: filtered }));
+      setTaskQuartersMap((prev) => {
+        const current = prev[taskId] || [];
+        if (shallowArrayEqual(current, filtered)) return prev;
+        return { ...prev, [taskId]: filtered };
+      });
     },
-    []
+    [quarterIdSet]
   );
 
   const quarterFilterOptions = React.useMemo(
@@ -3353,6 +3420,7 @@ export default function BacklogPage() {
           onRemoveTask={removeTask}
           onChangeTaskQuarters={updateTaskQuarters}
           getTaskQuarters={getTaskQuarters}
+          hasTaskQuarterOverride={hasTaskQuarterOverride}
           onAllocChange={handleAllocChange}
           onAllocCommit={commitCell}
           onShiftRow={shiftRow}
