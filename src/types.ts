@@ -129,6 +129,23 @@ export type Release = {
   updatedAt: string;
 };
 
+export type ReleaseAnchorField =
+  | "stDate"
+  | "devStart"
+  | "devEnd"
+  | "crDate"
+  | "buildDate"
+  | "iftStart"
+  | "iftEnd"
+  | "ffInnerDate"
+  | "ffDate"
+  | "regressStart"
+  | "regressEnd"
+  | "opsStart"
+  | "opsEnd"
+  | "psiDate"
+  | "promDate";
+
 export type ApiHistoryAction = {
   id: string;
   sessionId: string;

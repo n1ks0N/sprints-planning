@@ -8,6 +8,8 @@ public record ReleaseUpdateRequest(
     String name,
     LocalDate promDate,
     String action,
+    String anchorField,
+    LocalDate anchorDate,
     LocalDate psiDate,
     LocalDate opsStart,
     LocalDate opsEnd,

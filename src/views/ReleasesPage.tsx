@@ -28,273 +28,21 @@ import {
   useUpdateReleaseMutation,
   useDeleteReleaseMutation,
 } from "../app/api";
-import type { Release } from "../types";
+import type { Release, ReleaseAnchorField } from "../types";
 
 moment.locale("ru");
 
-function isBusinessDay(d: Date) {
-  const day = d.getDay();
-  return day !== 0 && day !== 6;
-}
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
 function toISOlocal(d: Date) {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
-function fromISOlocal(iso: string) {
-  const [y, m, dd] = iso.split("-").map(Number);
-  return new Date(y, (m || 1) - 1, dd || 1);
-}
-function addBusinessDaysISO(iso: string, delta: number) {
-  let d = fromISOlocal(iso);
-  if (delta === 0) return iso;
-  const step = delta > 0 ? 1 : -1;
-  let left = Math.abs(delta);
-  while (left > 0) {
-    d.setDate(d.getDate() + step);
-    if (isBusinessDay(d)) left -= 1;
-  }
-  return toISOlocal(d);
-}
+
 const ru = (iso?: string) =>
   iso && moment(iso, "YYYY-MM-DD", true).isValid()
     ? moment(iso, "YYYY-MM-DD").format("DD.MM.YYYY ddd")
     : "—";
-
-type K =
-  | "stDate"
-  | "devStart"
-  | "devEnd"
-  | "crDate"
-  | "buildDate"
-  | "iftStart"
-  | "iftEnd"
-  | "ffInnerDate"
-  | "ffDate"
-  | "regressStart"
-  | "regressEnd"
-  | "opsStart"
-  | "opsEnd"
-  | "psiDate"
-  | "promDate";
-
-function recalcPrevious(current: Release, anchor: K, iso: string): Release {
-  const out: Release = { ...current, [anchor]: iso };
-
-  const fromOpsStart = (opsStart: string) => {
-    const regressStart = addBusinessDaysISO(opsStart, -4);
-    const regressEnd = addBusinessDaysISO(regressStart, +3);
-    const ffDate = addBusinessDaysISO(regressStart, -1);
-    const ffInnerDate = addBusinessDaysISO(ffDate, -3);
-    const iftStart = addBusinessDaysISO(ffInnerDate, -5);
-    const iftEnd = addBusinessDaysISO(iftStart, +4);
-    const buildDate = addBusinessDaysISO(iftStart, -1);
-    const crDate = addBusinessDaysISO(buildDate, -1);
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.regressStart = regressStart;
-    out.regressEnd = regressEnd;
-    out.ffDate = ffDate;
-    out.ffInnerDate = ffInnerDate;
-    out.iftStart = iftStart;
-    out.iftEnd = iftEnd;
-    out.buildDate = buildDate;
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromRegressStart = (regressStart: string) => {
-    const regressEnd = addBusinessDaysISO(regressStart, +3);
-    const ffDate = addBusinessDaysISO(regressStart, -1);
-    const ffInnerDate = addBusinessDaysISO(ffDate, -3);
-    const iftStart = addBusinessDaysISO(ffInnerDate, -5);
-    const iftEnd = addBusinessDaysISO(iftStart, +4);
-    const buildDate = addBusinessDaysISO(iftStart, -1);
-    const crDate = addBusinessDaysISO(buildDate, -1);
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.regressStart = regressStart;
-    out.regressEnd = regressEnd;
-    out.ffDate = ffDate;
-    out.ffInnerDate = ffInnerDate;
-    out.iftStart = iftStart;
-    out.iftEnd = iftEnd;
-    out.buildDate = buildDate;
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromFF = (ffDate: string) => {
-    const ffInnerDate = addBusinessDaysISO(ffDate, -3);
-    const iftStart = addBusinessDaysISO(ffInnerDate, -5);
-    const iftEnd = addBusinessDaysISO(iftStart, +4);
-    const buildDate = addBusinessDaysISO(iftStart, -1);
-    const crDate = addBusinessDaysISO(buildDate, -1);
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.ffDate = ffDate;
-    out.ffInnerDate = ffInnerDate;
-    out.iftStart = iftStart;
-    out.iftEnd = iftEnd;
-    out.buildDate = buildDate;
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromFFInner = (ffInnerDate: string) => {
-    const ffDate = addBusinessDaysISO(ffInnerDate, +3);
-    fromFF(ffDate);
-    out.ffInnerDate = ffInnerDate;
-  };
-
-  const fromIftStart = (iftStart: string) => {
-    const iftEnd = addBusinessDaysISO(iftStart, +4);
-    const buildDate = addBusinessDaysISO(iftStart, -1);
-    const crDate = addBusinessDaysISO(buildDate, -1);
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.iftStart = iftStart;
-    out.iftEnd = iftEnd;
-    out.buildDate = buildDate;
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromBuild = (buildDate: string) => {
-    const crDate = addBusinessDaysISO(buildDate, -1);
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.buildDate = buildDate;
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromCR = (crDate: string) => {
-    const devStart = addBusinessDaysISO(crDate, -7);
-    const devEnd = addBusinessDaysISO(devStart, +6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.crDate = crDate;
-    out.devStart = devStart;
-    out.devEnd = devEnd;
-    out.stDate = stDate;
-  };
-
-  const fromDevEnd = (devEnd: string) => {
-    const devStart = addBusinessDaysISO(devEnd, -6);
-    const stDate = addBusinessDaysISO(devStart, -1);
-
-    out.devEnd = devEnd;
-    out.devStart = devStart;
-    out.stDate = stDate;
-  };
-
-  const fromDevStart = (devStart: string) => {
-    const stDate = addBusinessDaysISO(devStart, -1);
-    out.devStart = devStart;
-    out.stDate = stDate;
-  };
-
-  switch (anchor) {
-    case "promDate": {
-      const psi = addBusinessDaysISO(iso, -1);
-      out.psiDate = psi;
-      const opsStart = addBusinessDaysISO(psi, -3);
-      out.opsStart = opsStart;
-      out.opsEnd = addBusinessDaysISO(opsStart, +2);
-      fromOpsStart(opsStart);
-      break;
-    }
-    case "psiDate": {
-      const opsStart = addBusinessDaysISO(iso, -3);
-      out.opsStart = opsStart;
-      out.opsEnd = addBusinessDaysISO(opsStart, +2);
-      fromOpsStart(opsStart);
-      break;
-    }
-    case "opsEnd": {
-      const opsStart = addBusinessDaysISO(iso, -2);
-      out.opsStart = opsStart;
-      out.opsEnd = iso;
-      fromOpsStart(opsStart);
-      break;
-    }
-    case "opsStart":
-      fromOpsStart(iso);
-      break;
-
-    case "regressEnd": {
-      const regressStart = addBusinessDaysISO(iso, -3);
-      fromRegressStart(regressStart);
-      out.regressEnd = iso;
-      break;
-    }
-    case "regressStart":
-      fromRegressStart(iso);
-      break;
-
-    case "ffDate":
-      fromFF(iso);
-      break;
-
-    case "ffInnerDate":
-      fromFFInner(iso);
-      break;
-
-    case "iftEnd": {
-      const iftStart = addBusinessDaysISO(iso, -4);
-      fromIftStart(iftStart);
-      out.iftEnd = iso;
-      break;
-    }
-    case "iftStart":
-      fromIftStart(iso);
-      break;
-
-    case "buildDate":
-      fromBuild(iso);
-      break;
-
-    case "crDate":
-      fromCR(iso);
-      break;
-
-    case "devEnd":
-      fromDevEnd(iso);
-      break;
-
-    case "devStart":
-      fromDevStart(iso);
-      break;
-
-    case "stDate":
-      out.stDate = iso;
-      break;
-  }
-
-  return out;
-}
 
 function InlineDate({
   value,
@@ -395,11 +143,14 @@ export default function ReleasesPage() {
     await deleteRelease({ id: r.id }).unwrap();
   };
 
-  const commit = async (r: Release, field: K, iso: string) => {
+  const commit = async (r: Release, field: ReleaseAnchorField, iso: string) => {
     if (!iso) return;
-    const updated = recalcPrevious(r, field, iso);
-    const { id: _omit, ...patch } = updated as Release & { id: string };
-    await updateRelease({ id: r.id, ...patch }).unwrap();
+    await updateRelease({
+      id: r.id,
+      action: "recalc",
+      anchorField: field,
+      anchorDate: iso,
+    }).unwrap();
   };
 
   const PROM_W = 180;

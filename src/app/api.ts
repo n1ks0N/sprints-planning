@@ -8,6 +8,7 @@ import type {
   BacklogItem,
   Page,
   Release,
+  ReleaseAnchorField,
   ApiSessionHistory,
   TaskHistoryItem,
   Team,
@@ -1414,7 +1415,11 @@ export const api = createApi({
     }),
     updateRelease: b.mutation<
       Release,
-      (Partial<Release> & { id: string }) & { action?: "recalc" | "clear" }
+      (Partial<Release> & { id: string }) & {
+        action?: "recalc" | "clear";
+        anchorField?: ReleaseAnchorField;
+        anchorDate?: string;
+      }
     >({
       query: (body) => ({ url: "/releases/update", method: "POST", body }),
       invalidatesTags: (result, error, arg) => [
@@ -1422,12 +1427,15 @@ export const api = createApi({
         { type: "Release" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
-        const patch = dispatch(
-          api.util.updateQueryData("getReleases", undefined, (draft) => {
-            const idx = draft.findIndex((r) => r.id === arg.id);
-            if (idx >= 0) draft[idx] = { ...draft[idx], ...arg } as Release;
-          })
-        );
+        const patch =
+          arg.action == null
+            ? dispatch(
+                api.util.updateQueryData("getReleases", undefined, (draft) => {
+                  const idx = draft.findIndex((r) => r.id === arg.id);
+                  if (idx >= 0) draft[idx] = { ...draft[idx], ...arg } as Release;
+                })
+              )
+            : { undo() {} };
 
         try {
           const { data } = await queryFulfilled;
