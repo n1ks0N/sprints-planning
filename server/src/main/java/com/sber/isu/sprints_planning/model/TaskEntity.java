@@ -76,6 +76,10 @@ public class TaskEntity {
     @JoinColumn(name = "release_date_id")
     private ReleaseEntity releaseDate;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "initial_quarter_id")
+    private QuarterEntity initialQuarter;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private Map<UUID, String> notes;
@@ -191,6 +195,14 @@ public class TaskEntity {
 
     public void setReleaseDate(ReleaseEntity releaseDate) {
         this.releaseDate = releaseDate;
+    }
+
+    public QuarterEntity getInitialQuarter() {
+        return initialQuarter;
+    }
+
+    public void setInitialQuarter(QuarterEntity initialQuarter) {
+        this.initialQuarter = initialQuarter;
     }
 
     public Map<UUID, String> getNotes() {

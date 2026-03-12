@@ -19,6 +19,7 @@ public record TaskUpdateRequest(
     Map<String, Map<String, BigDecimal>> allocations,
     Map<String, String> notes,
     String releaseDateId,
+    String initialQuarterId,
     String leaderId,
     Integer order
 ) {

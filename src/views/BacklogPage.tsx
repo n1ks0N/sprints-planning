@@ -104,6 +104,9 @@ import { CSS } from "@dnd-kit/utilities";
 
 moment.locale("ru");
 
+const WITHOUT_QUARTER_FILTER_VALUE = "__WITHOUT_QUARTER__";
+const NO_INITIAL_QUARTER_VALUE = "__NO_INITIAL_QUARTER__";
+
 // ---------- Utils ----------
 
 function byEnd(a: Sprint, b: Sprint) {
@@ -372,13 +375,7 @@ const EditableParticipant = React.memo(function EditableParticipant({
 
 // ---------- LocalStorage ----------
 
-const LS_TASK_QUARTERS = "backlog.quartersMap";
 const LS_HIDDEN_PARTICIPANTS = "backlog.hiddenParticipants";
-const LS_TASK_QUARTERS_SESSION = `${LS_TASK_QUARTERS}:session`;
-const LS_TASK_QUARTERS_DATA = `${LS_TASK_QUARTERS}:data`;
-const TASK_QUARTERS_SESSION_ID = `${Date.now()}-${Math.random()
-  .toString(36)
-  .slice(2, 10)}`;
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   inprogress: "В работе",
@@ -423,49 +420,11 @@ function writeLS<T>(key: string, val: T) {
   }
 }
 
-function readTaskQuartersLS(): Record<string, string[]> {
-  try {
-    const currentSession = localStorage.getItem(LS_TASK_QUARTERS_SESSION);
-    if (currentSession !== TASK_QUARTERS_SESSION_ID) {
-      localStorage.setItem(LS_TASK_QUARTERS_SESSION, TASK_QUARTERS_SESSION_ID);
-      localStorage.removeItem(LS_TASK_QUARTERS_DATA);
-      return {};
-    }
-
-    const raw = localStorage.getItem(LS_TASK_QUARTERS_DATA);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== "object") return {};
-
-    const normalized: Record<string, string[]> = {};
-    for (const [taskId, value] of Object.entries(parsed)) {
-      if (!Array.isArray(value)) continue;
-      const ids = value.filter((id): id is string => typeof id === "string");
-      if (ids.length) {
-        normalized[taskId] = ids;
-      }
-    }
-    return normalized;
-  } catch {
-    return {};
-  }
-}
-
-function writeTaskQuartersLS(data: Record<string, string[]>) {
-  try {
-    localStorage.setItem(LS_TASK_QUARTERS_SESSION, TASK_QUARTERS_SESSION_ID);
-    localStorage.setItem(LS_TASK_QUARTERS_DATA, JSON.stringify(data));
-  } catch {
-    // ignore
-  }
-}
-
 // ---------- Task quarters ----------
 
 function deriveTaskQuarters(
   task: BacklogItem,
-  allSprints: Sprint[],
-  currentQuarterId?: string
+  allSprints: Sprint[]
 ): string[] {
   const explicit = Array.isArray((task as any).quarterIds)
     ? ((task as any).quarterIds as string[]).filter(Boolean)
@@ -493,15 +452,8 @@ function deriveTaskQuarters(
     }
   }
 
-  if (task.releaseSprintId) {
-    const releaseSprint = allSprints.find((s) => s.id === task.releaseSprintId);
-    if (releaseSprint) {
-      fromAllocations.add(releaseSprint.quarterId);
-    }
-  }
-
   if (fromAllocations.size) return Array.from(fromAllocations);
-  return currentQuarterId ? [currentQuarterId] : [];
+  return task.initialQuarterId ? [task.initialQuarterId] : [];
 }
 
 // taskId -> participantId -> sprintId -> days
@@ -519,6 +471,7 @@ type TaskCardProps = {
   sprintsByQuarter: Map<string, Sprint[]>;
   quartersSorted: Quarter[];
   selectedQuarterIds: string[];
+  withoutQuarterFilter: boolean;
   quarterFilterOptions: { value: string; label: string }[];
   customerOptions: string[];
   streamOptions: string[];
@@ -609,6 +562,7 @@ const TaskCard = React.memo(function TaskCard({
   sprintsByQuarter,
   quartersSorted,
   selectedQuarterIds,
+  withoutQuarterFilter,
   quarterFilterOptions,
   customerOptions,
   streamOptions,
@@ -656,10 +610,11 @@ const TaskCard = React.memo(function TaskCard({
       );
     }
 
-    return sprintsGlobalOrdered.slice();
+    return withoutQuarterFilter ? [] : sprintsGlobalOrdered.slice();
   }, [
     sprintsGlobalOrdered,
     selectedQuarterIds,
+    withoutQuarterFilter,
     taskQuarterIds,
     taskHasQuarterOverride,
   ]);
@@ -1931,6 +1886,7 @@ export default function BacklogPage() {
     releaseSprintFilter,
     searchQuery,
     selectedQuarterIds,
+    withoutQuarterFilter,
     tasksPageSize,
     hideAllParticipants,
   } = useAppSelector((s) => s.ui.backlog);
@@ -1948,10 +1904,16 @@ export default function BacklogPage() {
 
     hasInitializedQuarterFilter.current = true;
 
-    if (selectedQuarterIds.length === 0) {
+    if (selectedQuarterIds.length === 0 && !withoutQuarterFilter) {
       dispatch(setBacklogFilters({ selectedQuarterIds: [currentQuarterId] }));
     }
-  }, [quarters.length, currentQuarterId, selectedQuarterIds.length, dispatch]);
+  }, [
+    quarters.length,
+    currentQuarterId,
+    selectedQuarterIds.length,
+    withoutQuarterFilter,
+    dispatch,
+  ]);
 
   const sprintById = React.useMemo(() => {
     const m = new Map<string, Sprint>();
@@ -2015,6 +1977,7 @@ export default function BacklogPage() {
     () =>
       JSON.stringify({
         selectedQuarterIds: selectedQuarterIds.slice().sort(),
+        withoutQuarterFilter,
         priorityFilter,
         statusFilter,
         releaseSprintFilter,
@@ -2029,6 +1992,7 @@ export default function BacklogPage() {
       priorityFilter,
       releaseSprintFilter,
       selectedQuarterIds,
+      withoutQuarterFilter,
       statusFilter,
       streamFilter,
       customerFilter,
@@ -2048,6 +2012,7 @@ export default function BacklogPage() {
   const tasksQueryArgs = React.useMemo(
     () => ({
       quarterIds: selectedQuarterIds,
+      withoutQuarter: withoutQuarterFilter,
       priority: priorityFilter,
       statuses: statusFilter,
       releaseDateId:
@@ -2070,6 +2035,7 @@ export default function BacklogPage() {
       pinnedTaskId,
       effectiveTasksPageNumber,
       TASKS_PAGE_SIZE,
+      withoutQuarterFilter,
     ]
   );
 
@@ -2182,7 +2148,7 @@ export default function BacklogPage() {
   const allTasks = fetchedTasks;
   const [taskQuartersMap, setTaskQuartersMap] = React.useState<
     Record<string, string[]>
-  >(() => readTaskQuartersLS());
+  >({});
 
   const [allocations, setAllocations] = React.useState<Allocations>({});
   const [participantOrders, setParticipantOrders] = React.useState<
@@ -2193,8 +2159,8 @@ export default function BacklogPage() {
       () => new Set(readLS<string[]>(LS_HIDDEN_PARTICIPANTS, []))
     );
   const prevHideAllParticipants = React.useRef(hideAllParticipants);
+  const prevQuarterFilterSignature = React.useRef<string | null>(null);
   const [newTaskQuarterId, setNewTaskQuarterId] = React.useState<string>("");
-  const [addTaskQuarterError, setAddTaskQuarterError] = React.useState(false);
 
   React.useEffect(() => {
     if (prevHideAllParticipants.current === hideAllParticipants) return;
@@ -2202,6 +2168,15 @@ export default function BacklogPage() {
     writeLS(LS_HIDDEN_PARTICIPANTS, []);
     setHiddenParticipantsTaskIds(new Set());
   }, [hideAllParticipants]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.removeItem("backlog.quartersMap:session");
+      localStorage.removeItem("backlog.quartersMap:data");
+    } catch {
+      // ignore
+    }
+  }, []);
 
   React.useEffect(() => {
     if (quarterIdSet.size === 0) return;
@@ -2216,11 +2191,30 @@ export default function BacklogPage() {
   }, [selectedQuarterIds, quarterIdSet, dispatch]);
 
   React.useEffect(() => {
+    const signature = JSON.stringify({
+      selectedQuarterIds: selectedQuarterIds.slice().sort(),
+      withoutQuarterFilter,
+    });
+    if (prevQuarterFilterSignature.current === null) {
+      prevQuarterFilterSignature.current = signature;
+      return;
+    }
+    if (prevQuarterFilterSignature.current === signature) {
+      return;
+    }
+    prevQuarterFilterSignature.current = signature;
+    setTaskQuartersMap({});
+  }, [selectedQuarterIds, withoutQuarterFilter]);
+
+  React.useEffect(() => {
     const nextQuarterId = (() => {
-      const prevValid = newTaskQuarterId && quarterIdSet.has(newTaskQuarterId)
-        ? newTaskQuarterId
-        : "";
+      const prevValid =
+        newTaskQuarterId === NO_INITIAL_QUARTER_VALUE ||
+        (newTaskQuarterId && quarterIdSet.has(newTaskQuarterId))
+          ? newTaskQuarterId
+          : "";
       if (prevValid) return prevValid;
+      if (withoutQuarterFilter && selectedQuarterIds.length === 0) return "";
       const fromSelected = selectedQuarterIds.find((id) =>
         quarterIdSet.has(id)
       );
@@ -2236,6 +2230,7 @@ export default function BacklogPage() {
   }, [
     quarterIdSet,
     selectedQuarterIds,
+    withoutQuarterFilter,
     defaultQuarterId,
     newTaskQuarterId,
     quarterIdsKey,
@@ -2325,8 +2320,6 @@ export default function BacklogPage() {
     });
   }, [allTasks]);
 
-  React.useEffect(() => writeTaskQuartersLS(taskQuartersMap), [taskQuartersMap]);
-
   const { data: filtersData } = useGetFiltersQuery();
 
   const streamOptions = React.useMemo(() => {
@@ -2367,26 +2360,15 @@ export default function BacklogPage() {
     (task: BacklogItem): string[] => {
       const fromMap = taskQuartersMap[task.id];
       if (fromMap && fromMap.length) return fromMap;
-      if (selectedQuarterIds.length) {
-        const fromFilter = selectedQuarterIds.filter((id) =>
-          quarterIdSet.has(id)
-        );
-        if (fromFilter.length) return fromFilter;
-      }
-      const derived = deriveTaskQuarters(task, allSprints, currentQ?.id).filter(
+      const fromFilter = selectedQuarterIds.filter((id) => quarterIdSet.has(id));
+      if (fromFilter.length) return fromFilter;
+      const derived = deriveTaskQuarters(task, allSprints).filter(
         (id) => quarterIdSet.has(id)
       );
       if (derived.length) return derived;
-      return quartersSorted.map((q) => q.id);
+      return [];
     },
-    [
-      taskQuartersMap,
-      selectedQuarterIds,
-      quarterIdSet,
-      allSprints,
-      currentQ,
-      quartersSorted,
-    ]
+    [taskQuartersMap, selectedQuarterIds, quarterIdSet, allSprints]
   );
 
   const hasTaskQuarterOverride = React.useCallback(
@@ -2412,13 +2394,21 @@ export default function BacklogPage() {
     [quarterIdSet]
   );
 
-  const quarterFilterOptions = React.useMemo(
+  const taskQuarterOptions = React.useMemo(
     () =>
       quarters
         .slice()
         .sort((a, b) => a.endDate.localeCompare(b.endDate))
         .map((q) => ({ value: q.id, label: q.name })),
     [quarters]
+  );
+
+  const quarterFilterOptions = React.useMemo(
+    () => [
+      { value: WITHOUT_QUARTER_FILTER_VALUE, label: "Без квартала" },
+      ...taskQuarterOptions,
+    ],
+    [taskQuarterOptions]
   );
 
   const priorityOptions = React.useMemo(
@@ -2473,12 +2463,29 @@ export default function BacklogPage() {
     (ids: string[]) => {
       const existing = new Set(quarters.map((q) => q.id));
       const filtered = ids.filter((id) => existing.has(id));
-      if (shallowArrayEqual(filtered, selectedQuarterIds)) return;
+      const nextWithoutQuarter = ids.includes(WITHOUT_QUARTER_FILTER_VALUE);
+      if (
+        shallowArrayEqual(filtered, selectedQuarterIds) &&
+        nextWithoutQuarter === withoutQuarterFilter
+      ) {
+        return;
+      }
       startFiltersTransition(() => {
-        dispatch(setBacklogFilters({ selectedQuarterIds: filtered }));
+        dispatch(
+          setBacklogFilters({
+            selectedQuarterIds: filtered,
+            withoutQuarterFilter: nextWithoutQuarter,
+          })
+        );
       });
     },
-    [quarters, selectedQuarterIds, startFiltersTransition, dispatch]
+    [
+      quarters,
+      selectedQuarterIds,
+      withoutQuarterFilter,
+      startFiltersTransition,
+      dispatch,
+    ]
   );
 
   const handlePriorityFilterChange = React.useCallback(
@@ -2571,19 +2578,18 @@ export default function BacklogPage() {
     [dispatch, normalizedSearch, startFiltersTransition]
   );
   const deferredStatusFilter = React.useDeferredValue(statusFilter);
-  const deferredTasks = React.useDeferredValue(allTasks);
 
   const filteredTasks = React.useMemo(() => {
     const byStatus =
       deferredStatusFilter.length === 0
-        ? deferredTasks
-        : deferredTasks.filter((t) => {
+        ? allTasks
+        : allTasks.filter((t) => {
             const st = t.status ?? "inprogress";
             return deferredStatusFilter.includes(st);
           });
 
     const pinnedTask = pinnedTaskId
-      ? deferredTasks.find((t) => t.id === pinnedTaskId) ?? null
+      ? allTasks.find((t) => t.id === pinnedTaskId) ?? null
       : null;
     const withPinned =
       pinnedTask && !byStatus.some((t) => t.id === pinnedTask.id)
@@ -2606,7 +2612,7 @@ export default function BacklogPage() {
     });
 
     return withOrder;
-  }, [deferredTasks, deferredStatusFilter, pinnedTaskId]);
+  }, [allTasks, deferredStatusFilter, pinnedTaskId]);
 
   const displayedTasksCount = filteredTasks.length;
 
@@ -2713,23 +2719,20 @@ export default function BacklogPage() {
       streams: [],
       participantIds: [],
       releaseDateId: null,
+      initialQuarterId: quarterId || null,
     }).unwrap();
 
     setAllocations((prev) => ({ ...prev, [created.id]: {} }));
     setPinnedTaskId(created.id);
-    if (quarterId) {
-      setTaskQuartersMap((prev) => ({ ...prev, [created.id]: [quarterId] }));
-    }
   };
 
   const handleConfirmAddTask = async () => {
-    if (!newTaskQuarterId) {
-      setAddTaskQuarterError(true);
-      return;
-    }
-    setAddTaskQuarterError(false);
     try {
-      await createTask(newTaskQuarterId);
+      await createTask(
+        newTaskQuarterId && newTaskQuarterId !== NO_INITIAL_QUARTER_VALUE
+          ? newTaskQuarterId
+          : undefined
+      );
     } catch (error) {
       console.error("Не удалось создать задачу", error);
     }
@@ -2737,7 +2740,6 @@ export default function BacklogPage() {
 
   const duplicateTask = React.useCallback(
     async (task: BacklogItem) => {
-      const taskQuarters = getTaskQuarters(task);
       const taskAllocations = allocations[task.id] || {};
       const allocationsPayload = Object.entries(taskAllocations).reduce<
         Record<string, Record<string, number>>
@@ -2772,8 +2774,8 @@ export default function BacklogPage() {
         streams: task.streams?.slice() || [],
         participantIds: task.participantIds.slice(),
         releaseDateId: task.releaseDateId ?? null,
+        initialQuarterId: task.initialQuarterId ?? null,
         leaderId: (task as any).leaderId ?? undefined,
-        quarterIds: taskQuarters,
         order: baseOrder + 1,
         loads: loadsPayload,
         allocations: Object.keys(allocationsPayload).length
@@ -2781,13 +2783,9 @@ export default function BacklogPage() {
           : undefined,
       }).unwrap();
 
-      if (taskQuarters.length) {
-        setTaskQuartersMap((prev) => ({ ...prev, [copy.id]: taskQuarters }));
-      }
-
       return copy;
     },
-    [addTask, allocations, allTasks.length, getTaskQuarters]
+    [addTask, allocations, allTasks.length]
   );
 
   const removeTask = React.useCallback(
@@ -3240,8 +3238,6 @@ export default function BacklogPage() {
             <FormControl
               size="small"
               sx={{ minWidth: 220 }}
-              error={addTaskQuarterError}
-              disabled={!quartersSorted.length}
             >
               <InputLabel id="new-task-quarter-label">
                 Квартал задачи
@@ -3252,29 +3248,21 @@ export default function BacklogPage() {
                 value={newTaskQuarterId}
                 onChange={(e) => {
                   setNewTaskQuarterId(String(e.target.value));
-                  setAddTaskQuarterError(false);
                 }}
               >
+                <MenuItem value={NO_INITIAL_QUARTER_VALUE}>Без квартала</MenuItem>
                 {quartersSorted.map((q) => (
                   <MenuItem key={q.id} value={q.id}>
                     {q.name}
                   </MenuItem>
                 ))}
               </Select>
-              <FormHelperText>
-                {!quartersSorted.length
-                  ? "Сначала добавьте кварталы"
-                  : addTaskQuarterError
-                  ? "Выберите квартал"
-                  : ""}
-              </FormHelperText>
             </FormControl>
 
             <Button
               variant="contained"
               startIcon={<Add />}
               onClick={handleConfirmAddTask}
-              disabled={!newTaskQuarterId}
             >
               Добавить задачу
             </Button>
@@ -3293,7 +3281,9 @@ export default function BacklogPage() {
                 allowCustom: false,
                 label: "Фильтр по кварталам",
                 options: quarterFilterOptions,
-                value: selectedQuarterIds,
+                value: withoutQuarterFilter
+                  ? [...selectedQuarterIds, WITHOUT_QUARTER_FILTER_VALUE]
+                  : selectedQuarterIds,
                 onChange: handleQuarterFilterChange,
               },
             },
@@ -3407,7 +3397,8 @@ export default function BacklogPage() {
           sprintsByQuarter={sprintsByQuarter}
           quartersSorted={quartersSorted}
           selectedQuarterIds={selectedQuarterIds}
-          quarterFilterOptions={quarterFilterOptions}
+          withoutQuarterFilter={withoutQuarterFilter}
+          quarterFilterOptions={taskQuarterOptions}
           customerOptions={customerOptions}
           streamOptions={streamOptions}
           releaseOptions={releaseFilterOptions}

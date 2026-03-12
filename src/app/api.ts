@@ -224,11 +224,22 @@ const collectCachedArgs = <Args>(
   getState: () => AnyState,
   endpointName: string,
   tags: TagDescriptor<string>[]
-): Args[] =>
-  api.util
+): Args[] => {
+  const seen = new Set<string>();
+
+  return api.util
     .selectInvalidatedBy(getState() as any, tags as any)
     .filter((q) => q.endpointName === endpointName)
-    .map((q) => q.originalArgs as Args);
+    .flatMap((q) => {
+      const cacheKey =
+        typeof q.queryCacheKey === "string"
+          ? q.queryCacheKey
+          : JSON.stringify(q.originalArgs ?? null);
+      if (seen.has(cacheKey)) return [];
+      seen.add(cacheKey);
+      return [q.originalArgs as Args];
+    });
+};
 
 const applyPatches = <Args>(
   dispatch: any,
@@ -310,10 +321,16 @@ const getParticipantsFromCache = (state: AnyState): Participant[] =>
 
 const recomputeSprintLoad = (task: BacklogItem, sprintId: string) => {
   const allocations = task.allocations || {};
-  task.loads[sprintId] = Object.values(allocations).reduce(
+  if (!task.loads) task.loads = {};
+  const total = Object.values(allocations).reduce(
     (acc, alloc) => acc + (alloc[sprintId] || 0),
     0
   );
+  if (total > 0) {
+    task.loads[sprintId] = total;
+  } else {
+    delete task.loads[sprintId];
+  }
 };
 
 const applyAllocation = (
@@ -323,11 +340,18 @@ const applyAllocation = (
   days: number
 ) => {
   if (!task.allocations) task.allocations = {};
-  if (!task.allocations[participantId]) task.allocations[participantId] = {};
-  task.allocations[participantId][sprintId] = Math.max(
-    0,
-    Math.round(Number(days) || 0)
-  );
+  const nextDays = Math.max(0, Math.round(Number(days) || 0));
+
+  if (nextDays > 0) {
+    if (!task.allocations[participantId]) task.allocations[participantId] = {};
+    task.allocations[participantId][sprintId] = nextDays;
+  } else if (task.allocations[participantId]) {
+    delete task.allocations[participantId][sprintId];
+    if (Object.keys(task.allocations[participantId]).length === 0) {
+      delete task.allocations[participantId];
+    }
+  }
+
   recomputeSprintLoad(task, sprintId);
   task.updatedAt = new Date().toISOString().slice(0, 10);
 };
@@ -343,7 +367,13 @@ const applyBulkAllocation = (
 };
 
 const applySprintLoad = (task: BacklogItem, sprintId: string, days: number) => {
-  task.loads[sprintId] = Math.max(0, Math.round(Number(days) || 0));
+  if (!task.loads) task.loads = {};
+  const nextDays = Math.max(0, Math.round(Number(days) || 0));
+  if (nextDays > 0) {
+    task.loads[sprintId] = nextDays;
+  } else {
+    delete task.loads[sprintId];
+  }
   task.updatedAt = new Date().toISOString().slice(0, 10);
 };
 
@@ -352,6 +382,7 @@ const TASK_LIST_AFFECTING_FIELDS = new Set([
   "priority",
   "status",
   "releaseDateId",
+  "initialQuarterId",
   "streams",
   "customers",
   "participantIds",
@@ -821,6 +852,7 @@ export const api = createApi({
       | void
       | {
           quarterIds?: string[];
+          withoutQuarter?: boolean;
           priority?: number[];
           statuses?: string[];
           releaseDateId?: string;
@@ -845,6 +877,7 @@ export const api = createApi({
 
         const quarters = joinOrUndefined(arg?.quarterIds);
         if (quarters) params.quarterId = quarters;
+        if (arg?.withoutQuarter) params.withoutQuarter = "true";
 
         const priorities = joinOrUndefined(arg?.priority);
         if (priorities) params.priority = priorities;
@@ -983,6 +1016,7 @@ export const api = createApi({
           notes: arg.notes ? { ...arg.notes } : undefined,
           quarterIds: arg.quarterIds ? [...arg.quarterIds] : undefined,
           releaseDateId: arg.releaseDateId,
+          initialQuarterId: arg.initialQuarterId ?? null,
           releaseSprintId: arg.releaseSprintId,
           leaderId: arg.leaderId ?? null,
           createdAt: now,
@@ -1034,7 +1068,10 @@ export const api = createApi({
           const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
             getState,
             "getTasks",
-            [{ type: "Task", id: arg.id }]
+            [
+              { type: "Task", id: "LIST" },
+              { type: "Task", id: arg.id },
+            ]
           );
 
           const patches = applyPatches(
@@ -1067,8 +1104,9 @@ export const api = createApi({
             });
             dispatch(
               api.util.updateQueryData("getTask", data.id, (draft) => {
-                if (draft) return data;
-                return draft;
+                updateTaskDetailDraft(draft, (task) => {
+                  Object.assign(task, data);
+                });
               })
             );
           } catch (error) {
@@ -1127,31 +1165,11 @@ export const api = createApi({
       { taskId: string; participantId: string; sprintId: string; days: number }
     >({
       query: (body) => ({ url: "/taskalloc", method: "POST", body }),
-      invalidatesTags: [{ type: "Capacity" as const, id: "LIST" as const }],
-      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
-          getState,
-          "getTasks",
-          [{ type: "Task", id: arg.taskId }]
-        );
-
-        const patches = applyPatches(
-          dispatch,
-          "getTasks",
-          cachedArgs,
-          (draft: TasksPage) => {
-            updateTasksDraft(draft, (tasks) => {
-              const task = tasks.find((t: BacklogItem) => t.id === arg.taskId);
-              if (task)
-                applyAllocation(
-                  task,
-                  arg.participantId,
-                  arg.sprintId,
-                  arg.days
-                );
-            });
-          }
-        );
+      invalidatesTags: [
+        { type: "Task" as const, id: "LIST" as const },
+        { type: "Capacity" as const, id: "LIST" as const },
+      ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const detailPatch = dispatch(
           api.util.updateQueryData("getTask", arg.taskId, (draft) => {
             updateTaskDetailDraft(draft, (task) =>
@@ -1162,20 +1180,14 @@ export const api = createApi({
 
         try {
           const { data } = await queryFulfilled;
-          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
-            updateTasksDraft(draft, (tasks) => {
-              const idx = tasks.findIndex((t: BacklogItem) => t.id === data.id);
-              if (idx >= 0) tasks[idx] = data;
-            });
-          });
           dispatch(
             api.util.updateQueryData("getTask", data.id, (draft) => {
-              if (draft) return data;
-              return draft;
+              updateTaskDetailDraft(draft, (task) => {
+                Object.assign(task, data);
+              });
             })
           );
         } catch (error) {
-          patches.forEach((p) => p.undo());
           detailPatch.undo();
           notifyError("Не удалось сохранить распределение задачи", error);
         }
@@ -1187,25 +1199,11 @@ export const api = createApi({
       { taskId: string; participantId: string; allocations: Record<string, number> }
     >({
       query: (body) => ({ url: "/taskalloc/bulk", method: "POST", body }),
-      invalidatesTags: [{ type: "Capacity" as const, id: "LIST" as const }],
-      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
-          getState,
-          "getTasks",
-          [{ type: "Task", id: arg.taskId }]
-        );
-
-        const patches = applyPatches(
-          dispatch,
-          "getTasks",
-          cachedArgs,
-          (draft: TasksPage) => {
-            updateTasksDraft(draft, (tasks) => {
-              const task = tasks.find((t: BacklogItem) => t.id === arg.taskId);
-              if (task) applyBulkAllocation(task, arg.participantId, arg.allocations);
-            });
-          }
-        );
+      invalidatesTags: [
+        { type: "Task" as const, id: "LIST" as const },
+        { type: "Capacity" as const, id: "LIST" as const },
+      ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const detailPatch = dispatch(
           api.util.updateQueryData("getTask", arg.taskId, (draft) => {
             updateTaskDetailDraft(draft, (task) =>
@@ -1216,20 +1214,14 @@ export const api = createApi({
 
         try {
           const { data } = await queryFulfilled;
-          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
-            updateTasksDraft(draft, (tasks) => {
-              const idx = tasks.findIndex((t: BacklogItem) => t.id === data.id);
-              if (idx >= 0) tasks[idx] = data;
-            });
-          });
           dispatch(
             api.util.updateQueryData("getTask", data.id, (draft) => {
-              if (draft) return data;
-              return draft;
+              updateTaskDetailDraft(draft, (task) => {
+                Object.assign(task, data);
+              });
             })
           );
         } catch (error) {
-          patches.forEach((p) => p.undo());
           detailPatch.undo();
           notifyError("Не удалось сохранить распределение по спринтам", error);
         }
@@ -1241,29 +1233,11 @@ export const api = createApi({
       { taskId: string; allocations: Record<string, Record<string, number>> }
     >({
       query: (body) => ({ url: "/taskalloc/bulk/multi", method: "POST", body }),
-      invalidatesTags: [{ type: "Capacity" as const, id: "LIST" as const }],
-      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
-          getState,
-          "getTasks",
-          [{ type: "Task", id: arg.taskId }]
-        );
-
-        const patches = applyPatches(
-          dispatch,
-          "getTasks",
-          cachedArgs,
-          (draft: TasksPage) => {
-            updateTasksDraft(draft, (tasks) => {
-              const task = tasks.find((t: BacklogItem) => t.id === arg.taskId);
-              if (task) {
-                Object.entries(arg.allocations).forEach(([participantId, row]) =>
-                  applyBulkAllocation(task, participantId, row)
-                );
-              }
-            });
-          }
-        );
+      invalidatesTags: [
+        { type: "Task" as const, id: "LIST" as const },
+        { type: "Capacity" as const, id: "LIST" as const },
+      ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const detailPatch = dispatch(
           api.util.updateQueryData("getTask", arg.taskId, (draft) => {
             updateTaskDetailDraft(draft, (task) => {
@@ -1276,20 +1250,14 @@ export const api = createApi({
 
         try {
           const { data } = await queryFulfilled;
-          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
-            updateTasksDraft(draft, (tasks) => {
-              const idx = tasks.findIndex((t: BacklogItem) => t.id === data.id);
-              if (idx >= 0) tasks[idx] = data;
-            });
-          });
           dispatch(
             api.util.updateQueryData("getTask", data.id, (draft) => {
-              if (draft) return data;
-              return draft;
+              updateTaskDetailDraft(draft, (task) => {
+                Object.assign(task, data);
+              });
             })
           );
         } catch (error) {
-          patches.forEach((p) => p.undo());
           detailPatch.undo();
           notifyError("Не удалось сохранить распределение по спринтам", error);
         }
@@ -1302,25 +1270,11 @@ export const api = createApi({
       { taskId: string; sprintId: string; days: number }
     >({
       query: (body) => ({ url: "/taskload", method: "POST", body }),
-      invalidatesTags: [{ type: "Capacity" as const, id: "LIST" as const }],
-      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
-        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
-          getState,
-          "getTasks",
-          [{ type: "Task", id: arg.taskId }]
-        );
-
-        const patches = applyPatches(
-          dispatch,
-          "getTasks",
-          cachedArgs,
-          (draft: TasksPage) => {
-            updateTasksDraft(draft, (tasks) => {
-              const task = tasks.find((t: BacklogItem) => t.id === arg.taskId);
-              if (task) applySprintLoad(task, arg.sprintId, arg.days);
-            });
-          }
-        );
+      invalidatesTags: [
+        { type: "Task" as const, id: "LIST" as const },
+        { type: "Capacity" as const, id: "LIST" as const },
+      ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const detailPatch = dispatch(
           api.util.updateQueryData("getTask", arg.taskId, (draft) => {
             updateTaskDetailDraft(draft, (task) =>
@@ -1331,20 +1285,14 @@ export const api = createApi({
 
         try {
           const { data } = await queryFulfilled;
-          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
-            updateTasksDraft(draft, (tasks) => {
-              const idx = tasks.findIndex((t: BacklogItem) => t.id === data.id);
-              if (idx >= 0) tasks[idx] = data;
-            });
-          });
           dispatch(
             api.util.updateQueryData("getTask", data.id, (draft) => {
-              if (draft) return data;
-              return draft;
+              updateTaskDetailDraft(draft, (task) => {
+                Object.assign(task, data);
+              });
             })
           );
         } catch (error) {
-          patches.forEach((p) => p.undo());
           detailPatch.undo();
           notifyError("Не удалось сохранить загрузку задачи", error);
         }

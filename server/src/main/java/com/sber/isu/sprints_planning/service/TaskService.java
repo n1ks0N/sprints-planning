@@ -11,6 +11,7 @@ import com.sber.isu.sprints_planning.dto.request.TaskLoadRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
 import com.sber.isu.sprints_planning.mapper.DtoMapper;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
+import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.ReleaseEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
@@ -23,6 +24,7 @@ import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
 import com.sber.isu.sprints_planning.model.TaskParticipantId;
 import com.sber.isu.sprints_planning.model.TaskStreamEntity;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
+import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskAllocationRepository;
@@ -61,6 +63,7 @@ public class TaskService {
     private final TaskAllocationRepository taskAllocationRepository;
     private final ParticipantRepository participantRepository;
     private final SprintRepository sprintRepository;
+    private final QuarterRepository quarterRepository;
     private final ReleaseRepository releaseRepository;
     private final TaskStreamRepository taskStreamRepository;
     private final TaskCustomerRepository taskCustomerRepository;
@@ -71,6 +74,7 @@ public class TaskService {
         TaskAllocationRepository taskAllocationRepository,
         ParticipantRepository participantRepository,
         SprintRepository sprintRepository,
+        QuarterRepository quarterRepository,
         ReleaseRepository releaseRepository,
         TaskStreamRepository taskStreamRepository,
         TaskCustomerRepository taskCustomerRepository,
@@ -80,6 +84,7 @@ public class TaskService {
         this.taskAllocationRepository = taskAllocationRepository;
         this.participantRepository = participantRepository;
         this.sprintRepository = sprintRepository;
+        this.quarterRepository = quarterRepository;
         this.releaseRepository = releaseRepository;
         this.taskStreamRepository = taskStreamRepository;
         this.taskCustomerRepository = taskCustomerRepository;
@@ -136,6 +141,9 @@ public class TaskService {
         entity.setNotes(convertNotes(request.notes()));
         if (request.releaseDateId() != null) {
             entity.setReleaseDate(resolveRelease(teamKey, request.releaseDateId()));
+        }
+        if (request.initialQuarterId() != null && !request.initialQuarterId().isBlank()) {
+            entity.setInitialQuarter(resolveQuarter(teamKey, request.initialQuarterId()));
         }
         if (request.leaderId() != null && !request.leaderId().isBlank()) {
             entity.setLeaderParticipant(fetchParticipant(teamKey, request.leaderId()));
@@ -207,6 +215,13 @@ public class TaskService {
         }
         if (request.releaseDateId() != null) {
             entity.setReleaseDate(resolveRelease(teamKey, request.releaseDateId()));
+        }
+        if (request.initialQuarterId() != null) {
+            if (request.initialQuarterId().isBlank()) {
+                entity.setInitialQuarter(null);
+            } else {
+                entity.setInitialQuarter(resolveQuarter(teamKey, request.initialQuarterId()));
+            }
         }
         if (request.notes() != null) {
             entity.setNotes(convertNotes(request.notes()));
@@ -477,18 +492,20 @@ public class TaskService {
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         SprintEntity sprint = fetchSprint(teamKey, request.sprintId());
         TaskLoadId id = new TaskLoadId(task.getId(), sprint.getId());
-        TaskLoadEntity load = taskLoadRepository.findById(id)
-            .orElseGet(() -> {
-                TaskLoadEntity created = new TaskLoadEntity();
-                created.setId(id);
-                created.setTask(task);
-                created.setSprint(sprint);
-                created.setDays(BigDecimal.ZERO);
-                created.setTeamKey(teamKey);
-                task.getLoads().add(created);
-                return created;
-            });
-        load.setDays(maxOrZero(request.days()));
+        BigDecimal nextDays = maxOrZero(request.days());
+        TaskLoadEntity load = taskLoadRepository.findById(id).orElse(null);
+        if (nextDays.compareTo(BigDecimal.ZERO) == 0) {
+            if (load != null) {
+                task.getLoads().removeIf(existing -> isSameLoad(existing, sprint.getId()));
+                taskLoadRepository.delete(load);
+            }
+            task.setUpdatedAt(LocalDate.now());
+            return toDto(teamKey, task);
+        }
+        if (load == null) {
+            load = createTaskLoad(task, sprint, teamKey);
+        }
+        load.setDays(nextDays);
         task.setUpdatedAt(LocalDate.now());
         return toDto(teamKey, task);
     }
@@ -510,6 +527,17 @@ public class TaskService {
         return created;
     }
 
+    private TaskLoadEntity createTaskLoad(TaskEntity task, SprintEntity sprint, String teamKey) {
+        TaskLoadEntity created = new TaskLoadEntity();
+        created.setId(new TaskLoadId(task.getId(), sprint.getId()));
+        created.setTask(task);
+        created.setSprint(sprint);
+        created.setDays(BigDecimal.ZERO);
+        created.setTeamKey(teamKey);
+        task.getLoads().add(created);
+        return created;
+    }
+
     private boolean isSameAllocation(TaskAllocationEntity allocation, UUID participantId, UUID sprintId) {
         if (allocation == null || allocation.getParticipant() == null || allocation.getSprint() == null) {
             return false;
@@ -518,6 +546,13 @@ public class TaskService {
         UUID currentSprintId = allocation.getSprint().getId();
         return Objects.equals(currentParticipantId, participantId)
             && Objects.equals(currentSprintId, sprintId);
+    }
+
+    private boolean isSameLoad(TaskLoadEntity load, UUID sprintId) {
+        if (load == null || load.getSprint() == null) {
+            return false;
+        }
+        return Objects.equals(load.getSprint().getId(), sprintId);
     }
 
     private void addAllocationHistoryChange(
@@ -612,18 +647,19 @@ public class TaskService {
         for (Map.Entry<String, BigDecimal> entry : loads.entrySet()) {
             SprintEntity sprint = resolveSprint(entity.getTeamKey(), sprints, entry.getKey());
             TaskLoadId id = new TaskLoadId(entity.getId(), sprint.getId());
-            TaskLoadEntity load = taskLoadRepository.findById(id)
-                .orElseGet(() -> {
-                TaskLoadEntity created = new TaskLoadEntity();
-                created.setId(id);
-                created.setTask(entity);
-                created.setSprint(sprint);
-                created.setDays(BigDecimal.ZERO);
-                created.setTeamKey(entity.getTeamKey());
-                entity.getLoads().add(created);
-                return created;
-            });
-            load.setDays(maxOrZero(entry.getValue()));
+            BigDecimal nextDays = maxOrZero(entry.getValue());
+            TaskLoadEntity load = taskLoadRepository.findById(id).orElse(null);
+            if (nextDays.compareTo(BigDecimal.ZERO) == 0) {
+                if (load != null) {
+                    entity.getLoads().removeIf(existing -> isSameLoad(existing, sprint.getId()));
+                    taskLoadRepository.delete(load);
+                }
+                continue;
+            }
+            if (load == null) {
+                load = createTaskLoad(entity, sprint, entity.getTeamKey());
+            }
+            load.setDays(nextDays);
         }
     }
 
@@ -641,19 +677,21 @@ public class TaskService {
             for (Map.Entry<String, BigDecimal> sprintEntry : participantEntry.getValue().entrySet()) {
                 SprintEntity sprint = resolveSprint(entity.getTeamKey(), sprints, sprintEntry.getKey());
                 TaskAllocationId id = new TaskAllocationId(entity.getId(), participant.getId(), sprint.getId());
-                TaskAllocationEntity allocation = taskAllocationRepository.findById(id)
-                    .orElseGet(() -> {
-                        TaskAllocationEntity created = new TaskAllocationEntity();
-                        created.setId(id);
-                        created.setTask(entity);
-                        created.setParticipant(participant);
-                        created.setSprint(sprint);
-                        created.setDays(BigDecimal.ZERO);
-                        created.setTeamKey(entity.getTeamKey());
-                        entity.getAllocations().add(created);
-                        return created;
-                    });
-                allocation.setDays(maxOrZero(sprintEntry.getValue()));
+                BigDecimal nextDays = maxOrZero(sprintEntry.getValue());
+                TaskAllocationEntity allocation = taskAllocationRepository.findById(id).orElse(null);
+                if (nextDays.compareTo(BigDecimal.ZERO) == 0) {
+                    if (allocation != null) {
+                        entity.getAllocations().removeIf(existing ->
+                            isSameAllocation(existing, participant.getId(), sprint.getId()));
+                        taskAllocationRepository.delete(allocation);
+                    }
+                    recalcLoad(entity, sprint);
+                    continue;
+                }
+                if (allocation == null) {
+                    allocation = createTaskAllocation(entity, participant, sprint, entity.getTeamKey());
+                }
+                allocation.setDays(nextDays);
                 recalcLoad(entity, sprint);
             }
         }
@@ -735,17 +773,17 @@ public class TaskService {
             .filter(Objects::nonNull)
             .reduce(BigDecimal.ZERO, BigDecimal::add);
         TaskLoadId id = new TaskLoadId(task.getId(), sprint.getId());
-        TaskLoadEntity load = taskLoadRepository.findById(id)
-            .orElseGet(() -> {
-                TaskLoadEntity created = new TaskLoadEntity();
-                created.setId(id);
-                created.setTask(task);
-                created.setSprint(sprint);
-                created.setDays(BigDecimal.ZERO);
-                created.setTeamKey(task.getTeamKey());
-                task.getLoads().add(created);
-                return created;
-            });
+        TaskLoadEntity load = taskLoadRepository.findById(id).orElse(null);
+        if (total.compareTo(BigDecimal.ZERO) <= 0) {
+            if (load != null) {
+                task.getLoads().removeIf(existing -> isSameLoad(existing, sprint.getId()));
+                taskLoadRepository.delete(load);
+            }
+            return;
+        }
+        if (load == null) {
+            load = createTaskLoad(task, sprint, task.getTeamKey());
+        }
         load.setDays(total);
     }
 
@@ -807,6 +845,11 @@ public class TaskService {
     private ParticipantEntity fetchParticipant(String teamKey, String participantId) {
         return participantRepository.findByIdAndTeamKey(UUID.fromString(participantId), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
+    }
+
+    private QuarterEntity resolveQuarter(String teamKey, String quarterId) {
+        return quarterRepository.findByIdAndTeamKey(UUID.fromString(quarterId), teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Quarter not found"));
     }
 
     private ReleaseEntity resolveRelease(String teamKey, String releaseDateId) {
@@ -904,6 +947,9 @@ public class TaskService {
         String releaseDateId = entity.getReleaseDate() != null && entity.getReleaseDate().getId() != null
             ? entity.getReleaseDate().getId().toString()
             : null;
+        String initialQuarterId = entity.getInitialQuarter() != null && entity.getInitialQuarter().getId() != null
+            ? entity.getInitialQuarter().getId().toString()
+            : null;
         String leaderId = entity.getLeaderParticipant() != null && entity.getLeaderParticipant().getId() != null
             ? entity.getLeaderParticipant().getId().toString()
             : null;
@@ -917,6 +963,7 @@ public class TaskService {
             extractStreamNames(entity),
             extractParticipantIds(entity),
             releaseDateId,
+            initialQuarterId,
             leaderId,
             entity.getDisplayOrder(),
             extractNotes(entity)
@@ -936,6 +983,7 @@ public class TaskService {
             null,
             null,
             null,
+            null,
             Map.of()
         );
     }
@@ -951,6 +999,7 @@ public class TaskService {
         addTaskHistoryChange(changes, "streams", "Стримы", before.streams(), after.streams());
         addTaskHistoryChange(changes, "participantIds", "Участники", before.participantIds(), after.participantIds());
         addTaskHistoryChange(changes, "releaseDateId", "Релиз", before.releaseDateId(), after.releaseDateId());
+        addTaskHistoryChange(changes, "initialQuarterId", "Квартал создания", before.initialQuarterId(), after.initialQuarterId());
         addTaskHistoryChange(changes, "leaderId", "Лидер", before.leaderId(), after.leaderId());
         addTaskHistoryChange(changes, "order", "Порядок", before.displayOrder(), after.displayOrder());
         addTaskHistoryChange(changes, "notes", "Заметки", before.notes(), after.notes());
@@ -1073,6 +1122,7 @@ public class TaskService {
         List<String> streams,
         List<String> participantIds,
         String releaseDateId,
+        String initialQuarterId,
         String leaderId,
         Integer displayOrder,
         Map<String, String> notes

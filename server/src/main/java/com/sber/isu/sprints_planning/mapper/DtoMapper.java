@@ -72,10 +72,16 @@ public final class DtoMapper {
             .forEach(participant -> participantIds.add(participant.getParticipant().getId().toString()));
         Map<String, java.math.BigDecimal> loads = new HashMap<>();
         for (TaskLoadEntity load : entity.getLoads()) {
+            if (load.getDays() == null || load.getDays().signum() <= 0) {
+                continue;
+            }
             loads.put(load.getSprint().getId().toString(), load.getDays());
         }
         Map<String, Map<String, java.math.BigDecimal>> allocations = new HashMap<>();
         for (TaskAllocationEntity allocation : entity.getAllocations()) {
+            if (allocation.getDays() == null || allocation.getDays().signum() <= 0) {
+                continue;
+            }
             String pid = allocation.getParticipant().getId().toString();
             allocations.computeIfAbsent(pid, k -> new HashMap<>())
                 .put(allocation.getSprint().getId().toString(), allocation.getDays());
@@ -88,6 +94,9 @@ public final class DtoMapper {
         }
         String releaseDateId = entity.getReleaseDate() != null
             ? entity.getReleaseDate().getId().toString()
+            : null;
+        String initialQuarterId = entity.getInitialQuarter() != null && entity.getInitialQuarter().getId() != null
+            ? entity.getInitialQuarter().getId().toString()
             : null;
 
         // Extract customer names from many-to-many relationship
@@ -116,6 +125,7 @@ public final class DtoMapper {
             allocations,
             notes,
             releaseDateId,
+            initialQuarterId,
             releaseSprintId,
             entity.getLeaderParticipant() != null ? entity.getLeaderParticipant().getId().toString() : null,
             entity.getDisplayOrder(),

@@ -18,6 +18,7 @@ public record TaskDto(
     Map<String, Map<String, BigDecimal>> allocations,
     Map<String, String> notes,
     String releaseDateId,
+    String initialQuarterId,
     String releaseSprintId,
     String leaderId,
     Integer order,

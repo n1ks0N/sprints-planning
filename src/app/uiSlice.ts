@@ -5,6 +5,7 @@ export type UIState = {
   backlog: {
     quarterId: string; // "all" | qid
     selectedQuarterIds: string[];
+    withoutQuarterFilter: boolean;
     releaseSprintFilter: string; // "all" | "" | releaseDateId
     priorityFilter: number[]; // [1,2,3]
     streamFilter: string[]; // multi-select
@@ -54,6 +55,7 @@ function defaultState(): UIState {
     backlog: {
       quarterId: "all",
       selectedQuarterIds: [],
+      withoutQuarterFilter: false,
       releaseSprintFilter: "all",
       priorityFilter: [],
       streamFilter: [],
@@ -112,6 +114,14 @@ function sanitizeBacklog(
     ? input.customerFilter.filter((s: any): s is string => typeof s === "string")
     : defaults.customerFilter.slice();
 
+  const selectedQuarterIds = Array.isArray(input?.selectedQuarterIds)
+    ? input.selectedQuarterIds.filter(
+        (id: any): id is string => typeof id === "string"
+      )
+    : typeof input?.quarterId === "string" && input.quarterId !== "all"
+    ? [input.quarterId]
+    : defaults.selectedQuarterIds.slice();
+
   return {
     quarterId:
       typeof input?.quarterId === "string"
@@ -121,6 +131,10 @@ function sanitizeBacklog(
       typeof input?.releaseSprintFilter === "string"
         ? input.releaseSprintFilter
         : defaults.releaseSprintFilter,
+    withoutQuarterFilter:
+      typeof input?.withoutQuarterFilter === "boolean"
+        ? input.withoutQuarterFilter
+        : defaults.withoutQuarterFilter,
     priorityFilter,
     streamFilter,
     customerFilter,
@@ -130,11 +144,7 @@ function sanitizeBacklog(
         ? input.searchQuery
         : defaults.searchQuery,
     tasksPageSize,
-    selectedQuarterIds: Array.isArray(input?.selectedQuarterIds)
-      ? input.selectedQuarterIds.filter(
-          (id: any): id is string => typeof id === "string"
-        )
-      : defaults.selectedQuarterIds.slice(),
+    selectedQuarterIds,
     hideAllParticipants:
       typeof input?.hideAllParticipants === "boolean"
         ? input.hideAllParticipants
@@ -263,7 +273,25 @@ const uiSlice = createSlice({
       state,
       action: PayloadAction<Partial<UIState["backlog"]>>
     ) {
-      state.backlog = { ...state.backlog, ...action.payload };
+      const next = { ...state.backlog, ...action.payload };
+      const syncLegacyQuarterId =
+        Object.prototype.hasOwnProperty.call(
+          action.payload,
+          "selectedQuarterIds"
+        ) ||
+        Object.prototype.hasOwnProperty.call(
+          action.payload,
+          "withoutQuarterFilter"
+        );
+
+      if (
+        syncLegacyQuarterId &&
+        !Object.prototype.hasOwnProperty.call(action.payload, "quarterId")
+      ) {
+        next.quarterId = next.selectedQuarterIds[0] ?? "all";
+      }
+
+      state.backlog = next;
     },
     setCapacitySelectedQuarterIds(
       state,

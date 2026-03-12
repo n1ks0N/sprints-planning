@@ -68,6 +68,7 @@ export type BacklogItem = {
   notes?: Record<string, string>;
   quarterIds?: string[];
   releaseDateId?: string | null;
+  initialQuarterId?: string | null;
   releaseSprintId?: string;
   leaderId?: string | null;
   order?: number;

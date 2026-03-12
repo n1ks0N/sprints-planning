@@ -15,6 +15,7 @@ import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Join;
+import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Order;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
@@ -266,7 +267,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             ));
         }
 
-        if (!filter.quarterIds().isEmpty()) {
+        if (!filter.quarterIds().isEmpty() || filter.withoutQuarter()) {
             predicates.add(quarterMatches(query, cb, task, filter));
         }
 
@@ -375,23 +376,65 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
     }
 
     private Predicate quarterMatches(CriteriaQuery<?> query, CriteriaBuilder cb, Root<TaskEntity> task, TaskFilter filter) {
-        var loadSub = query.subquery(UUID.class);
-        Root<TaskLoadEntity> load = loadSub.from(TaskLoadEntity.class);
-        loadSub.select(load.get("task").get("id"))
+        var loadInQuarterSub = query.subquery(UUID.class);
+        Root<TaskLoadEntity> loadInQuarter = loadInQuarterSub.from(TaskLoadEntity.class);
+        loadInQuarterSub.select(loadInQuarter.get("task").get("id"))
             .where(
-                cb.equal(load.get("task").get("id"), task.get("id")),
-                load.get("sprint").get("quarter").get("id").in(filter.quarterIds()),
-                cb.greaterThan(cb.coalesce(load.get("days"), BigDecimal.ZERO), BigDecimal.ZERO)
+                cb.equal(loadInQuarter.get("task").get("id"), task.get("id")),
+                loadInQuarter.get("sprint").get("quarter").get("id").in(filter.quarterIds()),
+                cb.greaterThan(cb.coalesce(loadInQuarter.get("days"), BigDecimal.ZERO), BigDecimal.ZERO)
             );
 
-        var allocationSub = query.subquery(UUID.class);
-        Root<TaskAllocationEntity> allocation = allocationSub.from(TaskAllocationEntity.class);
-        allocationSub.select(allocation.get("task").get("id"))
+        var allocationInQuarterSub = query.subquery(UUID.class);
+        Root<TaskAllocationEntity> allocationInQuarter = allocationInQuarterSub.from(TaskAllocationEntity.class);
+        allocationInQuarterSub.select(allocationInQuarter.get("task").get("id"))
             .where(
-                cb.equal(allocation.get("task").get("id"), task.get("id")),
-                allocation.get("sprint").get("quarter").get("id").in(filter.quarterIds())
+                cb.equal(allocationInQuarter.get("task").get("id"), task.get("id")),
+                allocationInQuarter.get("sprint").get("quarter").get("id").in(filter.quarterIds()),
+                cb.greaterThan(cb.coalesce(allocationInQuarter.get("days"), BigDecimal.ZERO), BigDecimal.ZERO)
             );
 
-        return cb.or(cb.exists(loadSub), cb.exists(allocationSub));
+        Predicate hasPositiveWorkInSelectedQuarter = cb.or(
+            cb.exists(loadInQuarterSub),
+            cb.exists(allocationInQuarterSub)
+        );
+
+        var loadAnywhereSub = query.subquery(UUID.class);
+        Root<TaskLoadEntity> loadAnywhere = loadAnywhereSub.from(TaskLoadEntity.class);
+        loadAnywhereSub.select(loadAnywhere.get("task").get("id"))
+            .where(
+                cb.equal(loadAnywhere.get("task").get("id"), task.get("id")),
+                cb.greaterThan(cb.coalesce(loadAnywhere.get("days"), BigDecimal.ZERO), BigDecimal.ZERO)
+            );
+
+        var allocationAnywhereSub = query.subquery(UUID.class);
+        Root<TaskAllocationEntity> allocationAnywhere = allocationAnywhereSub.from(TaskAllocationEntity.class);
+        allocationAnywhereSub.select(allocationAnywhere.get("task").get("id"))
+            .where(
+                cb.equal(allocationAnywhere.get("task").get("id"), task.get("id")),
+                cb.greaterThan(cb.coalesce(allocationAnywhere.get("days"), BigDecimal.ZERO), BigDecimal.ZERO)
+            );
+
+        Predicate hasNoPositiveWorkAnywhere = cb.and(
+            cb.not(cb.exists(loadAnywhereSub)),
+            cb.not(cb.exists(allocationAnywhereSub))
+        );
+
+        List<Predicate> matches = new ArrayList<>();
+        if (!filter.quarterIds().isEmpty()) {
+            Join<TaskEntity, ?> initialQuarter = task.join("initialQuarter", JoinType.LEFT);
+            matches.add(hasPositiveWorkInSelectedQuarter);
+            matches.add(cb.and(
+                hasNoPositiveWorkAnywhere,
+                initialQuarter.get("id").in(filter.quarterIds())
+            ));
+        }
+        if (filter.withoutQuarter()) {
+            matches.add(cb.and(
+                hasNoPositiveWorkAnywhere,
+                cb.isNull(task.get("initialQuarter"))
+            ));
+        }
+        return cb.or(matches.toArray(new Predicate[0]));
     }
 }

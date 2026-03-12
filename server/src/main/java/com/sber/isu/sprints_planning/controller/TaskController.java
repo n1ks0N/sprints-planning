@@ -44,6 +44,7 @@ public class TaskController {
         @RequestParam(value = "participantId", required = false) String participantId,
         @RequestParam(value = "role", required = false) String role,
         @RequestParam(value = "userStream", required = false) String userStream,
+        @RequestParam(value = "withoutQuarter", required = false) String withoutQuarter,
         @RequestParam(value = "id", required = false) String pinnedTaskId,
         @RequestParam(value = "page", required = false) Integer page,
         @RequestParam(value = "size", required = false) Integer size) {
@@ -59,6 +60,7 @@ public class TaskController {
             role,
             userStream,
             search,
+            withoutQuarter,
             pinnedTaskId
         );
         return taskService.findPage(normalizedTeamKey, filter, page, size);

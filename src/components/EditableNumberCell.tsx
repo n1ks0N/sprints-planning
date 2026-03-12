@@ -56,6 +56,9 @@ export default function EditableNumberCell({
       <Box
         sx={{
           minWidth: 48,
+          maxWidth: 72,
+          width: "100%",
+          mx: "auto",
           textAlign: "center",
           cursor: "pointer",
         }}
@@ -68,35 +71,50 @@ export default function EditableNumberCell({
   }
 
   return (
-    <InputBase
-      inputRef={inputRef}
-      type="number"
-      autoFocus
-      value={Number.isFinite(draft) ? draft : 0}
-      onChange={(e) => {
-        const v = Number(e.target.value);
-        setDraft(Number.isFinite(v) ? v : 0);
-      }}
-      onBlur={handleClose}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === "Escape") {
-          (e.currentTarget as HTMLInputElement).blur();
-        }
-      }}
+    <Box
       sx={{
-        textAlign: "center",
-        px: 0.5,
-        borderRadius: 1,
-        bgcolor: "background.paper",
-        outline: "1px solid",
-        outlineColor: "divider",
+        minWidth: 48,
+        maxWidth: 72,
         width: "100%",
+        mx: "auto",
       }}
-      inputProps={{
-        id: inputId,
-        name: title || "allocation-value",
-        "aria-label": title || "Значение нагрузки",
-      }}
-    />
+    >
+      <InputBase
+        inputRef={inputRef}
+        type="number"
+        autoFocus
+        value={Number.isFinite(draft) ? draft : 0}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          setDraft(Number.isFinite(v) ? v : 0);
+        }}
+        onBlur={handleClose}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === "Escape") {
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+        sx={{
+          textAlign: "center",
+          px: 0.5,
+          borderRadius: 1,
+          bgcolor: "background.paper",
+          outline: "1px solid",
+          outlineColor: "divider",
+          width: "100%",
+          "& input": {
+            minWidth: 0,
+            width: "100%",
+            textAlign: "center",
+            px: 0,
+          },
+        }}
+        inputProps={{
+          id: inputId,
+          name: title || "allocation-value",
+          "aria-label": title || "Значение нагрузки",
+        }}
+      />
+    </Box>
   );
 }
