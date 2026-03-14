@@ -40,6 +40,7 @@ public class ParticipantService {
         entity.setRole(request.role());
         entity.setRate(BigDecimal.valueOf(request.rate()));
         entity.setUserStreams(normalizeUserStreams(request.userStreams()));
+        entity.setJiraLogin(normalizeOptional(request.jiraLogin()));
         int nextOrder = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey).stream()
             .map(ParticipantEntity::getDisplayOrder)
             .max(Comparator.naturalOrder())
@@ -66,6 +67,9 @@ public class ParticipantService {
         }
         if (request.userStreams() != null) {
             entity.setUserStreams(normalizeUserStreams(request.userStreams()));
+        }
+        if (request.jiraLogin() != null) {
+            entity.setJiraLogin(normalizeOptional(request.jiraLogin()));
         }
         return DtoMapper.toParticipantDto(entity);
     }
@@ -107,5 +111,13 @@ public class ParticipantService {
             }
         }
         return normalized;
+    }
+
+    private String normalizeOptional(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

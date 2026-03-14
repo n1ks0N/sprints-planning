@@ -50,6 +50,7 @@ public class ApiActionDescriptionResolver {
         actions.put("GET /history", "Просмотр истории действий");
 
         actions.put("GET /export/excel", "Экспорт плана в Excel");
+        actions.put("POST /jira/issues", "Заведение задач в Jira");
     }
 
     public String resolve(String method, String path) {

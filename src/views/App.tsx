@@ -16,8 +16,9 @@ import {
   Stack,
   Tooltip,
   IconButton,
+  Badge,
 } from "@mui/material";
-import { Visibility, VisibilityOff } from "@mui/icons-material";
+import { AddTask, Visibility, VisibilityOff } from "@mui/icons-material";
 
 import TimeSetupPage from "./TimeSetupPage";
 import TeamPage from "./TeamPage";
@@ -45,6 +46,10 @@ import PageHelpDialog, {
   PageHelpContent,
 } from "../components/PageHelpDialog";
 import { setBacklogFilters } from "../app/uiSlice";
+import {
+  JiraExportProvider,
+  useJiraExport,
+} from "../contexts/JiraExportContext";
 
 function Hotkeys() {
   const dispatch = useDispatch();
@@ -121,6 +126,8 @@ function TeamScopedApp() {
           "Строка «Добавить участника» привязывает нового исполнителя к задаче.",
           "Поле «Релиз (ПРОМ)» поддерживает пустое значение («—»), если задача без релиза.",
           "Поля «Заказчик» и «Стрим» поддерживают множественный выбор: можно выбрать из списка или ввести новое значение. Сохранение происходит автоматически при клике вне поля или нажатии Enter.",
+          "Кнопка «+» в карточке задачи добавляет ее в корзину Jira.",
+          "Кнопка «Добавить все» в блоке фильтров складывает в корзину все задачи по текущим фильтрам, а иконка AddTask в шапке открывает мастер экспорта в Jira.",
         ],
       },
       "/capacity": {
@@ -237,6 +244,48 @@ function TeamScopedApp() {
   );
 
   return (
+    <JiraExportProvider scopeKey={teamKey}>
+      <TeamScopedAppContent
+        buildPath={buildPath}
+        currentPathSuffix={currentPathSuffix}
+        handleExportExcel={handleExportExcel}
+        handleToggleAllParticipants={handleToggleAllParticipants}
+        hideAllParticipants={hideAllParticipants}
+        isBacklogPage={isBacklogPage}
+        isExporting={isExporting}
+        teamKey={teamKey}
+        teamScopedPageTitle={teamScopedPageTitle}
+        helpContent={helpContent}
+      />
+    </JiraExportProvider>
+  );
+}
+
+type TeamScopedAppContentProps = {
+  buildPath: (suffix: string) => string;
+  currentPathSuffix: string;
+  handleExportExcel: () => Promise<void>;
+  handleToggleAllParticipants: () => void;
+  hideAllParticipants: boolean;
+  isBacklogPage: boolean;
+  isExporting: boolean;
+  teamKey: string;
+  teamScopedPageTitle: string;
+  helpContent: PageHelpContent;
+};
+
+function TeamScopedAppContent({
+  buildPath,
+  handleExportExcel,
+  handleToggleAllParticipants,
+  hideAllParticipants,
+  isBacklogPage,
+  isExporting,
+  helpContent,
+}: TeamScopedAppContentProps) {
+  const { selectedCount, openDialog } = useJiraExport();
+
+  return (
     <>
       <Hotkeys />
       <AppBar
@@ -274,19 +323,47 @@ function TeamScopedApp() {
             <Button component={Link} to={buildPath("/history")}>
               История
             </Button>
-            <Tooltip title="Экспортировать план в Excel">
-              <span>
-                <Button
-                  variant="outlined"
-                  onClick={handleExportExcel}
-                  disabled={isExporting}
-                >
-                  Экспорт в Excel
-                </Button>
-              </span>
-            </Tooltip>
+            {isBacklogPage && (
+              <Tooltip title="Экспортировать бэклог в Excel">
+                <span>
+                  <Button
+                    variant="outlined"
+                    onClick={handleExportExcel}
+                    disabled={isExporting}
+                  >
+                    Экспорт в Excel
+                  </Button>
+                </span>
+              </Tooltip>
+            )}
           </Stack>
           <Stack direction="row" spacing={0.5} alignItems="center" sx={{ ml: 2 }}>
+            {isBacklogPage && (
+              <Tooltip
+                title={
+                  selectedCount > 0
+                    ? `Jira: ${selectedCount}`
+                    : "Jira: список задач пуст"
+                }
+              >
+                <span>
+                  <IconButton
+                    size="small"
+                    onClick={openDialog}
+                    disabled={selectedCount === 0}
+                    sx={{ color: selectedCount > 0 ? "primary.main" : undefined }}
+                  >
+                    <Badge
+                      badgeContent={selectedCount}
+                      color="primary"
+                      max={99}
+                    >
+                      <AddTask fontSize="small" />
+                    </Badge>
+                  </IconButton>
+                </span>
+              </Tooltip>
+            )}
             {isBacklogPage && (
               <Tooltip
                 title={

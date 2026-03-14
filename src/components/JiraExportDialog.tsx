@@ -1,7 +1,7 @@
 import * as React from "react";
 import {
   Alert,
-  Box,
+  Autocomplete,
   Button,
   Dialog,
   DialogActions,
@@ -9,6 +9,7 @@ import {
   DialogTitle,
   Divider,
   IconButton,
+  Link,
   MenuItem,
   Paper,
   Stack,
@@ -21,9 +22,12 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { Delete } from "@mui/icons-material";
+import { Delete, OpenInNew } from "@mui/icons-material";
+import moment from "moment";
+import "moment/locale/ru";
 
-import type { BacklogItem, Participant, Sprint } from "../types";
+import { useExportJiraIssuesMutation } from "../app/api";
+import type { BacklogItem, JiraIssueExportResult, Participant, Sprint } from "../types";
 
 type JiraExportDialogProps = {
   open: boolean;
@@ -35,99 +39,111 @@ type JiraExportDialogProps = {
   onClearTasks: () => void;
 };
 
-type JiraDraftIssue = {
-  issueKey: string;
-  taskId: string;
-  taskTitle: string;
-  participantId: string;
-  participantName: string;
-  description: string;
-  labels: string[];
-  storyPoints: number;
-  projectValue: string;
-  issueTypeId: string;
-  issueTypeName: string;
-  summary: string;
-  jiraSprintId: string;
-  planningSprintId: string;
-  planningSprintName: string;
-};
+const JIRA_EXPORT_FORM_STORAGE_KEY = "jiraExportForm_v1";
+const JIRA_SPRINT_OPTIONS = [
+  { value: "236205", hint: "Classic ИСУ" },
+  { value: "236508", hint: "SM&Аналитика" },
+  { value: "239460", hint: "GenAI сценарии" },
+];
+const JIRA_PROJECT_OPTIONS = ["ISUWEBNAPP", "CUSTOMLAB"];
+const JIRA_LABEL_OPTIONS = ["ai-core", "an&sm", "isugenai"];
 
-const JIRA_ISSUE_TYPE_ID = "3";
-const JIRA_ISSUE_TYPE_NAME = "Задача";
+moment.locale("ru");
+
+function normalizeStringArray(values: string[]) {
+  return Array.from(
+    new Set(values.map((value) => value.trim()).filter(Boolean))
+  );
+}
 
 function planningSprintLabel(sprint: Sprint) {
-  return `${sprint.name} (${sprint.startDate} - ${sprint.endDate})`;
+  return `${sprint.name} (${moment(sprint.startDate).format("DD.MM.YYYY")} - ${moment(sprint.endDate).format("DD.MM.YYYY")})`;
 }
 
-function buildIssueDescription(description: string, dod: string) {
-  const normalizedDescription = description?.trim();
-  const normalizedDod = dod?.trim();
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
 
-  if (normalizedDescription && normalizedDod) {
-    return `${normalizedDescription}\n\nDoD:\n${normalizedDod}`;
+function isISOWithin(iso: string, startISO: string, endISO: string) {
+  return iso >= startISO && iso <= endISO;
+}
+
+function formatStoryPoints(value: number) {
+  if (!Number.isFinite(value)) return "0";
+  return Number.isInteger(value) ? String(value) : String(value);
+}
+
+function readStoredForm() {
+  try {
+    const raw = localStorage.getItem(JIRA_EXPORT_FORM_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      planningSprintId:
+        typeof parsed?.planningSprintId === "string"
+          ? parsed.planningSprintId
+          : "",
+      jiraSprintId:
+        typeof parsed?.jiraSprintId === "string" ? parsed.jiraSprintId : "",
+      projectKey:
+        typeof parsed?.projectKey === "string" ? parsed.projectKey : "",
+      labels: Array.isArray(parsed?.labels)
+        ? parsed.labels.filter((value: unknown): value is string => typeof value === "string")
+        : [],
+    };
+  } catch {
+    return null;
   }
-
-  if (normalizedDescription) return normalizedDescription;
-  if (normalizedDod) return `DoD:\n${normalizedDod}`;
-  return "";
 }
 
-function parseLabels(labelsInput: string) {
-  return labelsInput
-    .split(",")
-    .map((label) => label.trim())
-    .filter(Boolean);
+function writeStoredForm(value: {
+  planningSprintId: string;
+  jiraSprintId: string;
+  projectKey: string;
+  labels: string[];
+}) {
+  try {
+    localStorage.setItem(JIRA_EXPORT_FORM_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
 }
 
-function buildPreviewRows(
-  tasks: BacklogItem[],
+function buildParticipantsPreview(
+  task: BacklogItem,
   planningSprintId: string,
   participantMap: Map<string, Participant>
 ) {
-  const rows: Array<{
-    taskId: string;
-    taskTitle: string;
-    taskDescription: string;
-    taskDod: string;
-    participantId: string;
-    participantName: string;
-    storyPoints: number;
-  }> = [];
+  const participantIds = Array.isArray(task.participantIds) ? task.participantIds : [];
+  if (!participantIds.length) return "—";
 
-  const coveredTaskIds = new Set<string>();
+  return participantIds
+    .map((participantId) => {
+      const participantName = participantMap.get(participantId)?.fullName?.trim() || participantId;
+      const storyPoints = Number(task.allocations?.[participantId]?.[planningSprintId] ?? 0);
+      return `${participantName} - ${formatStoryPoints(storyPoints)} SP`;
+    })
+    .join(", ");
+}
 
-  for (const task of tasks) {
-    const participantIds = Array.isArray(task.participantIds)
-      ? task.participantIds
-      : [];
+function ResultAlert({ items }: { items: JiraIssueExportResult[] }) {
+  const created = items.filter((item) => item.status === "created").length;
+  const skipped = items.filter((item) => item.status === "skipped").length;
+  const failed = items.filter((item) => item.status === "failed").length;
 
-    for (const participantId of participantIds) {
-      const storyPoints = Number(
-        task.allocations?.[participantId]?.[planningSprintId] ?? 0
-      );
-
-      if (!Number.isFinite(storyPoints) || storyPoints <= 0) {
-        continue;
-      }
-
-      coveredTaskIds.add(task.id);
-      rows.push({
-        taskId: task.id,
-        taskTitle: task.title,
-        taskDescription: task.description,
-        taskDod: task.dod,
-        participantId,
-        participantName:
-          participantMap.get(participantId)?.fullName || participantId,
-        storyPoints,
-      });
-    }
+  if (failed > 0) {
+    return (
+      <Alert severity="warning">
+        Создано: {created}, пропущено: {skipped}, с ошибкой: {failed}
+      </Alert>
+    );
   }
 
-  const skippedTasks = tasks.filter((task) => !coveredTaskIds.has(task.id));
-
-  return { rows, skippedTasks };
+  return (
+    <Alert severity="success">
+      Создано: {created}, пропущено: {skipped}
+    </Alert>
+  );
 }
 
 export default function JiraExportDialog({
@@ -139,35 +155,78 @@ export default function JiraExportDialog({
   onRemoveTask,
   onClearTasks,
 }: JiraExportDialogProps) {
-  const [step, setStep] = React.useState(0);
   const [planningSprintId, setPlanningSprintId] = React.useState("");
   const [jiraSprintId, setJiraSprintId] = React.useState("");
-  const [projectValue, setProjectValue] = React.useState("");
-  const [labelsInput, setLabelsInput] = React.useState("");
-  const [formError, setFormError] = React.useState("");
-  const [createdIssues, setCreatedIssues] = React.useState<JiraDraftIssue[]>([]);
-  const [skippedTasks, setSkippedTasks] = React.useState<BacklogItem[]>([]);
+  const [projectKey, setProjectKey] = React.useState("");
+  const [labels, setLabels] = React.useState<string[]>([]);
+  const [submitAttempted, setSubmitAttempted] = React.useState(false);
+  const [requestError, setRequestError] = React.useState("");
+  const [results, setResults] = React.useState<JiraIssueExportResult[]>([]);
+  const [exportJiraIssues, { isLoading }] = useExportJiraIssuesMutation();
+
+  const currentPlanningSprintId = React.useMemo(() => {
+    const today = todayISO();
+    return (
+      sprints.find((sprint) => isISOWithin(today, sprint.startDate, sprint.endDate))?.id ??
+      sprints[0]?.id ??
+      ""
+    );
+  }, [sprints]);
+
+  const selectedJiraSprintOption = React.useMemo(
+    () => JIRA_SPRINT_OPTIONS.find((option) => option.value === jiraSprintId) ?? null,
+    [jiraSprintId]
+  );
+
+  const selectedProjectOption = React.useMemo(
+    () => JIRA_PROJECT_OPTIONS.find((option) => option === projectKey) ?? null,
+    [projectKey]
+  );
 
   React.useEffect(() => {
     if (!open) return;
-    setStep(0);
-    setFormError("");
-    setCreatedIssues([]);
-    setSkippedTasks([]);
-    setPlanningSprintId((prev) => prev || sprints[0]?.id || "");
-    setJiraSprintId((prev) => prev || "");
-    setProjectValue((prev) => prev || "");
-    setLabelsInput((prev) => prev || "");
-  }, [open, sprints]);
+    const storedForm = readStoredForm();
+    setSubmitAttempted(false);
+    setRequestError("");
+    setResults([]);
+    const storedPlanningSprintId = (storedForm?.planningSprintId || "").trim();
+    const nextPlanningSprintId = sprints.some((sprint) => sprint.id === storedPlanningSprintId)
+      ? storedPlanningSprintId
+      : currentPlanningSprintId;
+    const nextJiraSprintId =
+      (storedForm?.jiraSprintId || "").trim() || JIRA_SPRINT_OPTIONS[0]?.value || "";
+    const nextProjectKey =
+      (storedForm?.projectKey || "").trim() || JIRA_PROJECT_OPTIONS[0] || "";
+    const nextLabels = normalizeStringArray(storedForm?.labels || []);
+
+    setPlanningSprintId(nextPlanningSprintId);
+    setJiraSprintId(nextJiraSprintId);
+    setProjectKey(nextProjectKey);
+    setLabels(nextLabels);
+
+    if (storedPlanningSprintId && storedPlanningSprintId !== nextPlanningSprintId) {
+      writeStoredForm({
+        planningSprintId: nextPlanningSprintId,
+        jiraSprintId: nextJiraSprintId,
+        projectKey: nextProjectKey,
+        labels: nextLabels,
+      });
+    }
+  }, [open, sprints, currentPlanningSprintId]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    writeStoredForm({
+      planningSprintId,
+      jiraSprintId,
+      projectKey,
+      labels,
+    });
+  }, [open, planningSprintId, jiraSprintId, projectKey, labels]);
 
   const selectedPlanningSprint = React.useMemo(
     () => sprints.find((sprint) => sprint.id === planningSprintId) ?? null,
     [planningSprintId, sprints]
-  );
-
-  const preview = React.useMemo(
-    () => buildPreviewRows(tasks, planningSprintId, participantMap),
-    [participantMap, planningSprintId, tasks]
   );
 
   const handleClose = React.useCallback(() => {
@@ -179,109 +238,175 @@ export default function JiraExportDialog({
     onClose();
   }, [onClearTasks, onClose]);
 
-  const handleContinue = React.useCallback(() => {
-    if (step === 0) {
-      setStep(1);
-      return;
-    }
+  const handleSubmit = React.useCallback(async () => {
+    setSubmitAttempted(true);
+    const normalizedProjectKey = projectKey.trim();
+    const normalizedJiraSprintId = jiraSprintId.trim();
 
-    if (!planningSprintId || !jiraSprintId.trim() || !projectValue.trim()) {
-      setFormError("Заполните все обязательные поля");
+    if (!planningSprintId || !normalizedJiraSprintId || !normalizedProjectKey) {
       return;
     }
 
     if (!selectedPlanningSprint) {
-      setFormError("Не удалось определить параметры экспорта");
+      setRequestError("Не удалось определить выбранный спринт сервиса");
       return;
     }
 
-    if (preview.rows.length === 0) {
-      setFormError(
-        "В выбранном спринте сервиса планирования нет нагрузки по выбранным задачам"
+    if (!/^\d+$/.test(normalizedJiraSprintId)) {
+      setRequestError("Jira sprint id должен быть числом");
+      return;
+    }
+
+    try {
+      const response = await exportJiraIssues({
+        taskIds: tasks.map((task) => task.id),
+        planningSprintId,
+        jiraSprintId: normalizedJiraSprintId,
+        projectKey: normalizedProjectKey,
+        labels,
+      }).unwrap();
+      console.log(
+        "Jira backend request previews",
+        (response.items || []).map((item) => item.jiraRequest).filter(Boolean)
       );
-      return;
+      setResults(response.items || []);
+      setRequestError("");
+    } catch (error: any) {
+      const message =
+        error?.data?.error || error?.data?.message || "Не удалось завести задачи в Jira";
+      setRequestError(String(message));
     }
+  }, [exportJiraIssues, jiraSprintId, labels, planningSprintId, projectKey, selectedPlanningSprint, tasks]);
 
-    const planningSprintName = planningSprintLabel(selectedPlanningSprint);
-    const normalizedLabels = parseLabels(labelsInput);
-    const issues = preview.rows.map((row, index) => ({
-      issueKey: `JIRA-STUB-${String(index + 1).padStart(3, "0")}`,
-      taskId: row.taskId,
-      taskTitle: row.taskTitle,
-      participantId: row.participantId,
-      participantName: row.participantName,
-      description: buildIssueDescription(row.taskDescription, row.taskDod),
-      labels: normalizedLabels,
-      storyPoints: row.storyPoints,
-      projectValue: projectValue.trim(),
-      issueTypeId: JIRA_ISSUE_TYPE_ID,
-      issueTypeName: JIRA_ISSUE_TYPE_NAME,
-      summary: row.taskTitle || "Без названия",
-      jiraSprintId: jiraSprintId.trim(),
-      planningSprintId,
-      planningSprintName,
-    }));
-
-    setCreatedIssues(issues);
-    setSkippedTasks(preview.skippedTasks);
-    setFormError("");
-    setStep(2);
-  }, [
-    jiraSprintId,
-    labelsInput,
-    planningSprintId,
-    projectValue,
-    preview.rows,
-    preview.skippedTasks,
-    selectedPlanningSprint,
-    step,
-  ]);
-
-  const title =
-    step === 0
-      ? "Корзина Jira"
-      : step === 1
-      ? "Параметры заведения задач в Jira"
-      : "Результат заведения задач в Jira";
+  const planningSprintError = submitAttempted && !planningSprintId;
+  const jiraSprintError =
+    submitAttempted && (!jiraSprintId.trim() || !/^\d+$/.test(jiraSprintId.trim()));
+  const projectKeyError = submitAttempted && !projectKey.trim();
 
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="lg">
-      <DialogTitle>{title}</DialogTitle>
+      <DialogTitle>
+        {results.length > 0 ? "Результат заведения задач в Jira" : "Заведение задач в Jira"}
+      </DialogTitle>
       <DialogContent dividers>
-        {step === 0 && (
+        {results.length === 0 ? (
           <Stack spacing={2}>
-            <Alert severity="info">
-              Выбрано задач: {tasks.length}. На следующем шаге нужно будет
-              выбрать только пользовательские параметры экспорта в Jira.
-            </Alert>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+              <TextField
+                select
+                fullWidth
+                label="Спринт сервиса планирования"
+                value={planningSprintId}
+                onChange={(e) => setPlanningSprintId(String(e.target.value))}
+                error={planningSprintError}
+              >
+                {sprints.map((sprint) => (
+                  <MenuItem key={sprint.id} value={sprint.id}>
+                    {planningSprintLabel(sprint)}
+                  </MenuItem>
+                ))}
+              </TextField>
 
-            {!tasks.length ? (
-              <Alert severity="warning">Корзина Jira пока пуста</Alert>
+              <Autocomplete
+                freeSolo
+                options={JIRA_SPRINT_OPTIONS}
+                value={selectedJiraSprintOption}
+                inputValue={jiraSprintId}
+                onChange={(_e, value) =>
+                  setJiraSprintId(
+                    typeof value === "string" ? value : value?.value || ""
+                  )
+                }
+                onInputChange={(_e, value, reason) => {
+                  if (reason === "reset" && selectedJiraSprintOption) return;
+                  setJiraSprintId(value);
+                }}
+                getOptionLabel={(option) =>
+                  typeof option === "string" ? option : option.value
+                }
+                renderOption={(props, option) => {
+                  const { key, ...optionProps } = props;
+                  return (
+                    <li key={key} {...optionProps}>
+                      <Stack spacing={0}>
+                        <Typography variant="body2">{option.value}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {option.hint}
+                        </Typography>
+                      </Stack>
+                    </li>
+                  );
+                }}
+                renderInput={(params) => (
+                  <TextField {...params} label="Jira sprint id" error={jiraSprintError} />
+                )}
+                fullWidth
+              />
+
+              <Autocomplete
+                freeSolo
+                options={JIRA_PROJECT_OPTIONS}
+                value={selectedProjectOption}
+                inputValue={projectKey}
+                onChange={(_e, value) => setProjectKey(typeof value === "string" ? value : value || "")}
+                onInputChange={(_e, value, reason) => {
+                  if (reason === "reset" && selectedProjectOption) return;
+                  setProjectKey(value);
+                }}
+                renderInput={(params) => (
+                  <TextField {...params} label="Jira project.key" error={projectKeyError} />
+                )}
+                fullWidth
+              />
+            </Stack>
+
+            <Autocomplete
+              multiple
+              freeSolo
+              options={JIRA_LABEL_OPTIONS}
+              value={labels}
+              onChange={(_e, value) =>
+                setLabels(
+                  normalizeStringArray(
+                    value.map((item) => (typeof item === "string" ? item : String(item)))
+                  )
+                )
+              }
+              renderInput={(params) => <TextField {...params} label="Labels" />}
+              fullWidth
+            />
+
+            {requestError ? (
+              <Typography variant="body2" color="error">
+                {requestError}
+              </Typography>
+            ) : null}
+
+            {tasks.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                Список задач пуст.
+              </Typography>
             ) : (
               <TableContainer component={Paper} variant="outlined">
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell>Задача</TableCell>
-                      <TableCell>Стримы</TableCell>
+                      <TableCell>Название задачи</TableCell>
                       <TableCell>Участники</TableCell>
-                      <TableCell sx={{ width: 80 }} />
+                      <TableCell width={72} align="right">
+                        Действия
+                      </TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {tasks.map((task) => (
-                      <TableRow key={task.id}>
+                      <TableRow key={task.id} hover>
                         <TableCell>{task.title || "Без названия"}</TableCell>
                         <TableCell>
-                          {task.streams?.length ? task.streams.join(", ") : "—"}
+                          {buildParticipantsPreview(task, planningSprintId, participantMap)}
                         </TableCell>
-                        <TableCell>{task.participantIds?.length ?? 0}</TableCell>
                         <TableCell align="right">
-                          <IconButton
-                            size="small"
-                            onClick={() => onRemoveTask(task.id)}
-                            title="Убрать из корзины"
-                          >
+                          <IconButton size="small" onClick={() => onRemoveTask(task.id)}>
                             <Delete fontSize="small" />
                           </IconButton>
                         </TableCell>
@@ -292,142 +417,43 @@ export default function JiraExportDialog({
               </TableContainer>
             )}
           </Stack>
-        )}
-
-        {step === 1 && (
+        ) : (
           <Stack spacing={2}>
-            <Alert severity="info">
-              Пользователь заполняет только `project`, `sprint` и при
-              необходимости `labels`. Остальные поля будут заполнены
-              автоматически из данных задачи.
-            </Alert>
-
-            <Stack
-              direction={{ xs: "column", md: "row" }}
-              spacing={2}
-              alignItems="flex-start"
-            >
-              <TextField
-                select
-                fullWidth
-                size="small"
-                label="Спринт сервиса планирования"
-                value={planningSprintId}
-                onChange={(e) => setPlanningSprintId(String(e.target.value))}
-              >
-                {sprints.map((sprint) => (
-                  <MenuItem key={sprint.id} value={sprint.id}>
-                    {planningSprintLabel(sprint)}
-                  </MenuItem>
-                ))}
-              </TextField>
-
-              <TextField
-                fullWidth
-                size="small"
-                label="Jira project (id или key)"
-                value={projectValue}
-                onChange={(e) => setProjectValue(e.target.value)}
-                helperText="Это поле пользователь задает вручную."
-              />
-
-              <TextField
-                fullWidth
-                size="small"
-                label="Jira sprint id"
-                value={jiraSprintId}
-                onChange={(e) => setJiraSprintId(String(e.target.value))}
-                helperText="Для первой версии sprint передаем сразу в POST /issue."
-              />
-            </Stack>
-
-            <TextField
-              fullWidth
-              size="small"
-              label="Labels"
-              value={labelsInput}
-              onChange={(e) => setLabelsInput(e.target.value)}
-              helperText="Опционально. Несколько labels указываются через запятую."
-            />
-
-            {formError && <Alert severity="error">{formError}</Alert>}
-
-            <Paper variant="outlined" sx={{ p: 2 }}>
-              <Stack spacing={1}>
-                <Typography fontWeight={700}>Предпросмотр</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Пользователь заполняет: project, sprint, labels.
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Автоматически заполняются: issueType = 3, summary = название
-                  задачи, description = описание + DoD, assignee = участник
-                  задачи, story points = нагрузка по выбранному спринту.
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Будет создано Jira-задач: {preview.rows.length}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Задач без нагрузки в выбранном спринте: {preview.skippedTasks.length}
-                </Typography>
-                {selectedPlanningSprint && (
-                  <Typography variant="body2" color="text.secondary">
-                    Story points берутся из нагрузки по спринту{" "}
-                    {planningSprintLabel(selectedPlanningSprint)}.
-                  </Typography>
-                )}
-              </Stack>
-            </Paper>
-          </Stack>
-        )}
-
-        {step === 2 && (
-          <Stack spacing={2}>
-            <Alert severity="success">
-              Stub-экспорт завершен. Создано Jira-задач: {createdIssues.length}
-            </Alert>
-
-            {skippedTasks.length > 0 && (
-              <Alert severity="warning">
-                Пропущено задач без нагрузки в выбранном спринте:{" "}
-                {skippedTasks.map((task) => task.title || task.id).join(", ")}
-              </Alert>
-            )}
+            <ResultAlert items={results} />
 
             <TableContainer component={Paper} variant="outlined">
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>Issue</TableCell>
-                    <TableCell>Summary</TableCell>
-                    <TableCell>Исполнитель</TableCell>
-                    <TableCell>Project</TableCell>
-                    <TableCell>Type</TableCell>
-                    <TableCell>Sprint</TableCell>
-                    <TableCell>Labels</TableCell>
-                    <TableCell>Story points</TableCell>
+                    <TableCell>Задача</TableCell>
+                    <TableCell>Участник</TableCell>
+                    <TableCell>Статус</TableCell>
+                    <TableCell>Сообщение</TableCell>
+                    <TableCell>Jira</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {createdIssues.map((issue) => (
-                    <TableRow key={issue.issueKey}>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        {issue.issueKey}
-                      </TableCell>
-                      <TableCell>{issue.summary}</TableCell>
-                      <TableCell>{issue.participantName}</TableCell>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        {issue.projectValue}
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        {issue.issueTypeName} ({issue.issueTypeId})
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        {issue.jiraSprintId}
-                      </TableCell>
+                  {results.map((item, index) => (
+                    <TableRow key={`${item.taskId}-${item.participantId || "none"}-${index}`} hover>
+                      <TableCell>{item.taskTitle || item.taskId}</TableCell>
+                      <TableCell>{item.participantName || "—"}</TableCell>
+                      <TableCell>{item.status}</TableCell>
+                      <TableCell>{item.message || "—"}</TableCell>
                       <TableCell>
-                        {issue.labels.length ? issue.labels.join(", ") : "—"}
+                        {item.jiraIssueUrl && item.jiraIssueKey ? (
+                          <Link
+                            href={item.jiraIssueUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
+                          >
+                            {item.jiraIssueKey}
+                            <OpenInNew fontSize="inherit" />
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
                       </TableCell>
-                      <TableCell>{issue.storyPoints}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -435,45 +461,26 @@ export default function JiraExportDialog({
             </TableContainer>
 
             <Divider />
-
-            <Box>
-              <Typography variant="body2" color="text.secondary">
-                В реальной интеграции на этом шаге фронтенд вызовет backend,
-                который создаст Jira issues и сохранит связи в БД.
-              </Typography>
-            </Box>
           </Stack>
         )}
       </DialogContent>
+
       <DialogActions>
-        {step === 2 ? (
-          <Button variant="contained" onClick={handleFinish}>
-            Закрыть и очистить корзину
-          </Button>
+        {results.length === 0 ? (
+          <Button onClick={handleClose}>Закрыть</Button>
         ) : (
-          <>
-            <Button
-              color="inherit"
-              onClick={step === 0 ? handleClose : () => setStep((prev) => prev - 1)}
-            >
-              {step === 0 ? "Закрыть" : "Назад"}
-            </Button>
-            <Button
-              color="inherit"
-              onClick={onClearTasks}
-              disabled={!tasks.length}
-            >
-              Очистить корзину
-            </Button>
-            <Button
-              variant="contained"
-              onClick={handleContinue}
-              disabled={!tasks.length}
-            >
-              Далее
-            </Button>
-          </>
+          <Button onClick={handleFinish}>Закрыть</Button>
         )}
+
+        {results.length === 0 ? (
+          <Button
+            variant="contained"
+            onClick={handleSubmit}
+            disabled={tasks.length === 0 || isLoading}
+          >
+            {isLoading ? "Заведение..." : "Завести"}
+          </Button>
+        ) : null}
       </DialogActions>
     </Dialog>
   );

@@ -9,6 +9,7 @@ type JiraExportContextValue = {
   isSelected: (taskId: string) => boolean;
   addTask: (task: BacklogItem) => void;
   addTasks: (tasks: BacklogItem[]) => void;
+  syncTasks: (tasks: BacklogItem[]) => void;
   removeTask: (taskId: string) => void;
   toggleTask: (task: BacklogItem) => void;
   clearTasks: () => void;
@@ -73,6 +74,24 @@ export function JiraExportProvider({
     setSelectedTasks((prev) => mergeTasks(prev, tasks));
   }, []);
 
+  const syncTasks = React.useCallback((tasks: BacklogItem[]) => {
+    if (tasks.length === 0) return;
+    setSelectedTasks((prev) => {
+      const byId = new Map(tasks.map((task) => [task.id, task]));
+      let changed = false;
+      const next = prev.map((task) => {
+        const replacement = byId.get(task.id);
+        if (!replacement) return task;
+        if (replacement === task) {
+          return task;
+        }
+        changed = true;
+        return replacement;
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
   const removeTask = React.useCallback((taskId: string) => {
     setSelectedTasks((prev) => prev.filter((task) => task.id !== taskId));
   }, []);
@@ -106,6 +125,7 @@ export function JiraExportProvider({
       isSelected: (taskId: string) => selectedTaskIds.has(taskId),
       addTask,
       addTasks,
+      syncTasks,
       removeTask,
       toggleTask,
       clearTasks,
@@ -122,6 +142,7 @@ export function JiraExportProvider({
       removeTask,
       selectedTaskIds,
       selectedTasks,
+      syncTasks,
       toggleTask,
     ]
   );

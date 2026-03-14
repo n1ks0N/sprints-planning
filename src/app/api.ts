@@ -10,6 +10,7 @@ import type {
   Release,
   ReleaseAnchorField,
   ApiSessionHistory,
+  JiraIssueExportResponse,
   TaskHistoryItem,
   Team,
   FiltersData,
@@ -678,6 +679,7 @@ export const api = createApi({
           role: arg.role ?? "",
           rate: arg.rate ?? 1,
           userStreams: normalizeUserStreams(arg.userStreams),
+          jiraLogin: arg.jiraLogin ?? null,
         } as Participant;
 
         const patch = dispatch(
@@ -728,6 +730,9 @@ export const api = createApi({
                 next.userStreams = draft[idx].userStreams;
               } else {
                 next.userStreams = normalizeUserStreams(arg.userStreams);
+              }
+              if (arg.jiraLogin !== undefined) {
+                next.jiraLogin = arg.jiraLogin ?? null;
               }
               draft[idx] = next;
             }
@@ -989,6 +994,22 @@ export const api = createApi({
         { type: "Task" as const, id: arg.taskId },
       ],
       keepUnusedDataFor: 0,
+    }),
+    exportJiraIssues: b.mutation<
+      JiraIssueExportResponse,
+      {
+        taskIds: string[];
+        planningSprintId: string;
+        jiraSprintId: string;
+        projectKey: string;
+        labels: string[];
+      }
+    >({
+      query: (body) => ({ url: "/jira/issues", method: "POST", body }),
+      invalidatesTags: (_result, _error, arg) => [
+        { type: "Task" as const, id: "LIST" as const },
+        ...arg.taskIds.map((taskId) => ({ type: "Task" as const, id: taskId })),
+      ],
     }),
     addTask: b.mutation<BacklogItem, Partial<BacklogItem>>({
       query: (body) => ({ url: "/tasks", method: "POST", body }),
@@ -1446,9 +1467,59 @@ export const api = createApi({
     exportExcel: b.query<Blob, void>({
       async queryFn(_arg, { getState }) {
         const baseUrl = process.env.API_URL || "/api/v1/sprints-planning";
-        const teamKey = selectCurrentTeamKey(getState() as any);
+        const state = getState() as any;
+        const teamKey = selectCurrentTeamKey(state);
+        const backlog = state?.ui?.backlog;
+        const params = new URLSearchParams();
+
+        const joinOrUndefined = (values?: Array<string | number>) => {
+          if (!Array.isArray(values) || values.length === 0) return undefined;
+          const normalized = values
+            .map((v) => String(v).trim())
+            .filter((v) => v.length > 0);
+          return normalized.length > 0 ? normalized.join(",") : undefined;
+        };
+
+        const quarterIds = Array.isArray(backlog?.selectedQuarterIds)
+          ? backlog.selectedQuarterIds
+          : [];
+        const singleQuarter =
+          typeof backlog?.quarterId === "string" && backlog.quarterId !== "all"
+            ? backlog.quarterId
+            : "";
+        const quarterFilter =
+          quarterIds.length > 0 ? quarterIds : singleQuarter ? [singleQuarter] : [];
+        const quarters = joinOrUndefined(quarterFilter);
+        if (quarters) params.set("quarterId", quarters);
+
+        const priorities = joinOrUndefined(backlog?.priorityFilter);
+        if (priorities) params.set("priority", priorities);
+
+        const statuses = joinOrUndefined(backlog?.statusFilter);
+        if (statuses) params.set("status", statuses);
+
+        const releaseDateId =
+          typeof backlog?.releaseSprintFilter === "string"
+            ? backlog.releaseSprintFilter.trim()
+            : "";
+        if (releaseDateId && releaseDateId !== "all") {
+          params.set("releaseDateId", releaseDateId);
+        }
+
+        const streams = joinOrUndefined(backlog?.streamFilter);
+        if (streams) params.set("stream", streams);
+
+        const customers = joinOrUndefined(backlog?.customerFilter);
+        if (customers) params.set("customer", customers);
+
+        const search = typeof backlog?.searchQuery === "string" ? backlog.searchQuery.trim() : "";
+        if (search) params.set("search", search);
+
+        const query = params.toString();
+        const url = `${baseUrl}/${teamKey}/export/excel${query ? `?${query}` : ""}`;
+
         try {
-          const response = await fetch(`${baseUrl}/${teamKey}/export/excel`);
+          const response = await fetch(url);
           const blob = await response.blob();
           if (!response.ok) {
             const text = await blob.text();
@@ -1601,6 +1672,7 @@ export const {
   useGetTaskQuery,
   useGetTaskHistoryQuery,
   useGetTasksQuery,
+  useExportJiraIssuesMutation,
   useAddTaskMutation,
   useUpdateTaskMutation,
   useDeleteTaskMutation,

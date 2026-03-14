@@ -10,6 +10,7 @@ public record ParticipantCreateRequest(
     @NotBlank String fullName,
     @NotBlank String role,
     @NotNull @Min(0) @Max(1) Double rate,
-    List<String> userStreams
+    List<String> userStreams,
+    String jiraLogin
 ) {
 }

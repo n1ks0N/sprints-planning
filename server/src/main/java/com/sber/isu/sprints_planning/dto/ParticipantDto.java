@@ -5,6 +5,7 @@ public record ParticipantDto(
     String fullName,
     String role,
     double rate,
-    java.util.List<String> userStreams
+    java.util.List<String> userStreams,
+    String jiraLogin
 ) {
 }

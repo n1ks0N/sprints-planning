@@ -18,6 +18,7 @@ import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationId;
 import com.sber.isu.sprints_planning.model.TaskCustomerEntity;
 import com.sber.isu.sprints_planning.model.TaskEntity;
+import com.sber.isu.sprints_planning.model.TaskJiraIssueEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadId;
 import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
@@ -29,6 +30,7 @@ import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskAllocationRepository;
 import com.sber.isu.sprints_planning.repository.TaskCustomerRepository;
+import com.sber.isu.sprints_planning.repository.TaskJiraIssueRepository;
 import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
 import com.sber.isu.sprints_planning.repository.TaskStreamRepository;
@@ -67,6 +69,7 @@ public class TaskService {
     private final ReleaseRepository releaseRepository;
     private final TaskStreamRepository taskStreamRepository;
     private final TaskCustomerRepository taskCustomerRepository;
+    private final TaskJiraIssueRepository taskJiraIssueRepository;
     private final ApiHistoryService apiHistoryService;
 
     public TaskService(TaskRepository taskRepository,
@@ -78,6 +81,7 @@ public class TaskService {
         ReleaseRepository releaseRepository,
         TaskStreamRepository taskStreamRepository,
         TaskCustomerRepository taskCustomerRepository,
+        TaskJiraIssueRepository taskJiraIssueRepository,
         ApiHistoryService apiHistoryService) {
         this.taskRepository = taskRepository;
         this.taskLoadRepository = taskLoadRepository;
@@ -88,6 +92,7 @@ public class TaskService {
         this.releaseRepository = releaseRepository;
         this.taskStreamRepository = taskStreamRepository;
         this.taskCustomerRepository = taskCustomerRepository;
+        this.taskJiraIssueRepository = taskJiraIssueRepository;
         this.apiHistoryService = apiHistoryService;
     }
 
@@ -181,8 +186,7 @@ public class TaskService {
                 )
             );
         }
-        Map<UUID, LocalDate> releasePromDates = fetchReleasePromDates(teamKey, List.of(saved));
-        return toDto(teamKey, saved, sprints, releasePromDates);
+        return toDto(teamKey, saved);
     }
 
     @Transactional
@@ -263,8 +267,7 @@ public class TaskService {
                 )
             );
         }
-        Map<UUID, LocalDate> releasePromDates = fetchReleasePromDates(teamKey, List.of(entity));
-        return toDto(teamKey, entity, sprints, releasePromDates);
+        return toDto(teamKey, entity);
     }
 
     @Transactional
@@ -635,6 +638,7 @@ public class TaskService {
         }
 
         if (!removedIds.isEmpty()) {
+            taskJiraIssueRepository.deleteAllByTeamKeyAndTaskIdAndParticipantIdIn(teamKey, entity.getId(), removedIds);
             entity.getAllocations().removeIf(allocation -> removedIds.contains(allocation.getParticipant().getId()));
             recalcAllLoads(entity, sprints);
         }
@@ -870,27 +874,61 @@ public class TaskService {
         }
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, LocalDate> releasePromDates = fetchReleasePromDates(teamKey, tasks);
+        Map<UUID, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>> jiraIssuesByTask =
+            fetchJiraIssuesByTask(teamKey, tasks);
         return tasks.stream()
-            .map(task -> toDto(teamKey, task, sprints, releasePromDates))
+            .map(task -> toDto(teamKey, task, sprints, releasePromDates, jiraIssuesByTask.get(task.getId())))
             .toList();
     }
 
     private TaskDto toDto(String teamKey, TaskEntity entity) {
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, LocalDate> releasePromDates = fetchReleasePromDates(teamKey, List.of(entity));
-        return toDto(teamKey, entity, sprints, releasePromDates);
+        Map<UUID, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>> jiraIssuesByTask =
+            fetchJiraIssuesByTask(teamKey, List.of(entity));
+        return toDto(teamKey, entity, sprints, releasePromDates, jiraIssuesByTask.get(entity.getId()));
     }
 
     private TaskDto toDto(
         String teamKey,
         TaskEntity entity,
         List<SprintEntity> sprints,
-        Map<UUID, LocalDate> releasePromDates
+        Map<UUID, LocalDate> releasePromDates,
+        Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto> jiraIssues
     ) {
         entity.setStatus(normalizeStatus(entity.getStatus()));
         LocalDate promDate = resolvePromDate(teamKey, entity, releasePromDates);
         String releaseSprintId = resolveReleaseSprintId(sprints, promDate);
-        return DtoMapper.toTaskDto(entity, releaseSprintId);
+        return DtoMapper.toTaskDto(entity, releaseSprintId, jiraIssues);
+    }
+
+    private Map<UUID, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>> fetchJiraIssuesByTask(
+        String teamKey,
+        List<TaskEntity> tasks
+    ) {
+        Set<UUID> taskIds = tasks.stream()
+            .map(TaskEntity::getId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+        if (taskIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>> result = new HashMap<>();
+        for (TaskJiraIssueEntity entity : taskJiraIssueRepository.findAllByTeamKeyAndTaskIdIn(teamKey, taskIds)) {
+            if (entity.getTask() == null || entity.getTask().getId() == null) {
+                continue;
+            }
+            if (!"CREATED".equalsIgnoreCase(entity.getStatus())) {
+                continue;
+            }
+            var dto = DtoMapper.toTaskJiraIssueDto(entity);
+            if (dto.participantId() == null || dto.participantId().isBlank()) {
+                continue;
+            }
+            result.computeIfAbsent(entity.getTask().getId(), ignored -> new HashMap<>())
+                .put(dto.participantId(), dto);
+        }
+        return result;
     }
 
     private Map<UUID, LocalDate> fetchReleasePromDates(String teamKey, List<TaskEntity> tasks) {

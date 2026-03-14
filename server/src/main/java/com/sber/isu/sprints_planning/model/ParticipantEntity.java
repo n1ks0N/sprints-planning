@@ -48,6 +48,9 @@ public class ParticipantEntity {
     @Column(name = "team_key", nullable = false)
     private String teamKey;
 
+    @Column(name = "jira_login")
+    private String jiraLogin;
+
     public UUID getId() {
         return id;
     }
@@ -102,6 +105,14 @@ public class ParticipantEntity {
 
     public void setUserStreams(Set<String> userStreams) {
         this.userStreams = userStreams;
+    }
+
+    public String getJiraLogin() {
+        return jiraLogin;
+    }
+
+    public void setJiraLogin(String jiraLogin) {
+        this.jiraLogin = jiraLogin;
     }
 
     @PrePersist

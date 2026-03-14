@@ -6,6 +6,7 @@ import com.sber.isu.sprints_planning.dto.QuarterDto;
 import com.sber.isu.sprints_planning.dto.ReleaseDto;
 import com.sber.isu.sprints_planning.dto.SprintDto;
 import com.sber.isu.sprints_planning.dto.TaskDto;
+import com.sber.isu.sprints_planning.dto.TaskJiraIssueDto;
 import com.sber.isu.sprints_planning.model.ApiCallHistoryEntity;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
 import com.sber.isu.sprints_planning.model.QuarterEntity;
@@ -14,6 +15,7 @@ import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
 import com.sber.isu.sprints_planning.model.TaskCustomerEntity;
 import com.sber.isu.sprints_planning.model.TaskEntity;
+import com.sber.isu.sprints_planning.model.TaskJiraIssueEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadEntity;
 import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
 import com.sber.isu.sprints_planning.model.TaskStreamEntity;
@@ -61,11 +63,16 @@ public final class DtoMapper {
             entity.getRate() != null ? entity.getRate().doubleValue() : 0.0,
             entity.getUserStreams() == null
                 ? java.util.List.of()
-                : entity.getUserStreams().stream().toList()
+                : entity.getUserStreams().stream().toList(),
+            entity.getJiraLogin()
         );
     }
 
-    public static TaskDto toTaskDto(TaskEntity entity, String releaseSprintId) {
+    public static TaskDto toTaskDto(
+        TaskEntity entity,
+        String releaseSprintId,
+        Map<String, TaskJiraIssueDto> jiraIssues
+    ) {
         List<String> participantIds = new ArrayList<>();
         entity.getParticipants().stream()
             .sorted(Comparator.comparingInt(TaskParticipantEntity::getDisplayOrder))
@@ -124,6 +131,7 @@ public final class DtoMapper {
             loads,
             allocations,
             notes,
+            jiraIssues == null ? Map.of() : jiraIssues,
             releaseDateId,
             initialQuarterId,
             releaseSprintId,
@@ -131,6 +139,21 @@ public final class DtoMapper {
             entity.getDisplayOrder(),
             toIso(entity.getCreatedAt()),
             toIso(entity.getUpdatedAt())
+        );
+    }
+
+    public static TaskJiraIssueDto toTaskJiraIssueDto(TaskJiraIssueEntity entity) {
+        return new TaskJiraIssueDto(
+            entity.getParticipant() != null && entity.getParticipant().getId() != null
+                ? entity.getParticipant().getId().toString()
+                : null,
+            entity.getJiraIssueId(),
+            entity.getJiraIssueKey(),
+            entity.getJiraIssueUrl(),
+            entity.getJiraProjectKey(),
+            entity.getJiraSprintId(),
+            entity.getStoryPoints(),
+            entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null
         );
     }
 

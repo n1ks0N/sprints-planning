@@ -32,6 +32,7 @@ import {
 } from "@mui/material";
 import {
   Add,
+  AddTask,
   Delete,
   CopyAll,
   ArrowBack,
@@ -45,6 +46,7 @@ import {
   Visibility,
   VisibilityOff,
   History,
+  OpenInNew,
 } from "@mui/icons-material";
 import { skipToken } from "@reduxjs/toolkit/query";
 import { useLocation } from "react-router-dom";
@@ -83,6 +85,9 @@ import { setBacklogFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 import FiltersPanel from "../components/filters/FiltersPanel";
+import JiraExportDialog from "../components/JiraExportDialog";
+import { useJiraExport } from "../contexts/JiraExportContext";
+import { selectCurrentTeamKey } from "../app/teamSlice";
 
 import {
   DndContext,
@@ -155,6 +160,69 @@ function syncTasksPageMeta(draft: TasksPage) {
   draft.empty = draft.content.length === 0;
   draft.first = pageInfo.number <= 0;
   draft.last = pageInfo.number + 1 >= totalPages;
+}
+
+function buildTasksSearchParams(arg: {
+  quarterIds?: string[];
+  withoutQuarter?: boolean;
+  priority?: number[];
+  statuses?: string[];
+  releaseDateId?: string;
+  streams?: string[];
+  customers?: string[];
+  search?: string;
+  participantIds?: string[];
+  roles?: string[];
+  userStreams?: string[];
+  pinnedId?: string;
+  page?: number;
+  size?: number;
+}) {
+  const params = new URLSearchParams();
+
+  const joinOrUndefined = (values?: string[] | number[]) => {
+    if (!values || values.length === 0) return undefined;
+    return values.join(",");
+  };
+
+  const quarters = joinOrUndefined(arg.quarterIds);
+  if (quarters) params.set("quarterId", quarters);
+  if (arg.withoutQuarter) params.set("withoutQuarter", "true");
+
+  const priorities = joinOrUndefined(arg.priority);
+  if (priorities) params.set("priority", priorities);
+
+  const statuses = joinOrUndefined(arg.statuses);
+  if (statuses) params.set("status", statuses);
+
+  const releaseDateId = (arg.releaseDateId || "").trim();
+  if (releaseDateId) params.set("releaseDateId", releaseDateId);
+
+  const streams = joinOrUndefined(arg.streams);
+  if (streams) params.set("stream", streams);
+
+  const customers = joinOrUndefined(arg.customers);
+  if (customers) params.set("customer", customers);
+
+  const search = (arg.search || "").trim();
+  if (search) params.set("search", search);
+
+  const participantIds = joinOrUndefined(arg.participantIds);
+  if (participantIds) params.set("participantId", participantIds);
+
+  const roles = joinOrUndefined(arg.roles);
+  if (roles) params.set("role", roles);
+
+  const userStreams = joinOrUndefined(arg.userStreams);
+  if (userStreams) params.set("userStream", userStreams);
+
+  const pinnedId = (arg.pinnedId || "").trim();
+  if (pinnedId) params.set("id", pinnedId);
+
+  if (typeof arg.page === "number") params.set("page", String(arg.page));
+  if (typeof arg.size === "number") params.set("size", String(arg.size));
+
+  return params;
 }
 
 function formatDateTimeRu(value?: string | null) {
@@ -484,6 +552,8 @@ type TaskCardProps = {
   onOpenTaskHistory: (task: BacklogItem) => void;
   onMoveTask: (id: string, dir: "up" | "down") => void;
   onRemoveTask: (task: BacklogItem) => void;
+  isJiraSelected: boolean;
+  onToggleJiraSelection: (task: BacklogItem) => void;
   onChangeTaskQuarters: (taskId: string, quarterIds: string[]) => void;
   getTaskQuarters: (task: BacklogItem) => string[];
   hasTaskQuarterOverride: (taskId: string) => boolean;
@@ -575,6 +645,8 @@ const TaskCard = React.memo(function TaskCard({
   onOpenTaskHistory,
   onMoveTask,
   onRemoveTask,
+  isJiraSelected,
+  onToggleJiraSelection,
   onChangeTaskQuarters,
   getTaskQuarters,
   hasTaskQuarterOverride,
@@ -1086,6 +1158,22 @@ const TaskCard = React.memo(function TaskCard({
               </IconButton>
             </Tooltip>
 
+            <Tooltip
+              title={
+                isJiraSelected
+                  ? "Убрать из корзины Jira"
+                  : "Добавить в корзину Jira"
+              }
+            >
+              <IconButton
+                size="small"
+                onClick={() => onToggleJiraSelection(task)}
+                sx={{ color: isJiraSelected ? "success.main" : undefined }}
+              >
+                <Add fontSize="small" />
+              </IconButton>
+            </Tooltip>
+
             <Tooltip title="История изменений">
               <IconButton
                 size="small"
@@ -1200,6 +1288,7 @@ const TaskCard = React.memo(function TaskCard({
                       !assignedParticipantIds.includes(candidate.id)
                   );
                   const participantNote = task.notes?.[p.id] ?? "";
+                  const participantJiraIssue = task.jiraIssues?.[p.id];
                   const hasNote = participantNote.trim().length > 0;
 
                   return (
@@ -1308,6 +1397,20 @@ const TaskCard = React.memo(function TaskCard({
                               spacing={0.5}
                               justifyContent="flex-end"
                             >
+                              {participantJiraIssue?.jiraIssueUrl ? (
+                                <Tooltip title={`Открыть Jira: ${participantJiraIssue.jiraIssueKey}`}>
+                                  <IconButton
+                                    size="small"
+                                    color="info"
+                                    component="a"
+                                    href={participantJiraIssue.jiraIssueUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    <OpenInNew fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              ) : null}
                               <Tooltip
                                 title={
                                   hasNote ? (
@@ -1516,12 +1619,15 @@ type TaskCardsListProps = {
   hiddenParticipantsTaskIds: Set<string>;
   isFetching: boolean;
   onPersistTaskOrder: (orderedIds: string[], movedTaskId: string) => Promise<void>;
+  isJiraSelected: (taskId: string) => boolean;
+  onToggleJiraSelection: (task: BacklogItem) => void;
 } & Omit<
   TaskCardProps,
   | "task"
   | "allocationsByParticipant"
   | "participantOrder"
   | "hiddenParticipants"
+  | "isJiraSelected"
   | "dragHandle"
   | "participantSensors"
 >;
@@ -1534,6 +1640,7 @@ const TaskCardsList = React.memo(function TaskCardsList({
   hiddenParticipantsTaskIds,
   isFetching,
   onPersistTaskOrder,
+  isJiraSelected,
   ...taskCardProps
 }: TaskCardsListProps) {
   const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
@@ -1606,6 +1713,7 @@ const TaskCardsList = React.memo(function TaskCardsList({
                   ? !hiddenParticipantsTaskIds.has(task.id)
                   : hiddenParticipantsTaskIds.has(task.id)
               }
+              isJiraSelected={isJiraSelected(task.id)}
               {...taskCardProps}
             />
           ))}
@@ -1878,6 +1986,19 @@ export default function BacklogPage() {
   }, [quarters]);
 
   const dispatch = useAppDispatch();
+  const teamKey = useAppSelector(selectCurrentTeamKey);
+  const {
+    selectedTasks: jiraSelectedTasks,
+    selectedCount: jiraSelectedCount,
+    dialogOpen: isJiraDialogOpen,
+    addTasks: addTasksToJiraCart,
+    syncTasks: syncTasksInJiraCart,
+    removeTask: removeTaskFromJiraCart,
+    toggleTask: toggleTaskInJiraCart,
+    clearTasks: clearJiraCart,
+    isSelected: isTaskInJiraCart,
+    closeDialog: closeJiraDialog,
+  } = useJiraExport();
   const {
     priorityFilter,
     streamFilter,
@@ -1966,6 +2087,8 @@ export default function BacklogPage() {
   const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
   const [pinnedTaskId, setPinnedTaskId] = React.useState<string | null>(null);
   const [historyTask, setHistoryTask] = React.useState<BacklogItem | null>(null);
+  const [isAddingAllToJira, setIsAddingAllToJira] = React.useState(false);
+  const [addAllToJiraError, setAddAllToJiraError] = React.useState("");
 
   React.useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -2146,6 +2269,18 @@ export default function BacklogPage() {
   ]);
 
   const allTasks = fetchedTasks;
+  React.useEffect(() => {
+    if (jiraSelectedCount === 0 || allTasks.length === 0) return;
+    const latestSelected = allTasks.filter((task) => isTaskInJiraCart(task.id));
+    if (latestSelected.length > 0) {
+      syncTasksInJiraCart(latestSelected);
+    }
+  }, [
+    allTasks,
+    isTaskInJiraCart,
+    jiraSelectedCount,
+    syncTasksInJiraCart,
+  ]);
   const [taskQuartersMap, setTaskQuartersMap] = React.useState<
     Record<string, string[]>
   >({});
@@ -2616,6 +2751,77 @@ export default function BacklogPage() {
 
   const displayedTasksCount = filteredTasks.length;
 
+  const fetchAllFilteredTasks = React.useCallback(async () => {
+    const baseUrl = process.env.API_URL || "/api/v1/sprints-planning";
+    const requestedSize = Math.max(1, totalTasksCount);
+    const params = buildTasksSearchParams({
+      ...tasksQueryArgs,
+      page: 0,
+      size: requestedSize,
+    });
+    const response = await fetch(
+      `${baseUrl}/${teamKey}/tasks?${params.toString()}`
+    );
+
+    if (!response.ok) {
+      throw new Error("Не удалось загрузить задачи по текущим фильтрам");
+    }
+
+    const data = (await response.json()) as TasksPage;
+    const tasks = Array.isArray(data.content) ? data.content : [];
+
+    return tasks.slice().sort((a, b) => {
+      const oa = Number.isFinite(a.order) ? Number(a.order) : Number.MAX_SAFE_INTEGER;
+      const ob = Number.isFinite(b.order) ? Number(b.order) : Number.MAX_SAFE_INTEGER;
+      if (oa !== ob) return oa - ob;
+      return (a.createdAt || "").localeCompare(b.createdAt || "");
+    });
+  }, [tasksQueryArgs, teamKey, totalTasksCount]);
+
+  const handleAddAllToJira = React.useCallback(async () => {
+    setAddAllToJiraError("");
+    setIsAddingAllToJira(true);
+    try {
+      const tasks =
+        totalTasksCount > filteredTasks.length
+          ? await fetchAllFilteredTasks()
+          : filteredTasks;
+      addTasksToJiraCart(tasks);
+    } catch (error) {
+      console.error("Не удалось добавить задачи в корзину Jira", error);
+      setAddAllToJiraError(
+        "Не удалось загрузить все задачи по текущим фильтрам"
+      );
+    } finally {
+      setIsAddingAllToJira(false);
+    }
+  }, [
+    addTasksToJiraCart,
+    fetchAllFilteredTasks,
+    filteredTasks,
+      totalTasksCount,
+    ]);
+
+  const handleResetBacklogFilters = React.useCallback(() => {
+    setAddAllToJiraError("");
+    startFiltersTransition(() => {
+      dispatch(
+        setBacklogFilters({
+          quarterId: "all",
+          selectedQuarterIds: [],
+          withoutQuarterFilter: false,
+          releaseSprintFilter: "all",
+          priorityFilter: [],
+          streamFilter: [],
+          customerFilter: [],
+          statusFilter: [],
+          searchQuery: "",
+          tasksPageSize: "20",
+        })
+      );
+    });
+  }, [dispatch, startFiltersTransition]);
+
   const handleOpenTaskHistory = React.useCallback((task: BacklogItem) => {
     setHistoryTask(task);
   }, []);
@@ -2723,6 +2929,9 @@ export default function BacklogPage() {
     }).unwrap();
 
     setAllocations((prev) => ({ ...prev, [created.id]: {} }));
+    if (quarterId && quarterIdSet.has(quarterId)) {
+      setTaskQuartersMap((prev) => ({ ...prev, [created.id]: [quarterId] }));
+    }
     setPinnedTaskId(created.id);
   };
 
@@ -3271,6 +3480,7 @@ export default function BacklogPage() {
 
         {/* Фильтры */}
         <FiltersPanel
+          layout="wrap"
           filters={[
             {
               type: "autocomplete",
@@ -3357,6 +3567,7 @@ export default function BacklogPage() {
               type: "autocomplete",
               key: "tasks-page-size",
               minWidth: 200,
+              maxWidth: 180,
               props: {
                 allowCustom: true,
                 label: "Количество задач",
@@ -3371,6 +3582,7 @@ export default function BacklogPage() {
               type: "search",
               key: "search",
               minWidth: 220,
+              maxWidth: 420,
               props: {
                 label: "Поиск по названию/описанию/DOD",
                 value: searchQuery,
@@ -3380,7 +3592,38 @@ export default function BacklogPage() {
               },
             },
           ]}
+          actions={
+            <Stack
+              direction="row"
+              spacing={1}
+              justifyContent={{ xs: "stretch", md: "flex-end" }}
+              sx={{ width: "100%" }}
+            >
+              <Button
+                size="small"
+                variant="text"
+                color="inherit"
+                onClick={handleResetBacklogFilters}
+                sx={{ color: "text.secondary" }}
+              >
+                Очистить
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<AddTask />}
+                onClick={handleAddAllToJira}
+                disabled={totalTasksCount === 0 || isAddingAllToJira}
+              >
+                {isAddingAllToJira
+                  ? "Добавляем..."
+                  : `Добавить все (${totalTasksCount || displayedTasksCount})`}
+              </Button>
+            </Stack>
+          }
         />
+
+        {addAllToJiraError && <Alert severity="error">{addAllToJiraError}</Alert>}
 
         {/* Список задач с DnD */}
         <TaskCardsList
@@ -3409,6 +3652,8 @@ export default function BacklogPage() {
           onOpenTaskHistory={handleOpenTaskHistory}
           onMoveTask={moveTask}
           onRemoveTask={removeTask}
+          isJiraSelected={isTaskInJiraCart}
+          onToggleJiraSelection={toggleTaskInJiraCart}
           onChangeTaskQuarters={updateTaskQuarters}
           getTaskQuarters={getTaskQuarters}
           hasTaskQuarterOverride={hasTaskQuarterOverride}
@@ -3430,6 +3675,16 @@ export default function BacklogPage() {
           onClose={handleCloseTaskHistory}
           participantMap={participantMap}
           releaseLabelById={releaseLabelById}
+        />
+
+        <JiraExportDialog
+          open={isJiraDialogOpen}
+          tasks={jiraSelectedTasks}
+          participantMap={participantMap}
+          sprints={sprintsGlobalOrdered}
+          onClose={closeJiraDialog}
+          onRemoveTask={removeTaskFromJiraCart}
+          onClearTasks={clearJiraCart}
         />
 
         <Stack

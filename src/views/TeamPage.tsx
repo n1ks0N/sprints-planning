@@ -135,6 +135,7 @@ export default function TeamPage() {
   const [newRateInput, setNewRateInput] = React.useState<string>("");
   const [newUserStreams, setNewUserStreams] = React.useState<string[]>([]);
   const [newUserStreamInput, setNewUserStreamInput] = React.useState<string>("");
+  const [newJiraLogin, setNewJiraLogin] = React.useState("");
 
   // Редактирование
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -146,6 +147,7 @@ export default function TeamPage() {
   const [editRateInput, setEditRateInput] = React.useState<string>("");
   const [editUserStreams, setEditUserStreams] = React.useState<string[]>([]);
   const [editUserStreamInput, setEditUserStreamInput] = React.useState<string>("");
+  const [editJiraLogin, setEditJiraLogin] = React.useState("");
 
   const allRoleOptions = React.useMemo(
     () =>
@@ -296,6 +298,7 @@ export default function TeamPage() {
       role: roleValue,
       rate,
       userStreams,
+      jiraLogin: newJiraLogin.trim() || null,
     }).unwrap();
     setNewName("");
     setNewRole("");
@@ -304,6 +307,7 @@ export default function TeamPage() {
     setNewRateInput("");
     setNewUserStreams([]);
     setNewUserStreamInput("");
+    setNewJiraLogin("");
   };
 
   const startEdit = (p: Participant) => {
@@ -315,6 +319,7 @@ export default function TeamPage() {
     setEditRateInput(String(Number(p.rate.toFixed(2))));
     setEditUserStreams(p.userStreams || []);
     setEditUserStreamInput("");
+    setEditJiraLogin(p.jiraLogin || "");
   };
 
   const cancelEdit = () => {
@@ -326,6 +331,7 @@ export default function TeamPage() {
     setEditRateInput("");
     setEditUserStreams([]);
     setEditUserStreamInput("");
+    setEditJiraLogin("");
   };
 
   const saveEdit = async () => {
@@ -350,6 +356,7 @@ export default function TeamPage() {
       role: roleValue,
       rate,
       userStreams,
+      jiraLogin: editJiraLogin.trim() || null,
     }).unwrap();
     cancelEdit();
   };
@@ -448,6 +455,22 @@ export default function TeamPage() {
           )}
         </TableCell>
 
+        <TableCell sx={{ minWidth: 220 }}>
+          {!isEditing ? (
+            <Typography color={p.jiraLogin ? "text.primary" : "text.secondary"}>
+              {p.jiraLogin || "—"}
+            </Typography>
+          ) : (
+            <TextField
+              size="small"
+              fullWidth
+              value={editJiraLogin}
+              onChange={(e) => setEditJiraLogin(e.target.value)}
+              label="Jira login"
+            />
+          )}
+        </TableCell>
+
         {/* Действия */}
         <TableCell align="right" width={160}>
           {!isEditing ? (
@@ -532,6 +555,13 @@ export default function TeamPage() {
           )}
           sx={{ minWidth: 180 }}
         />
+        <TextField
+          label="Jira login"
+          size="small"
+          value={newJiraLogin}
+          onChange={(e) => setNewJiraLogin(e.target.value)}
+          sx={{ minWidth: 220 }}
+        />
         <Button
           variant="contained"
           onClick={handleAdd}
@@ -605,6 +635,7 @@ export default function TeamPage() {
                   <TableCell>Роль</TableCell>
                   <TableCell>Стрим</TableCell>
                   <TableCell>Ставка</TableCell>
+                  <TableCell>Jira login</TableCell>
                   <TableCell align="right" width={160}>
                     Действия
                   </TableCell>
@@ -614,7 +645,7 @@ export default function TeamPage() {
                 {filtered.map((p) => renderRow(p))}
                 {!filtered.length && (
                   <TableRow>
-                    <TableCell colSpan={6}>
+                    <TableCell colSpan={7}>
                       <Box
                         sx={{
                           py: 2,

@@ -23,6 +23,24 @@ export type Participant = {
   role: string;
   rate: number;
   userStreams: string[];
+  jiraLogin?: string | null;
+};
+
+export type JiraIssueLink = {
+  participantId: string;
+  jiraIssueId: string;
+  jiraIssueKey: string;
+  jiraIssueUrl: string;
+  jiraProjectKey: string;
+  jiraSprintId?: number | null;
+  storyPoints?: number | null;
+  createdAt?: string | null;
+};
+
+export type JiraIssueRequestPreview = {
+  method: string;
+  url: string;
+  body: Record<string, unknown>;
 };
 
 export type CapacityCell = {
@@ -66,6 +84,7 @@ export type BacklogItem = {
   loads: Record<string, number>;
   allocations?: Record<string, Record<string, number>>;
   notes?: Record<string, string>;
+  jiraIssues?: Record<string, JiraIssueLink>;
   quarterIds?: string[];
   releaseDateId?: string | null;
   initialQuarterId?: string | null;
@@ -183,6 +202,23 @@ export type TaskHistoryItem = {
   createdAt: string;
   changes: TaskHistoryChange[];
   meta: Record<string, unknown>;
+};
+
+export type JiraIssueExportResult = {
+  taskId: string;
+  taskTitle?: string | null;
+  participantId?: string | null;
+  participantName?: string | null;
+  status: "created" | "skipped" | "failed";
+  message?: string | null;
+  jiraIssueId?: string | null;
+  jiraIssueKey?: string | null;
+  jiraIssueUrl?: string | null;
+  jiraRequest?: JiraIssueRequestPreview | null;
+};
+
+export type JiraIssueExportResponse = {
+  items: JiraIssueExportResult[];
 };
 
 export type Team = {

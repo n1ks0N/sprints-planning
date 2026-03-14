@@ -30,6 +30,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: sprints
       SPRING_JPA_HIBERNATE_DDL_AUTO: validate
       SPRING_JPA_PROPERTIES_HIBERNATE_JDBC_TIME_ZONE: UTC
+      APP_JIRA_MOCK_ENABLED: "true"
     ports:
       - "8080:8080"
     depends_on:

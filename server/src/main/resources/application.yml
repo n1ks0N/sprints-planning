@@ -29,6 +29,9 @@ app:
   capacity:
     norm-factor: 0.75
     capacity-factor: 0.85
+  jira:
+    basic-token: ${APP_JIRA_BASIC_TOKEN:}
+    mock-enabled: ${APP_JIRA_MOCK_ENABLED:false}
 management:
   endpoints:
     web:

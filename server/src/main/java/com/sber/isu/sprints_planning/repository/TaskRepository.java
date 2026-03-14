@@ -59,6 +59,22 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID>, TaskRep
     @Query("select t from TaskEntity t where t.id = :id and t.teamKey = :teamKey")
     TaskEntity findWithDetailsById(@Param("id") UUID id, @Param("teamKey") String teamKey);
 
+    @EntityGraph(attributePaths = {
+        "participants",
+        "participants.participant",
+        "participants.participant.userStreams",
+        "customers",
+        "streams",
+        "loads",
+        "loads.sprint",
+        "allocations",
+        "allocations.participant",
+        "allocations.sprint",
+        "leaderParticipant",
+        "releaseDate"
+    })
+    List<TaskEntity> findAllByIdInAndTeamKey(List<UUID> ids, String teamKey);
+
     Optional<TaskEntity> findByIdAndTeamKey(UUID id, String teamKey);
 
     @Query("select coalesce(max(t.displayOrder), 0) from TaskEntity t where t.teamKey = :teamKey")

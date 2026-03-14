@@ -1,86 +1,131 @@
 package com.sber.isu.sprints_planning.service;
 
+import com.sber.isu.sprints_planning.dto.CapacityCellDto;
+import com.sber.isu.sprints_planning.dto.CapacityRowDto;
+import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
-import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.ReleaseEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
-import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
-import com.sber.isu.sprints_planning.model.TaskEntity;
-import com.sber.isu.sprints_planning.model.TaskLoadEntity;
-import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
-import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
-import com.sber.isu.sprints_planning.repository.TaskRepository;
 import jakarta.transaction.Transactional;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.apache.poi.ss.usermodel.BorderStyle;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.DataFormat;
+import org.apache.poi.ss.usermodel.FillPatternType;
+import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.IndexedColors;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.VerticalAlignment;
 import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ExportService {
 
-    private final QuarterRepository quarterRepository;
+    private static final int BASE_SPRINT_COLUMN = 10; // K
+    private static final DateTimeFormatter SHORT_DATE = DateTimeFormatter.ofPattern("dd.MM");
+
     private final SprintRepository sprintRepository;
     private final ParticipantRepository participantRepository;
-    private final TaskRepository taskRepository;
     private final ReleaseRepository releaseRepository;
+    private final TaskService taskService;
+    private final CapacityService capacityService;
 
-    public ExportService(QuarterRepository quarterRepository,
+    public ExportService(
         SprintRepository sprintRepository,
         ParticipantRepository participantRepository,
-        TaskRepository taskRepository,
-        ReleaseRepository releaseRepository) {
-        this.quarterRepository = quarterRepository;
+        ReleaseRepository releaseRepository,
+        TaskService taskService,
+        CapacityService capacityService
+    ) {
         this.sprintRepository = sprintRepository;
         this.participantRepository = participantRepository;
-        this.taskRepository = taskRepository;
         this.releaseRepository = releaseRepository;
+        this.taskService = taskService;
+        this.capacityService = capacityService;
     }
 
     @Transactional
     public byte[] exportToExcel(String teamKey) {
-        try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            CellStyle headerStyle = createHeaderStyle(workbook);
+        return exportToExcel(teamKey, TaskFilter.empty());
+    }
 
-            Map<UUID, QuarterEntity> quarterIndex = quarterRepository.findByTeamKeyOrderByStartDateAsc(teamKey).stream()
-                .sorted(Comparator.comparing(QuarterEntity::getYear).thenComparing(QuarterEntity::getNumber))
-                .collect(Collectors.toMap(QuarterEntity::getId, q -> q, (a, b) -> a, java.util.LinkedHashMap::new));
+    @Transactional
+    public byte[] exportToExcel(String teamKey, TaskFilter filter) {
+        TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
+        List<UUID> quarterIds = new ArrayList<>(effectiveFilter.quarterIds());
 
-            Map<UUID, SprintEntity> sprintIndex = sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey).stream()
-                .sorted(Comparator
-                    .comparing((SprintEntity s) -> s.getQuarter().getYear())
-                    .thenComparing(s -> s.getQuarter().getNumber())
-                    .thenComparing(SprintEntity::getOrder))
-                .collect(Collectors.toMap(SprintEntity::getId, s -> s, (a, b) -> a, java.util.LinkedHashMap::new));
+        List<SprintEntity> sprints = quarterIds.isEmpty()
+            ? sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey)
+            : sprintRepository.findByTeamKeyAndQuarterIdsOrderByQuarterAndOrder(teamKey, quarterIds);
 
-            Map<UUID, ParticipantEntity> participantIndex = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey)
-                .stream()
-                .collect(Collectors.toMap(ParticipantEntity::getId, p -> p, (a, b) -> a, java.util.LinkedHashMap::new));
+        List<ReleaseEntity> releases = releaseRepository.findAllByTeamKeyOrderByPromDateAsc(teamKey);
+        Map<String, String> releaseLabelsBySprintId = buildReleaseLabelsBySprint(sprints, releases);
 
-            List<TaskEntity> tasks = taskRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
+        List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
+        Map<String, ParticipantEntity> participantIndex = participants.stream()
+            .collect(Collectors.toMap(p -> p.getId().toString(), p -> p, (a, b) -> a, LinkedHashMap::new));
 
-            writeQuartersSheet(workbook, headerStyle, quarterIndex);
-            writeSprintsSheet(workbook, headerStyle, sprintIndex, quarterIndex);
-            writeParticipantsSheet(workbook, headerStyle, participantIndex);
-            writeReleasesSheet(workbook, headerStyle, teamKey);
-            writeTasksSheet(workbook, headerStyle, sprintIndex, participantIndex, tasks);
-            writeTaskLoadsSheet(workbook, headerStyle, sprintIndex, tasks);
-            writeAllocationsSheet(workbook, headerStyle, sprintIndex, participantIndex, tasks);
+        List<TaskDto> tasks = taskService.findAll(teamKey, effectiveFilter);
+        List<CapacityRowDto> capacityRows = capacityService.calculate(teamKey, quarterIds, List.of(), List.of(), List.of());
+
+        try (SXSSFWorkbook workbook = new SXSSFWorkbook(200); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            workbook.setCompressTempFiles(true);
+            Styles styles = createStyles(workbook);
+            Sheet sheet = workbook.createSheet("Оценка");
+
+            int sprintColumns = sprints.size();
+            int responsibleCol = BASE_SPRINT_COLUMN + sprintColumns;
+            int directionCol = responsibleCol + 1;
+
+            int matrixHeaderRow = 1;
+            int matrixLastRow = writeCapacityBlock(
+                sheet,
+                styles,
+                matrixHeaderRow,
+                sprints,
+                releaseLabelsBySprintId,
+                capacityRows
+            );
+
+            int tableHeaderRow = Math.max(33, matrixLastRow + 2);
+            writeBacklogHeader(sheet, styles, tableHeaderRow, sprints, releaseLabelsBySprintId, responsibleCol, directionCol);
+
+            int firstDataRow = tableHeaderRow + 1;
+            int lastDataRow = writeBacklogRows(
+                sheet,
+                styles,
+                firstDataRow,
+                sprints,
+                tasks,
+                participantIndex,
+                responsibleCol,
+                directionCol
+            );
+
+            int filterLastRow = Math.max(tableHeaderRow, lastDataRow);
+            sheet.setAutoFilter(new CellRangeAddress(tableHeaderRow, filterLastRow, 0, directionCol));
+            sheet.createFreezePane(0, tableHeaderRow + 1);
+            configureColumns(sheet, sprints.size(), responsibleCol, directionCol);
 
             workbook.write(out);
             return out.toByteArray();
@@ -89,225 +134,358 @@ public class ExportService {
         }
     }
 
-    private void writeQuartersSheet(Workbook workbook, CellStyle headerStyle, Map<UUID, QuarterEntity> quarterIndex) {
-        Sheet sheet = workbook.createSheet("Кварталы");
-        Row header = sheet.createRow(0);
-        createHeaderCells(header, headerStyle, "Год", "Квартал", "Название", "Начало", "Окончание");
-        int rowIdx = 1;
-        for (QuarterEntity quarter : quarterIndex.values()) {
-            Row row = sheet.createRow(rowIdx++);
-            int col = 0;
-            row.createCell(col++).setCellValue(quarter.getYear());
-            row.createCell(col++).setCellValue(quarter.getNumber());
-            row.createCell(col++).setCellValue(quarter.getName());
-            row.createCell(col++).setCellValue(toIso(quarter.getStartDate()));
-            row.createCell(col).setCellValue(toIso(quarter.getEndDate()));
+    private int writeCapacityBlock(
+        Sheet sheet,
+        Styles styles,
+        int headerRowIndex,
+        List<SprintEntity> sprints,
+        Map<String, String> releaseLabelsBySprintId,
+        List<CapacityRowDto> capacityRows
+    ) {
+        int sprintColumns = sprints.size();
+        int limitCol = BASE_SPRINT_COLUMN + sprintColumns;
+        int totalCol = limitCol + 1;
+        int diffCol = limitCol + 2;
+
+        Row titleRow = sheet.createRow(Math.max(0, headerRowIndex - 1));
+        Cell titleCell = titleRow.createCell(8);
+        titleCell.setCellValue("Расчет нагрузки на спринт");
+        titleCell.setCellStyle(styles.section());
+        sheet.addMergedRegion(new CellRangeAddress(titleRow.getRowNum(), titleRow.getRowNum(), 8, 9));
+
+        Row header = sheet.createRow(headerRowIndex);
+        createCell(header, 8, "Участник", styles.header());
+        createCell(header, 9, "Роль", styles.header());
+
+        for (int i = 0; i < sprints.size(); i++) {
+            SprintEntity sprint = sprints.get(i);
+            createCell(
+                header,
+                BASE_SPRINT_COLUMN + i,
+                sprintHeader(sprint, releaseLabelsBySprintId.get(sprint.getId().toString())),
+                styles.headerWrap()
+            );
         }
-        autosize(sheet, 5);
+
+        createCell(header, limitCol, "Предел\nнагрузки", styles.headerWrap());
+        createCell(header, totalCol, "Итого\nнагрузка", styles.headerWrap());
+        createCell(header, diffCol, "Разница", styles.header());
+
+        int rowIdx = headerRowIndex + 1;
+        for (CapacityRowDto rowDto : capacityRows) {
+            Row row = sheet.createRow(rowIdx++);
+            createCell(row, 8, rowDto.participant().fullName(), styles.base());
+            createCell(row, 9, rowDto.participant().role(), styles.base());
+
+            Map<String, Double> workloadBySprint = rowDto.cells().stream()
+                .collect(Collectors.toMap(CapacityCellDto::sprintId, CapacityCellDto::workloadDays, (a, b) -> a));
+
+            for (int i = 0; i < sprints.size(); i++) {
+                String sprintId = sprints.get(i).getId().toString();
+                setNumber(row, BASE_SPRINT_COLUMN + i, workloadBySprint.get(sprintId), styles.number(), false);
+            }
+
+            double limit = sprintColumns > 0 ? rowDto.totalQuarterAvailable() / sprintColumns : rowDto.totalQuarterAvailable();
+            setNumber(row, limitCol, limit, styles.number(), true);
+            setNumber(row, totalCol, rowDto.totalQuarterWorkload(), styles.number(), true);
+            setNumber(row, diffCol, rowDto.totalQuarterAvailable() - rowDto.totalQuarterWorkload(), styles.number(), true);
+        }
+
+        return rowIdx - 1;
     }
 
-    private void writeSprintsSheet(Workbook workbook, CellStyle headerStyle, Map<UUID, SprintEntity> sprints,
-        Map<UUID, QuarterEntity> quarters) {
-        Sheet sheet = workbook.createSheet("Спринты");
-        Row header = sheet.createRow(0);
-        createHeaderCells(header, headerStyle, "Квартал", "Спринт", "Начало", "Окончание", "Рабочие дни", "Порядок");
-        int rowIdx = 1;
-        for (SprintEntity sprint : sprints.values()) {
-            Row row = sheet.createRow(rowIdx++);
-            int col = 0;
-            QuarterEntity quarter = quarters.get(sprint.getQuarter().getId());
-            row.createCell(col++).setCellValue(quarter != null ? quarter.getName() : "");
-            row.createCell(col++).setCellValue(sprint.getName());
-            row.createCell(col++).setCellValue(toIso(sprint.getStartDate()));
-            row.createCell(col++).setCellValue(toIso(sprint.getEndDate()));
-            row.createCell(col++).setCellValue(sprint.getWorkingDays());
-            row.createCell(col).setCellValue(sprint.getOrder());
+    private void writeBacklogHeader(
+        Sheet sheet,
+        Styles styles,
+        int rowIndex,
+        List<SprintEntity> sprints,
+        Map<String, String> releaseLabelsBySprintId,
+        int responsibleCol,
+        int directionCol
+    ) {
+        Row header = sheet.createRow(rowIndex);
+        createCell(header, 0, "Эпик", styles.header());
+        createCell(header, 1, "Бизнес-задача / ИТ-повестка", styles.header());
+        createCell(header, 2, "Стрим", styles.header());
+        createCell(header, 3, "DOD (название для сводной)", styles.header());
+        createCell(header, 4, "Название доработки", styles.header());
+        createCell(header, 5, "Детали", styles.header());
+        createCell(header, 6, "CR", styles.header());
+        createCell(header, 7, "приоритет", styles.header());
+        createCell(header, 8, "Доля задачи", styles.header());
+        createCell(header, 9, "трудозатраты", styles.header());
+
+        for (int i = 0; i < sprints.size(); i++) {
+            SprintEntity sprint = sprints.get(i);
+            createCell(
+                header,
+                BASE_SPRINT_COLUMN + i,
+                sprintHeader(sprint, releaseLabelsBySprintId.get(sprint.getId().toString())),
+                styles.headerWrap()
+            );
         }
-        autosize(sheet, 6);
+
+        createCell(header, responsibleCol, "Ответственные", styles.header());
+        createCell(header, directionCol, "направление", styles.header());
     }
 
-    private void writeParticipantsSheet(Workbook workbook, CellStyle headerStyle,
-        Map<UUID, ParticipantEntity> participantIndex) {
-        Sheet sheet = workbook.createSheet("Участники");
-        Row header = sheet.createRow(0);
-        createHeaderCells(header, headerStyle, "Имя", "Роль", "Ставка", "Порядок");
-        int rowIdx = 1;
-        for (ParticipantEntity participant : participantIndex.values()) {
-            Row row = sheet.createRow(rowIdx++);
-            int col = 0;
-            row.createCell(col++).setCellValue(participant.getFullName());
-            row.createCell(col++).setCellValue(participant.getRole());
-            row.createCell(col++).setCellValue(participant.getRate() != null ? participant.getRate().doubleValue() : 0.0);
-            row.createCell(col).setCellValue(participant.getDisplayOrder());
+    private int writeBacklogRows(
+        Sheet sheet,
+        Styles styles,
+        int startRow,
+        List<SprintEntity> sprints,
+        List<TaskDto> tasks,
+        Map<String, ParticipantEntity> participantIndex,
+        int responsibleCol,
+        int directionCol
+    ) {
+        List<TaskDto> orderedTasks = tasks.stream()
+            .sorted(Comparator
+                .comparing((TaskDto t) -> t.order() != null ? t.order() : Integer.MAX_VALUE)
+                .thenComparing(t -> t.title() != null ? t.title().toLowerCase() : ""))
+            .toList();
+
+        int rowIdx = startRow;
+        for (TaskDto task : orderedTasks) {
+            Row summary = sheet.createRow(rowIdx++);
+            createCell(summary, 0, firstOrEmpty(task.streams()), styles.summaryText());
+            createCell(summary, 1, joinValues(task.customers()), styles.summaryText());
+            createCell(summary, 2, joinValues(task.streams()), styles.summaryText());
+            createCell(summary, 3, safe(task.dod()), styles.summaryText());
+            createCell(summary, 5, safe(task.title()), styles.summaryText());
+            createCell(summary, 7, String.valueOf(task.priority()), styles.summaryText());
+
+            double taskTotal = 0.0;
+            for (int i = 0; i < sprints.size(); i++) {
+                SprintEntity sprint = sprints.get(i);
+                Double value = decimalValue(task.loads(), sprint.getId().toString());
+                if (value != null) {
+                    taskTotal += value;
+                }
+                setNumber(summary, BASE_SPRINT_COLUMN + i, value, styles.summaryNumber(), false);
+            }
+
+            setNumber(summary, 9, taskTotal, styles.summaryNumber(), true);
+            createCell(summary, responsibleCol, "Ответственные", styles.summaryText());
+            createCell(summary, directionCol, firstOrEmpty(task.customers()), styles.summaryText());
+
+            List<String> participants = task.participantIds() != null ? task.participantIds() : List.of();
+            for (String participantId : participants) {
+                Row detail = sheet.createRow(rowIdx++);
+                ParticipantEntity participant = participantIndex.get(participantId);
+                String role = participant != null ? safe(participant.getRole()) : "";
+                String fullName = participant != null ? safe(participant.getFullName()) : participantId;
+
+                createCell(detail, 4, safe(task.title()), styles.baseWrap());
+                createCell(detail, 5, safe(task.description()), styles.baseWrap());
+                createCell(detail, 7, String.valueOf(task.priority()), styles.base());
+                createCell(detail, 8, role, styles.base());
+
+                double personTotal = 0.0;
+                Map<String, java.math.BigDecimal> allocations = task.allocations() != null
+                    ? task.allocations().get(participantId)
+                    : null;
+                for (int i = 0; i < sprints.size(); i++) {
+                    SprintEntity sprint = sprints.get(i);
+                    Double value = decimalValue(allocations, sprint.getId().toString());
+                    if (value != null) {
+                        personTotal += value;
+                    }
+                    setNumber(detail, BASE_SPRINT_COLUMN + i, value, styles.number(), false);
+                }
+
+                setNumber(detail, 9, personTotal, styles.number(), false);
+                createCell(detail, responsibleCol, fullName, styles.base());
+                createCell(detail, directionCol, role, styles.base());
+            }
         }
-        autosize(sheet, 4);
+
+        return rowIdx - 1;
     }
 
-    private void writeReleasesSheet(Workbook workbook, CellStyle headerStyle, String teamKey) {
-        Sheet sheet = workbook.createSheet("Релизы");
-        Row header = sheet.createRow(0);
-        createHeaderCells(header, headerStyle, "Название", "Prom", "PSI", "OPS (старт)", "OPS (конец)",
-            "Regress (старт)", "Regress (конец)", "FF", "FF внутр.", "IFT (старт)", "IFT (конец)", "Build",
-            "CR", "Dev (старт)", "Dev (конец)", "ST", "Создано", "Обновлено");
-        int rowIdx = 1;
-        List<ReleaseEntity> releases = releaseRepository.findAllByTeamKeyOrderByPromDateAsc(teamKey);
+    private Map<String, String> buildReleaseLabelsBySprint(List<SprintEntity> sprints, List<ReleaseEntity> releases) {
+        Map<String, LinkedHashSet<String>> labels = new LinkedHashMap<>();
+
         for (ReleaseEntity release : releases) {
-            Row row = sheet.createRow(rowIdx++);
-            int col = 0;
-            row.createCell(col++).setCellValue(release.getName());
-            row.createCell(col++).setCellValue(toIso(release.getPromDate()));
-            row.createCell(col++).setCellValue(toIso(release.getPsiDate()));
-            row.createCell(col++).setCellValue(toIso(release.getOpsStart()));
-            row.createCell(col++).setCellValue(toIso(release.getOpsEnd()));
-            row.createCell(col++).setCellValue(toIso(release.getRegressStart()));
-            row.createCell(col++).setCellValue(toIso(release.getRegressEnd()));
-            row.createCell(col++).setCellValue(toIso(release.getFfDate()));
-            row.createCell(col++).setCellValue(toIso(release.getFfInnerDate()));
-            row.createCell(col++).setCellValue(toIso(release.getIftStart()));
-            row.createCell(col++).setCellValue(toIso(release.getIftEnd()));
-            row.createCell(col++).setCellValue(toIso(release.getBuildDate()));
-            row.createCell(col++).setCellValue(toIso(release.getCrDate()));
-            row.createCell(col++).setCellValue(toIso(release.getDevStart()));
-            row.createCell(col++).setCellValue(toIso(release.getDevEnd()));
-            row.createCell(col++).setCellValue(toIso(release.getStDate()));
-            row.createCell(col++).setCellValue(toIso(release.getCreatedAt()));
-            row.createCell(col).setCellValue(toIso(release.getUpdatedAt()));
+            LocalDate prom = release.getPromDate();
+            if (prom == null) {
+                continue;
+            }
+
+            SprintEntity sprint = resolveSprintByDate(sprints, prom);
+            if (sprint == null) {
+                continue;
+            }
+
+            labels.computeIfAbsent(sprint.getId().toString(), k -> new LinkedHashSet<>())
+                .add("релиз " + SHORT_DATE.format(prom));
         }
-        autosize(sheet, 18);
+
+        return labels.entrySet().stream().collect(Collectors.toMap(
+            Map.Entry::getKey,
+            e -> String.join(", ", e.getValue()),
+            (a, b) -> a,
+            LinkedHashMap::new
+        ));
     }
 
-    private void writeTasksSheet(Workbook workbook, CellStyle headerStyle, Map<UUID, SprintEntity> sprintIndex,
-        Map<UUID, ParticipantEntity> participantIndex, List<TaskEntity> tasks) {
-        Sheet sheet = workbook.createSheet("Задачи");
-        Row header = sheet.createRow(0);
-        createHeaderCells(header, headerStyle, "Порядок", "Название", "Приоритет", "Заказчик", "Поток",
-            "Участники", "Лидер", "Релизный спринт", "Дата релиза", "Создано", "Обновлено", "Описание", "DoD");
-        int rowIdx = 1;
-        for (TaskEntity task : tasks) {
-            Row row = sheet.createRow(rowIdx++);
-            int col = 0;
-            row.createCell(col++).setCellValue(task.getDisplayOrder());
-            row.createCell(col++).setCellValue(task.getTitle());
-            row.createCell(col++).setCellValue(task.getPriority());
-            row.createCell(col++).setCellValue(task.getCustomer());
-            row.createCell(col++).setCellValue(task.getStream());
-            row.createCell(col++).setCellValue(joinParticipants(task.getParticipants(), participantIndex));
-            row.createCell(col++).setCellValue(task.getLeaderParticipant() != null
-                ? participantIndex.getOrDefault(task.getLeaderParticipant().getId(), task.getLeaderParticipant()).getFullName()
-                : "");
-            row.createCell(col++).setCellValue(resolveReleaseSprintName(task, sprintIndex));
-            row.createCell(col++).setCellValue(resolveReleaseDate(task));
-            row.createCell(col++).setCellValue(toIso(task.getCreatedAt()));
-            row.createCell(col++).setCellValue(toIso(task.getUpdatedAt()));
-            row.createCell(col++).setCellValue(task.getDescription());
-            row.createCell(col).setCellValue(task.getDod());
-        }
-        autosize(sheet, 13);
-    }
-
-    private void writeTaskLoadsSheet(Workbook workbook, CellStyle headerStyle, Map<UUID, SprintEntity> sprintIndex,
-        List<TaskEntity> tasks) {
-        Sheet sheet = workbook.createSheet("Нагрузка задач");
-        Row header = sheet.createRow(0);
-        createHeaderCells(header, headerStyle, "Задача", "Спринт", "Дни");
-        int rowIdx = 1;
-        for (TaskEntity task : tasks) {
-            List<TaskLoadEntity> loads = task.getLoads().stream()
-                .sorted(Comparator.comparing(load -> sprintIndex
-                    .getOrDefault(load.getSprint().getId(), load.getSprint())
-                    .getStartDate()))
-                .toList();
-            for (TaskLoadEntity load : loads) {
-                Row row = sheet.createRow(rowIdx++);
-                int col = 0;
-                row.createCell(col++).setCellValue(task.getTitle());
-                row.createCell(col++).setCellValue(
-                    sprintIndex.getOrDefault(load.getSprint().getId(), load.getSprint()).getName());
-                row.createCell(col).setCellValue(load.getDays().doubleValue());
+    private SprintEntity resolveSprintByDate(List<SprintEntity> sprints, LocalDate date) {
+        for (SprintEntity sprint : sprints) {
+            if (!date.isBefore(sprint.getStartDate()) && !date.isAfter(sprint.getEndDate())) {
+                return sprint;
             }
         }
-        autosize(sheet, 3);
+        return null;
     }
 
-    private void writeAllocationsSheet(Workbook workbook, CellStyle headerStyle, Map<UUID, SprintEntity> sprintIndex,
-        Map<UUID, ParticipantEntity> participantIndex, List<TaskEntity> tasks) {
-        Sheet sheet = workbook.createSheet("Распределения");
-        Row header = sheet.createRow(0);
-        createHeaderCells(header, headerStyle, "Задача", "Участник", "Спринт", "Дни");
-        int rowIdx = 1;
-        for (TaskEntity task : tasks) {
-            List<TaskAllocationEntity> allocations = task.getAllocations().stream()
-                .sorted(Comparator
-                    .comparing((TaskAllocationEntity alloc) -> participantIndex
-                        .getOrDefault(alloc.getParticipant().getId(), alloc.getParticipant()).getDisplayOrder())
-                    .thenComparing(alloc -> sprintIndex
-                        .getOrDefault(alloc.getSprint().getId(), alloc.getSprint())
-                        .getStartDate()))
-                .toList();
-            for (TaskAllocationEntity allocation : allocations) {
-                Row row = sheet.createRow(rowIdx++);
-                int col = 0;
-                row.createCell(col++).setCellValue(task.getTitle());
-                row.createCell(col++).setCellValue(participantIndex
-                    .getOrDefault(allocation.getParticipant().getId(), allocation.getParticipant()).getFullName());
-                row.createCell(col++).setCellValue(
-                    sprintIndex.getOrDefault(allocation.getSprint().getId(), allocation.getSprint()).getName());
-                row.createCell(col).setCellValue(allocation.getDays().doubleValue());
-            }
+    private String sprintHeader(SprintEntity sprint, String releaseLabel) {
+        String interval = SHORT_DATE.format(sprint.getStartDate()) + "-" + SHORT_DATE.format(sprint.getEndDate());
+        if (releaseLabel == null || releaseLabel.isBlank()) {
+            return interval;
         }
-        autosize(sheet, 4);
+        return interval + "\n" + releaseLabel;
     }
 
-    private CellStyle createHeaderStyle(Workbook workbook) {
-        CellStyle style = workbook.createCellStyle();
-        var font = workbook.createFont();
-        font.setBold(true);
-        style.setFont(font);
-        return style;
-    }
+    private void configureColumns(Sheet sheet, int sprintColumns, int responsibleCol, int directionCol) {
+        sheet.setColumnWidth(0, 14 * 256);
+        sheet.setColumnWidth(1, 20 * 256);
+        sheet.setColumnWidth(2, 20 * 256);
+        sheet.setColumnWidth(3, 36 * 256);
+        sheet.setColumnWidth(4, 28 * 256);
+        sheet.setColumnWidth(5, 40 * 256);
+        sheet.setColumnWidth(6, 8 * 256);
+        sheet.setColumnWidth(7, 10 * 256);
+        sheet.setColumnWidth(8, 10 * 256);
+        sheet.setColumnWidth(9, 12 * 256);
 
-    private void createHeaderCells(Row header, CellStyle style, String... titles) {
-        for (int i = 0; i < titles.length; i++) {
-            Cell cell = header.createCell(i);
-            cell.setCellValue(titles[i]);
-            cell.setCellStyle(style);
+        for (int i = 0; i < sprintColumns; i++) {
+            sheet.setColumnWidth(BASE_SPRINT_COLUMN + i, 13 * 256);
         }
+
+        sheet.setColumnWidth(responsibleCol, 26 * 256);
+        sheet.setColumnWidth(directionCol, 18 * 256);
     }
 
-    private String joinParticipants(Iterable<TaskParticipantEntity> participants, Map<UUID, ParticipantEntity> participantIndex) {
-        return java.util.stream.StreamSupport.stream(participants.spliterator(), false)
-            .sorted(Comparator.comparingInt(TaskParticipantEntity::getDisplayOrder))
-            .map(tp -> participantIndex.getOrDefault(tp.getParticipant().getId(), tp.getParticipant()).getFullName())
+    private Styles createStyles(Workbook workbook) {
+        DataFormat dataFormat = workbook.createDataFormat();
+        Font bold = workbook.createFont();
+        bold.setBold(true);
+
+        CellStyle section = workbook.createCellStyle();
+        section.setFont(bold);
+        section.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        section.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        section.setVerticalAlignment(VerticalAlignment.TOP);
+        applyBorder(section);
+
+        CellStyle header = workbook.createCellStyle();
+        header.setFont(bold);
+        header.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        header.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        header.setVerticalAlignment(VerticalAlignment.TOP);
+        applyBorder(header);
+
+        CellStyle headerWrap = workbook.createCellStyle();
+        headerWrap.cloneStyleFrom(header);
+        headerWrap.setWrapText(true);
+
+        CellStyle base = workbook.createCellStyle();
+        base.setVerticalAlignment(VerticalAlignment.TOP);
+        applyBorder(base);
+
+        CellStyle baseWrap = workbook.createCellStyle();
+        baseWrap.cloneStyleFrom(base);
+        baseWrap.setWrapText(true);
+
+        CellStyle number = workbook.createCellStyle();
+        number.cloneStyleFrom(base);
+        number.setDataFormat(dataFormat.getFormat("0.##"));
+
+        CellStyle summaryText = workbook.createCellStyle();
+        summaryText.cloneStyleFrom(baseWrap);
+        summaryText.setFont(bold);
+        summaryText.setFillForegroundColor(IndexedColors.LIGHT_YELLOW.getIndex());
+        summaryText.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+
+        CellStyle summaryNumber = workbook.createCellStyle();
+        summaryNumber.cloneStyleFrom(number);
+        summaryNumber.setFont(bold);
+        summaryNumber.setFillForegroundColor(IndexedColors.LIGHT_YELLOW.getIndex());
+        summaryNumber.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+
+        return new Styles(section, header, headerWrap, base, baseWrap, number, summaryText, summaryNumber);
+    }
+
+    private void applyBorder(CellStyle style) {
+        style.setBorderBottom(BorderStyle.THIN);
+        style.setBorderTop(BorderStyle.THIN);
+        style.setBorderLeft(BorderStyle.THIN);
+        style.setBorderRight(BorderStyle.THIN);
+    }
+
+    private void createCell(Row row, int col, String value, CellStyle style) {
+        Cell cell = row.createCell(col);
+        cell.setCellValue(value);
+        cell.setCellStyle(style);
+    }
+
+    private void setNumber(Row row, int col, Double value, CellStyle style, boolean forceZero) {
+        if (value == null && !forceZero) {
+            return;
+        }
+
+        double normalized = value != null ? value : 0.0;
+        if (!forceZero && Math.abs(normalized) < 1e-9) {
+            return;
+        }
+
+        Cell cell = row.createCell(col);
+        cell.setCellValue(normalized);
+        cell.setCellStyle(style);
+    }
+
+    private Double decimalValue(Map<String, ? extends Number> values, String key) {
+        if (values == null) {
+            return null;
+        }
+        Number value = values.get(key);
+        return value != null ? value.doubleValue() : null;
+    }
+
+    private String joinValues(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return "";
+        }
+        return values.stream()
+            .filter(v -> v != null && !v.isBlank())
             .collect(Collectors.joining(", "));
     }
 
-    private String resolveReleaseDate(TaskEntity task) {
-        if (task.getReleaseDate() == null) {
+    private String firstOrEmpty(List<String> values) {
+        if (values == null || values.isEmpty()) {
             return "";
         }
-        return toIso(task.getReleaseDate().getPromDate());
-    }
-
-    private String resolveReleaseSprintName(TaskEntity task, Map<UUID, SprintEntity> sprintIndex) {
-        if (task.getReleaseDate() == null || task.getReleaseDate().getPromDate() == null) {
-            return "";
-        }
-        LocalDate releaseDate = task.getReleaseDate().getPromDate();
-        for (SprintEntity sprint : sprintIndex.values()) {
-            if (!releaseDate.isBefore(sprint.getStartDate()) && !releaseDate.isAfter(sprint.getEndDate())) {
-                return sprint.getName();
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
             }
         }
         return "";
     }
 
-    private String toIso(LocalDate date) {
-        return date != null ? date.toString() : "";
+    private String safe(String value) {
+        return value != null ? value : "";
     }
 
-    private void autosize(Sheet sheet, int columns) {
-        for (int i = 0; i < columns; i++) {
-            sheet.autoSizeColumn(i);
-        }
+    private record Styles(
+        CellStyle section,
+        CellStyle header,
+        CellStyle headerWrap,
+        CellStyle base,
+        CellStyle baseWrap,
+        CellStyle number,
+        CellStyle summaryText,
+        CellStyle summaryNumber
+    ) {
     }
 }
