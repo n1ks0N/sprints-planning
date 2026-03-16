@@ -13,12 +13,10 @@ import jakarta.transaction.Transactional;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -41,7 +39,14 @@ import org.springframework.stereotype.Service;
 @Service
 public class ExportService {
 
-    private static final int BASE_SPRINT_COLUMN = 10; // K
+    private static final int BUSINESS_COL = 0; // A
+    private static final int STREAM_COL = 1; // B
+    private static final int DOD_COL = 2; // C
+    private static final int TITLE_COL = 3; // D
+    private static final int DETAILS_COL = 4; // E
+    private static final int PRIORITY_COL = 5; // F
+    private static final int TOTAL_COL = 6; // G
+    private static final int BASE_SPRINT_COLUMN = 7; // H
     private static final DateTimeFormatter SHORT_DATE = DateTimeFormatter.ofPattern("dd.MM");
 
     private final SprintRepository sprintRepository;
@@ -79,7 +84,7 @@ public class ExportService {
             : sprintRepository.findByTeamKeyAndQuarterIdsOrderByQuarterAndOrder(teamKey, quarterIds);
 
         List<ReleaseEntity> releases = releaseRepository.findAllByTeamKeyOrderByPromDateAsc(teamKey);
-        Map<String, String> releaseLabelsBySprintId = buildReleaseLabelsBySprint(sprints, releases);
+        Map<String, String> releaseLabelsById = buildReleaseLabelsById(releases);
 
         List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
         Map<String, ParticipantEntity> participantIndex = participants.stream()
@@ -91,41 +96,47 @@ public class ExportService {
         try (SXSSFWorkbook workbook = new SXSSFWorkbook(200); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             workbook.setCompressTempFiles(true);
             Styles styles = createStyles(workbook);
-            Sheet sheet = workbook.createSheet("Оценка");
+            Sheet backlogSheet = workbook.createSheet("Оценка");
+            Sheet workloadSheet = workbook.createSheet("Нагрузка");
 
             int sprintColumns = sprints.size();
             int responsibleCol = BASE_SPRINT_COLUMN + sprintColumns;
             int directionCol = responsibleCol + 1;
 
-            int matrixHeaderRow = 1;
-            int matrixLastRow = writeCapacityBlock(
-                sheet,
-                styles,
-                matrixHeaderRow,
-                sprints,
-                releaseLabelsBySprintId,
-                capacityRows
-            );
-
-            int tableHeaderRow = Math.max(33, matrixLastRow + 2);
-            writeBacklogHeader(sheet, styles, tableHeaderRow, sprints, releaseLabelsBySprintId, responsibleCol, directionCol);
+            int tableHeaderRow = 0;
+            writeBacklogHeader(backlogSheet, styles, tableHeaderRow, sprints, responsibleCol, directionCol);
 
             int firstDataRow = tableHeaderRow + 1;
             int lastDataRow = writeBacklogRows(
-                sheet,
+                backlogSheet,
                 styles,
                 firstDataRow,
                 sprints,
                 tasks,
+                releaseLabelsById,
                 participantIndex,
                 responsibleCol,
                 directionCol
             );
 
             int filterLastRow = Math.max(tableHeaderRow, lastDataRow);
-            sheet.setAutoFilter(new CellRangeAddress(tableHeaderRow, filterLastRow, 0, directionCol));
-            sheet.createFreezePane(0, tableHeaderRow + 1);
-            configureColumns(sheet, sprints.size(), responsibleCol, directionCol);
+            backlogSheet.setAutoFilter(new CellRangeAddress(tableHeaderRow, filterLastRow, 0, directionCol));
+            backlogSheet.createFreezePane(0, tableHeaderRow + 1);
+            configureBacklogColumns(backlogSheet, sprintColumns, responsibleCol, directionCol);
+
+            int matrixHeaderRow = 1;
+            int matrixLastRow = writeCapacityBlock(
+                workloadSheet,
+                styles,
+                matrixHeaderRow,
+                0,
+                sprints,
+                capacityRows
+            );
+            int workloadLastCol = sprintColumns + 4;
+            workloadSheet.setAutoFilter(new CellRangeAddress(matrixHeaderRow, Math.max(matrixHeaderRow, matrixLastRow), 0, workloadLastCol));
+            workloadSheet.createFreezePane(0, matrixHeaderRow + 1);
+            configureCapacityColumns(workloadSheet, sprintColumns);
 
             workbook.write(out);
             return out.toByteArray();
@@ -138,31 +149,37 @@ public class ExportService {
         Sheet sheet,
         Styles styles,
         int headerRowIndex,
+        int matrixStartCol,
         List<SprintEntity> sprints,
-        Map<String, String> releaseLabelsBySprintId,
         List<CapacityRowDto> capacityRows
     ) {
         int sprintColumns = sprints.size();
-        int limitCol = BASE_SPRINT_COLUMN + sprintColumns;
+        int matrixSprintStartCol = matrixStartCol + 2;
+        int limitCol = matrixSprintStartCol + sprintColumns;
         int totalCol = limitCol + 1;
         int diffCol = limitCol + 2;
 
         Row titleRow = sheet.createRow(Math.max(0, headerRowIndex - 1));
-        Cell titleCell = titleRow.createCell(8);
+        Cell titleCell = titleRow.createCell(matrixStartCol);
         titleCell.setCellValue("Расчет нагрузки на спринт");
         titleCell.setCellStyle(styles.section());
-        sheet.addMergedRegion(new CellRangeAddress(titleRow.getRowNum(), titleRow.getRowNum(), 8, 9));
+        sheet.addMergedRegion(new CellRangeAddress(
+            titleRow.getRowNum(),
+            titleRow.getRowNum(),
+            matrixStartCol,
+            matrixStartCol + 1
+        ));
 
         Row header = sheet.createRow(headerRowIndex);
-        createCell(header, 8, "Участник", styles.header());
-        createCell(header, 9, "Роль", styles.header());
+        createCell(header, matrixStartCol, "Участник", styles.header());
+        createCell(header, matrixStartCol + 1, "Роль", styles.header());
 
         for (int i = 0; i < sprints.size(); i++) {
             SprintEntity sprint = sprints.get(i);
             createCell(
                 header,
-                BASE_SPRINT_COLUMN + i,
-                sprintHeader(sprint, releaseLabelsBySprintId.get(sprint.getId().toString())),
+                matrixSprintStartCol + i,
+                sprintHeader(sprint),
                 styles.headerWrap()
             );
         }
@@ -174,21 +191,42 @@ public class ExportService {
         int rowIdx = headerRowIndex + 1;
         for (CapacityRowDto rowDto : capacityRows) {
             Row row = sheet.createRow(rowIdx++);
-            createCell(row, 8, rowDto.participant().fullName(), styles.base());
-            createCell(row, 9, rowDto.participant().role(), styles.base());
+            createCell(row, matrixStartCol, rowDto.participant().fullName(), styles.base());
+            createCell(row, matrixStartCol + 1, rowDto.participant().role(), styles.base());
 
             Map<String, Double> workloadBySprint = rowDto.cells().stream()
                 .collect(Collectors.toMap(CapacityCellDto::sprintId, CapacityCellDto::workloadDays, (a, b) -> a));
 
             for (int i = 0; i < sprints.size(); i++) {
                 String sprintId = sprints.get(i).getId().toString();
-                setNumber(row, BASE_SPRINT_COLUMN + i, workloadBySprint.get(sprintId), styles.number(), false);
+                setNumber(
+                    row,
+                    matrixSprintStartCol + i,
+                    workloadBySprint.get(sprintId),
+                    styles.integerNumber(),
+                    styles.decimalNumber(),
+                    false
+                );
             }
 
             double limit = sprintColumns > 0 ? rowDto.totalQuarterAvailable() / sprintColumns : rowDto.totalQuarterAvailable();
-            setNumber(row, limitCol, limit, styles.number(), true);
-            setNumber(row, totalCol, rowDto.totalQuarterWorkload(), styles.number(), true);
-            setNumber(row, diffCol, rowDto.totalQuarterAvailable() - rowDto.totalQuarterWorkload(), styles.number(), true);
+            setNumber(row, limitCol, limit, styles.integerNumber(), styles.decimalNumber(), true);
+            setNumber(
+                row,
+                totalCol,
+                rowDto.totalQuarterWorkload(),
+                styles.integerNumber(),
+                styles.decimalNumber(),
+                true
+            );
+            setNumber(
+                row,
+                diffCol,
+                rowDto.totalQuarterAvailable() - rowDto.totalQuarterWorkload(),
+                styles.integerNumber(),
+                styles.decimalNumber(),
+                true
+            );
         }
 
         return rowIdx - 1;
@@ -199,28 +237,24 @@ public class ExportService {
         Styles styles,
         int rowIndex,
         List<SprintEntity> sprints,
-        Map<String, String> releaseLabelsBySprintId,
         int responsibleCol,
         int directionCol
     ) {
         Row header = sheet.createRow(rowIndex);
-        createCell(header, 0, "Эпик", styles.header());
-        createCell(header, 1, "Бизнес-задача / ИТ-повестка", styles.header());
-        createCell(header, 2, "Стрим", styles.header());
-        createCell(header, 3, "DOD (название для сводной)", styles.header());
-        createCell(header, 4, "Название доработки", styles.header());
-        createCell(header, 5, "Детали", styles.header());
-        createCell(header, 6, "CR", styles.header());
-        createCell(header, 7, "приоритет", styles.header());
-        createCell(header, 8, "Доля задачи", styles.header());
-        createCell(header, 9, "трудозатраты", styles.header());
+        createCell(header, BUSINESS_COL, "Заказчик", styles.header());
+        createCell(header, STREAM_COL, "Стрим", styles.header());
+        createCell(header, DOD_COL, "DOD (название для сводной)", styles.header());
+        createCell(header, TITLE_COL, "Название доработки", styles.header());
+        createCell(header, DETAILS_COL, "Описание", styles.header());
+        createCell(header, PRIORITY_COL, "Приоритет", styles.header());
+        createCell(header, TOTAL_COL, "Трудозатраты", styles.header());
 
         for (int i = 0; i < sprints.size(); i++) {
             SprintEntity sprint = sprints.get(i);
             createCell(
                 header,
                 BASE_SPRINT_COLUMN + i,
-                sprintHeader(sprint, releaseLabelsBySprintId.get(sprint.getId().toString())),
+                sprintHeader(sprint),
                 styles.headerWrap()
             );
         }
@@ -235,6 +269,7 @@ public class ExportService {
         int startRow,
         List<SprintEntity> sprints,
         List<TaskDto> tasks,
+        Map<String, String> releaseLabelsById,
         Map<String, ParticipantEntity> participantIndex,
         int responsibleCol,
         int directionCol
@@ -248,12 +283,12 @@ public class ExportService {
         int rowIdx = startRow;
         for (TaskDto task : orderedTasks) {
             Row summary = sheet.createRow(rowIdx++);
-            createCell(summary, 0, firstOrEmpty(task.streams()), styles.summaryText());
-            createCell(summary, 1, joinValues(task.customers()), styles.summaryText());
-            createCell(summary, 2, joinValues(task.streams()), styles.summaryText());
-            createCell(summary, 3, safe(task.dod()), styles.summaryText());
-            createCell(summary, 5, safe(task.title()), styles.summaryText());
-            createCell(summary, 7, String.valueOf(task.priority()), styles.summaryText());
+            createCell(summary, BUSINESS_COL, joinValues(task.customers()), styles.summaryText());
+            createCell(summary, STREAM_COL, joinValues(task.streams()), styles.summaryText());
+            createCell(summary, DOD_COL, safe(task.dod()), styles.summaryText());
+            createCell(summary, TITLE_COL, safe(task.title()), styles.summaryText());
+            createCell(summary, DETAILS_COL, safe(task.description()), styles.summaryText());
+            createCell(summary, PRIORITY_COL, String.valueOf(task.priority()), styles.summaryText());
 
             double taskTotal = 0.0;
             for (int i = 0; i < sprints.size(); i++) {
@@ -262,10 +297,26 @@ public class ExportService {
                 if (value != null) {
                     taskTotal += value;
                 }
-                setNumber(summary, BASE_SPRINT_COLUMN + i, value, styles.summaryNumber(), false);
+                if (isReleaseSprint(task, sprint)) {
+                    createCell(
+                        summary,
+                        BASE_SPRINT_COLUMN + i,
+                        releaseCellValue(value, releaseLabelsById.get(task.releaseDateId())),
+                        styles.summaryWrap()
+                    );
+                } else {
+                    setNumber(
+                        summary,
+                        BASE_SPRINT_COLUMN + i,
+                        value,
+                        styles.integerSummaryNumber(),
+                        styles.decimalSummaryNumber(),
+                        false
+                    );
+                }
             }
 
-            setNumber(summary, 9, taskTotal, styles.summaryNumber(), true);
+            setNumber(summary, TOTAL_COL, taskTotal, styles.integerSummaryNumber(), styles.decimalSummaryNumber(), true);
             createCell(summary, responsibleCol, "Ответственные", styles.summaryText());
             createCell(summary, directionCol, firstOrEmpty(task.customers()), styles.summaryText());
 
@@ -276,10 +327,9 @@ public class ExportService {
                 String role = participant != null ? safe(participant.getRole()) : "";
                 String fullName = participant != null ? safe(participant.getFullName()) : participantId;
 
-                createCell(detail, 4, safe(task.title()), styles.baseWrap());
-                createCell(detail, 5, safe(task.description()), styles.baseWrap());
-                createCell(detail, 7, String.valueOf(task.priority()), styles.base());
-                createCell(detail, 8, role, styles.base());
+                createCell(detail, TITLE_COL, safe(task.title()), styles.baseWrap());
+                createCell(detail, DETAILS_COL, safe(task.description()), styles.baseWrap());
+                createCell(detail, PRIORITY_COL, String.valueOf(task.priority()), styles.base());
 
                 double personTotal = 0.0;
                 Map<String, java.math.BigDecimal> allocations = task.allocations() != null
@@ -291,10 +341,17 @@ public class ExportService {
                     if (value != null) {
                         personTotal += value;
                     }
-                    setNumber(detail, BASE_SPRINT_COLUMN + i, value, styles.number(), false);
+                    setNumber(
+                        detail,
+                        BASE_SPRINT_COLUMN + i,
+                        value,
+                        styles.integerNumber(),
+                        styles.decimalNumber(),
+                        false
+                    );
                 }
 
-                setNumber(detail, 9, personTotal, styles.number(), false);
+                setNumber(detail, TOTAL_COL, personTotal, styles.integerNumber(), styles.decimalNumber(), false);
                 createCell(detail, responsibleCol, fullName, styles.base());
                 createCell(detail, directionCol, role, styles.base());
             }
@@ -303,60 +360,46 @@ public class ExportService {
         return rowIdx - 1;
     }
 
-    private Map<String, String> buildReleaseLabelsBySprint(List<SprintEntity> sprints, List<ReleaseEntity> releases) {
-        Map<String, LinkedHashSet<String>> labels = new LinkedHashMap<>();
-
-        for (ReleaseEntity release : releases) {
-            LocalDate prom = release.getPromDate();
-            if (prom == null) {
-                continue;
-            }
-
-            SprintEntity sprint = resolveSprintByDate(sprints, prom);
-            if (sprint == null) {
-                continue;
-            }
-
-            labels.computeIfAbsent(sprint.getId().toString(), k -> new LinkedHashSet<>())
-                .add("релиз " + SHORT_DATE.format(prom));
-        }
-
-        return labels.entrySet().stream().collect(Collectors.toMap(
-            Map.Entry::getKey,
-            e -> String.join(", ", e.getValue()),
-            (a, b) -> a,
-            LinkedHashMap::new
-        ));
+    private Map<String, String> buildReleaseLabelsById(List<ReleaseEntity> releases) {
+        return releases.stream()
+            .filter(release -> release.getId() != null && release.getPromDate() != null)
+            .collect(Collectors.toMap(
+                release -> release.getId().toString(),
+                release -> "релиз " + SHORT_DATE.format(release.getPromDate()),
+                (a, b) -> a,
+                LinkedHashMap::new
+            ));
     }
 
-    private SprintEntity resolveSprintByDate(List<SprintEntity> sprints, LocalDate date) {
-        for (SprintEntity sprint : sprints) {
-            if (!date.isBefore(sprint.getStartDate()) && !date.isAfter(sprint.getEndDate())) {
-                return sprint;
-            }
-        }
-        return null;
+    private boolean isReleaseSprint(TaskDto task, SprintEntity sprint) {
+        return task.releaseSprintId() != null
+            && sprint.getId() != null
+            && task.releaseSprintId().equals(sprint.getId().toString());
     }
 
-    private String sprintHeader(SprintEntity sprint, String releaseLabel) {
-        String interval = SHORT_DATE.format(sprint.getStartDate()) + "-" + SHORT_DATE.format(sprint.getEndDate());
+    private String releaseCellValue(Double value, String releaseLabel) {
+        String load = formatNumber(value);
         if (releaseLabel == null || releaseLabel.isBlank()) {
-            return interval;
+            return load;
         }
-        return interval + "\n" + releaseLabel;
+        if (load.isBlank()) {
+            return releaseLabel;
+        }
+        return load + "\n" + releaseLabel;
     }
 
-    private void configureColumns(Sheet sheet, int sprintColumns, int responsibleCol, int directionCol) {
-        sheet.setColumnWidth(0, 14 * 256);
-        sheet.setColumnWidth(1, 20 * 256);
-        sheet.setColumnWidth(2, 20 * 256);
-        sheet.setColumnWidth(3, 36 * 256);
-        sheet.setColumnWidth(4, 28 * 256);
-        sheet.setColumnWidth(5, 40 * 256);
-        sheet.setColumnWidth(6, 8 * 256);
-        sheet.setColumnWidth(7, 10 * 256);
-        sheet.setColumnWidth(8, 10 * 256);
-        sheet.setColumnWidth(9, 12 * 256);
+    private String sprintHeader(SprintEntity sprint) {
+        return SHORT_DATE.format(sprint.getStartDate()) + "-" + SHORT_DATE.format(sprint.getEndDate());
+    }
+
+    private void configureBacklogColumns(Sheet sheet, int sprintColumns, int responsibleCol, int directionCol) {
+        sheet.setColumnWidth(BUSINESS_COL, 20 * 256);
+        sheet.setColumnWidth(STREAM_COL, 20 * 256);
+        sheet.setColumnWidth(DOD_COL, 36 * 256);
+        sheet.setColumnWidth(TITLE_COL, 28 * 256);
+        sheet.setColumnWidth(DETAILS_COL, 40 * 256);
+        sheet.setColumnWidth(PRIORITY_COL, 10 * 256);
+        sheet.setColumnWidth(TOTAL_COL, 12 * 256);
 
         for (int i = 0; i < sprintColumns; i++) {
             sheet.setColumnWidth(BASE_SPRINT_COLUMN + i, 13 * 256);
@@ -364,6 +407,17 @@ public class ExportService {
 
         sheet.setColumnWidth(responsibleCol, 26 * 256);
         sheet.setColumnWidth(directionCol, 18 * 256);
+    }
+
+    private void configureCapacityColumns(Sheet sheet, int sprintColumns) {
+        sheet.setColumnWidth(0, 20 * 256);
+        sheet.setColumnWidth(1, 14 * 256);
+        for (int i = 0; i < sprintColumns; i++) {
+            sheet.setColumnWidth(2 + i, 13 * 256);
+        }
+        sheet.setColumnWidth(2 + sprintColumns, 14 * 256);
+        sheet.setColumnWidth(3 + sprintColumns, 14 * 256);
+        sheet.setColumnWidth(4 + sprintColumns, 12 * 256);
     }
 
     private Styles createStyles(Workbook workbook) {
@@ -397,9 +451,13 @@ public class ExportService {
         baseWrap.cloneStyleFrom(base);
         baseWrap.setWrapText(true);
 
-        CellStyle number = workbook.createCellStyle();
-        number.cloneStyleFrom(base);
-        number.setDataFormat(dataFormat.getFormat("0.##"));
+        CellStyle integerNumber = workbook.createCellStyle();
+        integerNumber.cloneStyleFrom(base);
+        integerNumber.setDataFormat(dataFormat.getFormat("0"));
+
+        CellStyle decimalNumber = workbook.createCellStyle();
+        decimalNumber.cloneStyleFrom(base);
+        decimalNumber.setDataFormat(dataFormat.getFormat("0.##"));
 
         CellStyle summaryText = workbook.createCellStyle();
         summaryText.cloneStyleFrom(baseWrap);
@@ -407,13 +465,34 @@ public class ExportService {
         summaryText.setFillForegroundColor(IndexedColors.LIGHT_YELLOW.getIndex());
         summaryText.setFillPattern(FillPatternType.SOLID_FOREGROUND);
 
-        CellStyle summaryNumber = workbook.createCellStyle();
-        summaryNumber.cloneStyleFrom(number);
-        summaryNumber.setFont(bold);
-        summaryNumber.setFillForegroundColor(IndexedColors.LIGHT_YELLOW.getIndex());
-        summaryNumber.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        CellStyle summaryWrap = workbook.createCellStyle();
+        summaryWrap.cloneStyleFrom(summaryText);
 
-        return new Styles(section, header, headerWrap, base, baseWrap, number, summaryText, summaryNumber);
+        CellStyle integerSummaryNumber = workbook.createCellStyle();
+        integerSummaryNumber.cloneStyleFrom(integerNumber);
+        integerSummaryNumber.setFont(bold);
+        integerSummaryNumber.setFillForegroundColor(IndexedColors.LIGHT_YELLOW.getIndex());
+        integerSummaryNumber.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+
+        CellStyle decimalSummaryNumber = workbook.createCellStyle();
+        decimalSummaryNumber.cloneStyleFrom(decimalNumber);
+        decimalSummaryNumber.setFont(bold);
+        decimalSummaryNumber.setFillForegroundColor(IndexedColors.LIGHT_YELLOW.getIndex());
+        decimalSummaryNumber.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+
+        return new Styles(
+            section,
+            header,
+            headerWrap,
+            base,
+            baseWrap,
+            integerNumber,
+            decimalNumber,
+            summaryText,
+            summaryWrap,
+            integerSummaryNumber,
+            decimalSummaryNumber
+        );
     }
 
     private void applyBorder(CellStyle style) {
@@ -429,7 +508,14 @@ public class ExportService {
         cell.setCellStyle(style);
     }
 
-    private void setNumber(Row row, int col, Double value, CellStyle style, boolean forceZero) {
+    private void setNumber(
+        Row row,
+        int col,
+        Double value,
+        CellStyle integerStyle,
+        CellStyle decimalStyle,
+        boolean forceZero
+    ) {
         if (value == null && !forceZero) {
             return;
         }
@@ -441,7 +527,7 @@ public class ExportService {
 
         Cell cell = row.createCell(col);
         cell.setCellValue(normalized);
-        cell.setCellStyle(style);
+        cell.setCellStyle(isWholeNumber(normalized) ? integerStyle : decimalStyle);
     }
 
     private Double decimalValue(Map<String, ? extends Number> values, String key) {
@@ -477,15 +563,34 @@ public class ExportService {
         return value != null ? value : "";
     }
 
+    private boolean isWholeNumber(double value) {
+        return Math.abs(value - Math.rint(value)) < 1e-9;
+    }
+
+    private String formatNumber(Double value) {
+        if (value == null) {
+            return "";
+        }
+        if (isWholeNumber(value)) {
+            return String.valueOf((long) Math.rint(value));
+        }
+        return java.math.BigDecimal.valueOf(value)
+            .stripTrailingZeros()
+            .toPlainString();
+    }
+
     private record Styles(
         CellStyle section,
         CellStyle header,
         CellStyle headerWrap,
         CellStyle base,
         CellStyle baseWrap,
-        CellStyle number,
+        CellStyle integerNumber,
+        CellStyle decimalNumber,
         CellStyle summaryText,
-        CellStyle summaryNumber
+        CellStyle summaryWrap,
+        CellStyle integerSummaryNumber,
+        CellStyle decimalSummaryNumber
     ) {
     }
 }

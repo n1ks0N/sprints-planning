@@ -27,9 +27,9 @@ import BacklogPage from "./BacklogPage";
 import ParticipantWorkloadPage from "./ParticipantWorkloadPage";
 import ReleasesPage from "./ReleasesPage";
 import HistoryPage from "./HistoryPage";
-import { useDispatch, useSelector } from "react-redux";
+import { useDispatch, useSelector, useStore } from "react-redux";
 import { undoLast } from "../app/undoSlice";
-import { useLazyExportExcelQuery } from "../app/api";
+import { exportExcelFile } from "../app/api";
 import moment from "moment";
 import TeamSwitcher from "../components/TeamSwitcher";
 import {
@@ -74,6 +74,7 @@ function TeamScopedApp() {
   const navigate = useNavigate();
   const location = useLocation();
   const dispatch = useDispatch();
+  const store = useStore();
   const teams = useSelector(selectAvailableTeams);
   const hideAllParticipants = useSelector(
     (state: any) => state.ui?.backlog?.hideAllParticipants ?? false
@@ -206,15 +207,16 @@ function TeamScopedApp() {
     document.title = buildTabTitle(teamScopedPageTitle);
   }, [teamScopedPageTitle]);
 
-  const [exportExcel, { isFetching: isExporting }] = useLazyExportExcelQuery();
+  const [isExporting, setIsExporting] = React.useState(false);
 
   const handleToggleAllParticipants = React.useCallback(() => {
     dispatch(setBacklogFilters({ hideAllParticipants: !hideAllParticipants }));
   }, [dispatch, hideAllParticipants]);
 
   const handleExportExcel = React.useCallback(async () => {
+    setIsExporting(true);
     try {
-      const blob = await exportExcel().unwrap();
+      const blob = await exportExcelFile(store.getState());
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -225,8 +227,10 @@ function TeamScopedApp() {
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Не удалось экспортировать Excel", error);
+    } finally {
+      setIsExporting(false);
     }
-  }, [exportExcel]);
+  }, [store]);
 
   const navigateToTeam = React.useCallback(
     (nextTeam: string) => {

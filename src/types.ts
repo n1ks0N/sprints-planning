@@ -40,6 +40,7 @@ export type JiraIssueLink = {
 export type JiraIssueRequestPreview = {
   method: string;
   url: string;
+  headers: Record<string, string>;
   body: Record<string, unknown>;
 };
 

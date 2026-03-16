@@ -18,8 +18,10 @@ import com.sber.isu.sprints_planning.repository.TaskRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -218,7 +220,13 @@ public class JiraIssueExportService {
                     participant,
                     storyPoints
                 );
-                JiraIssueRequestPreviewDto requestPreview = buildRequestPreview(baseUrl, requestBody);
+                JiraIssueRequestPreviewDto requestPreview = buildRequestPreview(baseUrl, token, requestBody);
+                log.info(
+                    "Jira POST /issue request: url={}, headers={}, body={}",
+                    requestPreview.url(),
+                    requestPreview.headers(),
+                    requestPreview.body()
+                );
 
                 try {
                     JiraCreateIssueResponse jiraResponse = createIssue(baseUrl, token, requestBody);
@@ -472,7 +480,7 @@ public class JiraIssueExportService {
         );
     }
 
-    private JiraIssueRequestPreviewDto buildRequestPreview(String baseUrl, JiraCreateIssueRequest request) {
+    private JiraIssueRequestPreviewDto buildRequestPreview(String baseUrl, String token, JiraCreateIssueRequest request) {
         Map<String, Object> project = new LinkedHashMap<>();
         project.put("key", request.fields().project().key());
 
@@ -495,11 +503,27 @@ public class JiraIssueExportService {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("fields", fields);
 
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+        String authorizationHeader = maskedAuthorizationHeader(token);
+        if (authorizationHeader != null) {
+            headers.put(HttpHeaders.AUTHORIZATION, authorizationHeader);
+        }
+
         return new JiraIssueRequestPreviewDto(
             "POST",
             baseUrl + "/rest/api/2/issue",
+            headers,
             body
         );
+    }
+
+    private String maskedAuthorizationHeader(String token) {
+        if (!StringUtils.hasText(token)) {
+            return null;
+        }
+        String encoded = Base64.getEncoder().encodeToString(token.trim().getBytes(StandardCharsets.UTF_8));
+        return "Basic " + encoded;
     }
 
     private BigDecimal resolveStoryPoints(TaskEntity task, UUID participantId, UUID sprintId) {

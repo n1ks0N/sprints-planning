@@ -256,6 +256,81 @@ const applyPatches = <Args>(
 
 type TasksPage = Page<BacklogItem>;
 
+const joinFilterValues = (values?: Array<string | number>) => {
+  if (!Array.isArray(values) || values.length === 0) return undefined;
+  const normalized = values
+    .map((v) => String(v).trim())
+    .filter((v) => v.length > 0);
+  return normalized.length > 0 ? normalized.join(",") : undefined;
+};
+
+const buildExcelExportUrl = (state: any) => {
+  const baseUrl = process.env.API_URL || "/api/v1/sprints-planning";
+  const teamKey = (
+    selectCurrentTeamKey(state) ||
+    getTeamFromLocation() ||
+    DEFAULT_TEAM_KEY
+  ).toLowerCase();
+  const backlog = state?.ui?.backlog;
+  const params = new URLSearchParams();
+
+  const quarterIds = Array.isArray(backlog?.selectedQuarterIds)
+    ? backlog.selectedQuarterIds
+    : [];
+  const singleQuarter =
+    typeof backlog?.quarterId === "string" && backlog.quarterId !== "all"
+      ? backlog.quarterId
+      : "";
+  const quarterFilter =
+    quarterIds.length > 0 ? quarterIds : singleQuarter ? [singleQuarter] : [];
+  const quarters = joinFilterValues(quarterFilter);
+  if (quarters) params.set("quarterId", quarters);
+  if (backlog?.withoutQuarter) params.set("withoutQuarter", "true");
+
+  const priorities = joinFilterValues(backlog?.priorityFilter);
+  if (priorities) params.set("priority", priorities);
+
+  const statuses = joinFilterValues(backlog?.statusFilter);
+  if (statuses) params.set("status", statuses);
+
+  const releaseDateId =
+    typeof backlog?.releaseSprintFilter === "string"
+      ? backlog.releaseSprintFilter.trim()
+      : "";
+  if (releaseDateId && releaseDateId !== "all") {
+    params.set("releaseDateId", releaseDateId);
+  }
+
+  const streams = joinFilterValues(backlog?.streamFilter);
+  if (streams) params.set("stream", streams);
+
+  const customers = joinFilterValues(backlog?.customerFilter);
+  if (customers) params.set("customer", customers);
+
+  const search =
+    typeof backlog?.searchQuery === "string" ? backlog.searchQuery.trim() : "";
+  if (search) params.set("search", search);
+
+  const query = params.toString();
+  return `${baseUrl}/${teamKey}/export/excel${query ? `?${query}` : ""}`;
+};
+
+export const exportExcelFile = async (state: any): Promise<Blob> => {
+  const headers = new Headers();
+  const sessionId = ensureSessionId();
+  const userName = getStoredUserName();
+  if (sessionId) headers.set("X-Session-Id", sessionId);
+  if (userName) headers.set("X-User-Name", encodeURIComponent(userName));
+
+  const response = await fetch(buildExcelExportUrl(state), { headers });
+  const blob = await response.blob();
+  if (!response.ok) {
+    const text = await blob.text();
+    throw new Error(typeof text === "string" && text ? text : "Export failed");
+  }
+  return blob;
+};
+
 const recalcPageMeta = (draft: TasksPage) => {
   const size = Math.max(1, (draft.page?.size ?? draft.content.length) || 1);
   const pageInfo = draft.page ??
@@ -1463,85 +1538,6 @@ export const api = createApi({
       ],
     }),
 
-    // ---- Export ----
-    exportExcel: b.query<Blob, void>({
-      async queryFn(_arg, { getState }) {
-        const baseUrl = process.env.API_URL || "/api/v1/sprints-planning";
-        const state = getState() as any;
-        const teamKey = selectCurrentTeamKey(state);
-        const backlog = state?.ui?.backlog;
-        const params = new URLSearchParams();
-
-        const joinOrUndefined = (values?: Array<string | number>) => {
-          if (!Array.isArray(values) || values.length === 0) return undefined;
-          const normalized = values
-            .map((v) => String(v).trim())
-            .filter((v) => v.length > 0);
-          return normalized.length > 0 ? normalized.join(",") : undefined;
-        };
-
-        const quarterIds = Array.isArray(backlog?.selectedQuarterIds)
-          ? backlog.selectedQuarterIds
-          : [];
-        const singleQuarter =
-          typeof backlog?.quarterId === "string" && backlog.quarterId !== "all"
-            ? backlog.quarterId
-            : "";
-        const quarterFilter =
-          quarterIds.length > 0 ? quarterIds : singleQuarter ? [singleQuarter] : [];
-        const quarters = joinOrUndefined(quarterFilter);
-        if (quarters) params.set("quarterId", quarters);
-
-        const priorities = joinOrUndefined(backlog?.priorityFilter);
-        if (priorities) params.set("priority", priorities);
-
-        const statuses = joinOrUndefined(backlog?.statusFilter);
-        if (statuses) params.set("status", statuses);
-
-        const releaseDateId =
-          typeof backlog?.releaseSprintFilter === "string"
-            ? backlog.releaseSprintFilter.trim()
-            : "";
-        if (releaseDateId && releaseDateId !== "all") {
-          params.set("releaseDateId", releaseDateId);
-        }
-
-        const streams = joinOrUndefined(backlog?.streamFilter);
-        if (streams) params.set("stream", streams);
-
-        const customers = joinOrUndefined(backlog?.customerFilter);
-        if (customers) params.set("customer", customers);
-
-        const search = typeof backlog?.searchQuery === "string" ? backlog.searchQuery.trim() : "";
-        if (search) params.set("search", search);
-
-        const query = params.toString();
-        const url = `${baseUrl}/${teamKey}/export/excel${query ? `?${query}` : ""}`;
-
-        try {
-          const response = await fetch(url);
-          const blob = await response.blob();
-          if (!response.ok) {
-            const text = await blob.text();
-            return {
-              error: {
-                status: response.status,
-                data: typeof text === "string" ? text : "Export failed",
-              } as FetchBaseQueryError,
-            };
-          }
-          return { data: blob };
-        } catch (err: any) {
-          return {
-            error: {
-              status: 500,
-              data: err?.message || "Failed to export",
-            } as FetchBaseQueryError,
-          };
-        }
-      },
-    }),
-
     // ---- Teams ----
     getTeams: b.query<Team[], void>({
       query: () => ({ url: "/teams", method: "GET", skipTeamPrefix: true }),
@@ -1694,6 +1690,4 @@ export const {
   useGetHistoryQuery,
 
   useGetFiltersQuery,
-
-  useLazyExportExcelQuery,
 } = api;
