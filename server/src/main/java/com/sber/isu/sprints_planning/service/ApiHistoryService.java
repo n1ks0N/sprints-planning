@@ -170,6 +170,49 @@ public class ApiHistoryService {
         }
     }
 
+    @Transactional
+    public void logEntityEvent(
+        String teamKey,
+        String sessionId,
+        String userName,
+        String httpMethod,
+        String path,
+        int statusCode,
+        String entityType,
+        UUID entityId,
+        String eventType,
+        String action,
+        List<TaskHistoryChangeDto> changes,
+        Map<String, Object> meta
+    ) {
+        if (sessionId == null || sessionId.isBlank() || entityId == null) {
+            return;
+        }
+
+        ApiCallHistoryEntity entity = new ApiCallHistoryEntity();
+        entity.setSessionId(sessionId);
+        entity.setUserName(userName == null || userName.isBlank() ? "unknown" : userName);
+        entity.setHttpMethod(httpMethod == null || httpMethod.isBlank() ? "SYSTEM" : httpMethod);
+        entity.setPath(path == null || path.isBlank() ? "/system" : path);
+        entity.setAction(action == null || action.isBlank()
+            ? actionDescriptionResolver.resolve(entity.getHttpMethod(), entity.getPath())
+            : action);
+        entity.setStatusCode(statusCode);
+        entity.setCreatedAt(OffsetDateTime.now());
+        entity.setTeamKey(teamKey);
+        entity.setEntityType(entityType);
+        entity.setEntityId(entityId);
+        entity.setEventType(eventType);
+        entity.setChangesJson(buildChangesJson(changes));
+        entity.setMetaJson(meta == null ? Map.of() : new LinkedHashMap<>(meta));
+
+        try {
+            historyRepository.save(entity);
+        } catch (Exception e) {
+            logger.warn("Failed to persist custom entity history", e);
+        }
+    }
+
     private String decodeUserName(String rawHeader) {
         if (rawHeader == null || rawHeader.isBlank()) {
             return rawHeader;

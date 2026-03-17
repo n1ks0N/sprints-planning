@@ -39,6 +39,10 @@ public class TaskJiraIssueEntity {
     @JoinColumn(name = "planning_sprint_id")
     private SprintEntity planningSprint;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "export_batch_id")
+    private JiraExportBatchEntity exportBatch;
+
     @Column(name = "jira_issue_id", nullable = false)
     private String jiraIssueId;
 
@@ -63,10 +67,19 @@ public class TaskJiraIssueEntity {
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
+    @Column(name = "updated_at", nullable = false)
+    private OffsetDateTime updatedAt;
+
+    @Column(name = "last_error")
+    private String lastError;
+
     @PrePersist
     public void onCreate() {
         if (createdAt == null) {
             createdAt = OffsetDateTime.now();
+        }
+        if (updatedAt == null) {
+            updatedAt = createdAt;
         }
         if (status == null || status.isBlank()) {
             status = "CREATED";
@@ -111,6 +124,14 @@ public class TaskJiraIssueEntity {
 
     public void setPlanningSprint(SprintEntity planningSprint) {
         this.planningSprint = planningSprint;
+    }
+
+    public JiraExportBatchEntity getExportBatch() {
+        return exportBatch;
+    }
+
+    public void setExportBatch(JiraExportBatchEntity exportBatch) {
+        this.exportBatch = exportBatch;
     }
 
     public String getJiraIssueId() {
@@ -169,11 +190,27 @@ public class TaskJiraIssueEntity {
         this.createdAt = createdAt;
     }
 
+    public OffsetDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(OffsetDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
     public String getStatus() {
         return status;
     }
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getLastError() {
+        return lastError;
+    }
+
+    public void setLastError(String lastError) {
+        this.lastError = lastError;
     }
 }

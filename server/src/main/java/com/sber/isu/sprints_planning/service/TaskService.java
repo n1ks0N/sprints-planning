@@ -874,7 +874,7 @@ public class TaskService {
         }
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, LocalDate> releasePromDates = fetchReleasePromDates(teamKey, tasks);
-        Map<UUID, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>> jiraIssuesByTask =
+        Map<UUID, Map<String, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>>> jiraIssuesByTask =
             fetchJiraIssuesByTask(teamKey, tasks);
         return tasks.stream()
             .map(task -> toDto(teamKey, task, sprints, releasePromDates, jiraIssuesByTask.get(task.getId())))
@@ -884,7 +884,7 @@ public class TaskService {
     private TaskDto toDto(String teamKey, TaskEntity entity) {
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, LocalDate> releasePromDates = fetchReleasePromDates(teamKey, List.of(entity));
-        Map<UUID, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>> jiraIssuesByTask =
+        Map<UUID, Map<String, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>>> jiraIssuesByTask =
             fetchJiraIssuesByTask(teamKey, List.of(entity));
         return toDto(teamKey, entity, sprints, releasePromDates, jiraIssuesByTask.get(entity.getId()));
     }
@@ -894,7 +894,7 @@ public class TaskService {
         TaskEntity entity,
         List<SprintEntity> sprints,
         Map<UUID, LocalDate> releasePromDates,
-        Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto> jiraIssues
+        Map<String, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>> jiraIssues
     ) {
         entity.setStatus(normalizeStatus(entity.getStatus()));
         LocalDate promDate = resolvePromDate(teamKey, entity, releasePromDates);
@@ -902,7 +902,7 @@ public class TaskService {
         return DtoMapper.toTaskDto(entity, releaseSprintId, jiraIssues);
     }
 
-    private Map<UUID, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>> fetchJiraIssuesByTask(
+    private Map<UUID, Map<String, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>>> fetchJiraIssuesByTask(
         String teamKey,
         List<TaskEntity> tasks
     ) {
@@ -913,7 +913,7 @@ public class TaskService {
         if (taskIds.isEmpty()) {
             return Map.of();
         }
-        Map<UUID, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>> result = new HashMap<>();
+        Map<UUID, Map<String, Map<String, com.sber.isu.sprints_planning.dto.TaskJiraIssueDto>>> result = new HashMap<>();
         for (TaskJiraIssueEntity entity : taskJiraIssueRepository.findAllByTeamKeyAndTaskIdIn(teamKey, taskIds)) {
             if (entity.getTask() == null || entity.getTask().getId() == null) {
                 continue;
@@ -925,8 +925,12 @@ public class TaskService {
             if (dto.participantId() == null || dto.participantId().isBlank()) {
                 continue;
             }
+            if (dto.planningSprintId() == null || dto.planningSprintId().isBlank()) {
+                continue;
+            }
             result.computeIfAbsent(entity.getTask().getId(), ignored -> new HashMap<>())
-                .put(dto.participantId(), dto);
+                .computeIfAbsent(dto.participantId(), ignored -> new HashMap<>())
+                .put(dto.planningSprintId(), dto);
         }
         return result;
     }

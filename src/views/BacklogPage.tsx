@@ -1288,7 +1288,7 @@ const TaskCard = React.memo(function TaskCard({
                       !assignedParticipantIds.includes(candidate.id)
                   );
                   const participantNote = task.notes?.[p.id] ?? "";
-                  const participantJiraIssue = task.jiraIssues?.[p.id];
+                  const participantJiraIssues = task.jiraIssues?.[p.id] || {};
                   const hasNote = participantNote.trim().length > 0;
 
                   return (
@@ -1365,19 +1365,43 @@ const TaskCard = React.memo(function TaskCard({
                             </Stack>
                           </TableCell>
 
-                          {effectiveSprints.map((s) => (
+                          {effectiveSprints.map((s) => {
+                            const sprintJiraIssue = participantJiraIssues[s.id];
+                            return (
                             <TableCell key={s.id} align="center">
-                              <EditableNumberCell
-                                value={Number(row[s.id] || 0)}
-                                onChange={(v) =>
-                                  onAllocChange(task.id, p.id, s.id, v)
-                                }
-                                onCommit={(next) =>
-                                  onAllocCommit(task.id, p.id, s.id, next)
-                                }
-                              />
+                              <Stack
+                                direction="row"
+                                spacing={0.5}
+                                alignItems="center"
+                                justifyContent="center"
+                              >
+                                <EditableNumberCell
+                                  value={Number(row[s.id] || 0)}
+                                  onChange={(v) =>
+                                    onAllocChange(task.id, p.id, s.id, v)
+                                  }
+                                  onCommit={(next) =>
+                                    onAllocCommit(task.id, p.id, s.id, next)
+                                  }
+                                />
+                                {sprintJiraIssue?.jiraIssueUrl ? (
+                                  <Tooltip title={`Открыть Jira: ${sprintJiraIssue.jiraIssueKey}`}>
+                                    <IconButton
+                                      size="small"
+                                      color="info"
+                                      component="a"
+                                      href={sprintJiraIssue.jiraIssueUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      <OpenInNew fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                ) : null}
+                              </Stack>
                             </TableCell>
-                          ))}
+                            );
+                          })}
 
                           <TableCell align="center" sx={{ fontWeight: 700 }}>
                             {toInt(rowSum)}
@@ -1397,20 +1421,6 @@ const TaskCard = React.memo(function TaskCard({
                               spacing={0.5}
                               justifyContent="flex-end"
                             >
-                              {participantJiraIssue?.jiraIssueUrl ? (
-                                <Tooltip title={`Открыть Jira: ${participantJiraIssue.jiraIssueKey}`}>
-                                  <IconButton
-                                    size="small"
-                                    color="info"
-                                    component="a"
-                                    href={participantJiraIssue.jiraIssueUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    <OpenInNew fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                              ) : null}
                               <Tooltip
                                 title={
                                   hasNote ? (
