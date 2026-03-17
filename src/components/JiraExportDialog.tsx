@@ -207,17 +207,26 @@ export default function JiraExportDialog({
   const [submitAttempted, setSubmitAttempted] = React.useState(false);
   const [requestError, setRequestError] = React.useState("");
   const [activeBatchId, setActiveBatchId] = React.useState<string | null>(null);
+  const [batchPollingInterval, setBatchPollingInterval] = React.useState(0);
   const [exportJiraIssues, { isLoading: isStarting }] = useExportJiraIssuesMutation();
   const [confirmCreated, { isLoading: isConfirmingCreated }] = useConfirmJiraIssueCreatedMutation();
   const [confirmNotCreated, { isLoading: isConfirmingNotCreated }] = useConfirmJiraIssueNotCreatedMutation();
 
   const batchQuery = useGetJiraExportBatchQuery(activeBatchId || "", {
     skip: !open || !activeBatchId,
-    pollingInterval: open && activeBatchId ? 3000 : 0,
+    pollingInterval: batchPollingInterval,
   });
   const batchData = batchQuery.data;
   const batchStatus = batchData?.status || null;
   const terminal = isTerminalBatchStatus(batchStatus);
+
+  React.useEffect(() => {
+    if (open && activeBatchId && !terminal) {
+      setBatchPollingInterval(3000);
+      return;
+    }
+    setBatchPollingInterval(0);
+  }, [open, activeBatchId, terminal]);
 
   const currentPlanningSprintId = React.useMemo(() => {
     const today = todayISO();

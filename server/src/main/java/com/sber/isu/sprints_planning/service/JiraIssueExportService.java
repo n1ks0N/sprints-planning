@@ -29,7 +29,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,6 +38,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
+import org.hibernate.Hibernate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -63,7 +63,8 @@ public class JiraIssueExportService {
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
     };
 
-    private static final String JIRA_BASE_URL = "https://jira.sberbank.ru";
+    private static final String JIRA_API_BASE_URL = "http://jira.sberbank.ru:27062";
+    private static final String JIRA_PUBLIC_BASE_URL = "https://jira.sberbank.ru";
     private static final String JIRA_ISSUE_TYPE_ID = "3";
     private static final String HISTORY_FIELD = "jiraIssue";
     private static final String HISTORY_LABEL = "Jira";
@@ -133,8 +134,7 @@ public class JiraIssueExportService {
     ) {
         String effectiveSessionId = StringUtils.hasText(sessionId) ? sessionId.trim() : UUID.randomUUID().toString();
         String userName = normalizeUserName(rawUserName);
-        String baseUrl = normalizedBaseUrl();
-        String token = jiraProperties.mockEnabled() ? null : normalizedToken();
+        String jiraApiBaseUrl = JIRA_API_BASE_URL;
         Long jiraSprintId = normalizedJiraSprintId(request.jiraSprintId());
         String projectKey = normalizeRequired(request.projectKey(), "projectKey");
         UUID planningSprintId = parseRequiredUuid(request.planningSprintId(), "planningSprintId");
@@ -155,8 +155,7 @@ public class JiraIssueExportService {
             jiraSprintId,
             projectKey,
             labels,
-            baseUrl,
-            token
+            jiraApiBaseUrl
         );
 
         JiraExportBatchEntity batch = new JiraExportBatchEntity();
@@ -371,8 +370,7 @@ public class JiraIssueExportService {
         Long jiraSprintId,
         String projectKey,
         List<String> labels,
-        String baseUrl,
-        String token
+        String jiraApiBaseUrl
     ) {
         List<BatchItemState> items = new ArrayList<>();
 
@@ -452,7 +450,7 @@ public class JiraIssueExportService {
                     participant,
                     storyPoints
                 );
-                JiraIssueRequestPreviewDto requestPreview = buildRequestPreview(baseUrl, token, requestBody);
+                JiraIssueRequestPreviewDto requestPreview = buildRequestPreview(jiraApiBaseUrl, requestBody);
                 items.add(BatchItemState.pending(
                     task.getId().toString(),
                     task.getTitle(),
@@ -474,9 +472,9 @@ public class JiraIssueExportService {
             .orElseThrow(() -> new EntityNotFoundException("Jira export batch not found"));
 
         String teamKey = batch.getTeamKey();
-        String baseUrl = normalizedBaseUrl();
+        String jiraApiBaseUrl = JIRA_API_BASE_URL;
         String token = jiraProperties.mockEnabled() ? null : normalizedToken();
-        RestClient jiraClient = jiraProperties.mockEnabled() ? null : createJiraRestClient(baseUrl, token);
+        RestClient jiraClient = jiraProperties.mockEnabled() ? null : createJiraRestClient(jiraApiBaseUrl, token);
 
         List<BatchItemState> items = deserializeItems(batch);
         for (BatchItemState item : items) {
@@ -486,7 +484,7 @@ public class JiraIssueExportService {
 
             updateBatchItem(batchId, item.withStatus(ITEM_STATUS_IN_PROGRESS, "Заведение задачи в Jira"));
 
-            BatchItemState processed = processPendingItem(batch, item, jiraClient, baseUrl, token);
+            BatchItemState processed = processPendingItem(batch, item, jiraClient, jiraApiBaseUrl);
             updateBatchItem(batchId, processed);
         }
 
@@ -519,8 +517,7 @@ public class JiraIssueExportService {
         JiraExportBatchEntity batch,
         BatchItemState item,
         RestClient jiraClient,
-        String baseUrl,
-        String token
+        String jiraApiBaseUrl
     ) {
         UUID taskId = parseRequiredUuid(item.taskId(), "taskId");
         UUID participantId = parseRequiredUuid(item.participantId(), "participantId");
@@ -554,7 +551,8 @@ public class JiraIssueExportService {
             return toExistingIssueItem(item, reservation.existingIssue());
         }
 
-        if (!StringUtils.hasText(participant.getJiraLogin())) {
+        String assigneeLogin = normalizeAssigneeLogin(participant);
+        if (!StringUtils.hasText(assigneeLogin) && !jiraProperties.mockEnabled()) {
             markIssueFailed(reservation.reservationId(), "У участника не заполнен Jira login");
             return item.withTaskJiraIssueId(reservation.reservationId().toString())
                 .withStatus(ITEM_STATUS_FAILED, "У участника не заполнен Jira login");
@@ -565,16 +563,10 @@ public class JiraIssueExportService {
             batch.getJiraSprintId(),
             normalizeLabels(batch.getLabelsJson()),
             task,
-            participant,
+            assigneeLogin,
             item.storyPoints()
         );
-        JiraIssueRequestPreviewDto requestPreview = buildRequestPreview(baseUrl, token, requestBody);
-        log.info(
-            "Jira POST /issue request: url={}, headers={}, body={}",
-            requestPreview.url(),
-            requestPreview.headers(),
-            requestPreview.body()
-        );
+        JiraIssueRequestPreviewDto requestPreview = buildRequestPreview(jiraApiBaseUrl, requestBody);
 
         try {
             JiraCreateIssueResponse jiraResponse = createIssue(jiraClient, requestBody);
@@ -672,7 +664,7 @@ public class JiraIssueExportService {
                 if (LINK_STATUS_IN_PROGRESS.equalsIgnoreCase(existingStatus)) {
                     if (isStaleInProgress(existing)) {
                         existing.setStatus(LINK_STATUS_MANUAL_CHECK_REQUIRED);
-                        existing.setLastError("Предыдущая попытка зависла и требует ручной проверки");
+                        existing.setLastError("Предыдущая попытка зависла: требуется ручная проверка, задача могла быть создана в Jira");
                         existing.setUpdatedAt(OffsetDateTime.now());
                         taskJiraIssueRepository.saveAndFlush(existing);
                     }
@@ -783,11 +775,29 @@ public class JiraIssueExportService {
             return item.withTaskJiraIssueId(existing.getId().toString())
                 .withExistingCreated(existing.getJiraIssueId(), existing.getJiraIssueKey(), existing.getJiraIssueUrl());
         }
+        if (LINK_STATUS_IN_PROGRESS.equalsIgnoreCase(existingStatus)) {
+            return item.withTaskJiraIssueId(existing.getId().toString())
+                .withStatus(ITEM_STATUS_IN_PROGRESS, "Экспорт в Jira уже выполняется");
+        }
+        if (LINK_STATUS_FAILED.equalsIgnoreCase(existingStatus)) {
+            return item.withTaskJiraIssueId(existing.getId().toString())
+                .withFailed(
+                    StringUtils.hasText(existing.getLastError()) ? existing.getLastError() : "Не удалось завести задачу в Jira",
+                    item.jiraRequest()
+                );
+        }
+        if (LINK_STATUS_MANUAL_CHECK_REQUIRED.equalsIgnoreCase(existingStatus)) {
+            return item.withTaskJiraIssueId(existing.getId().toString())
+                .withManualCheck(
+                    StringUtils.hasText(existing.getLastError()) ? existing.getLastError() : "Требуется ручная проверка",
+                    item.jiraRequest()
+                );
+        }
         return item.withTaskJiraIssueId(existing.getId().toString())
-            .withManualCheck(
+            .withFailed(
                 StringUtils.hasText(existing.getLastError())
                     ? existing.getLastError()
-                    : "Экспорт в Jira уже выполняется или требует проверки",
+                    : "Не удалось завести задачу в Jira",
                 item.jiraRequest()
             );
     }
@@ -825,7 +835,7 @@ public class JiraIssueExportService {
                 .body(JiraCreateIssueResponse.class);
 
             if (response == null || !StringUtils.hasText(response.id()) || !StringUtils.hasText(response.key())) {
-                throw new JiraIssueProcessingException(true, "Jira не вернула данные созданной задачи");
+                throw new JiraIssueProcessingException(false, "Jira не вернула данные созданной задачи");
             }
             return response;
         } catch (ResourceAccessException ex) {
@@ -838,7 +848,9 @@ public class JiraIssueExportService {
             if (ex.getStatusCode().is4xxClientError()) {
                 throw new JiraIssueProcessingException(false, "Jira вернула ошибку: " + message, ex);
             }
-            throw new JiraIssueProcessingException(true, "Jira вернула ошибку: " + message, ex);
+            throw new JiraIssueProcessingException(ex.getStatusCode().value() == 502
+                || ex.getStatusCode().value() == 503
+                || ex.getStatusCode().value() == 504, "Jira вернула ошибку: " + message, ex);
         }
     }
 
@@ -872,8 +884,15 @@ public class JiraIssueExportService {
         return new JiraCreateIssueResponse(
             String.valueOf(sequence),
             key,
-            JIRA_BASE_URL + "/rest/api/2/issue/" + sequence
+            JIRA_PUBLIC_BASE_URL + "/rest/api/2/issue/" + sequence
         );
+    }
+
+    private String normalizeAssigneeLogin(ParticipantEntity participant) {
+        if (participant == null || !StringUtils.hasText(participant.getJiraLogin())) {
+            return jiraProperties.mockEnabled() ? "mock.user" : null;
+        }
+        return participant.getJiraLogin().trim();
     }
 
     private JiraCreateIssueRequest buildIssueRequest(
@@ -881,7 +900,7 @@ public class JiraIssueExportService {
         Long jiraSprintId,
         List<String> labels,
         TaskEntity task,
-        ParticipantEntity participant,
+        String assigneeLogin,
         BigDecimal storyPoints
     ) {
         return new JiraCreateIssueRequest(
@@ -890,7 +909,7 @@ public class JiraIssueExportService {
                 new JiraIssueType(JIRA_ISSUE_TYPE_ID),
                 normalizedTaskTitle(task),
                 buildDescription(task),
-                new JiraAssignee(participant.getJiraLogin().trim()),
+                new JiraAssignee(assigneeLogin),
                 labels,
                 storyPoints,
                 jiraSprintId
@@ -898,7 +917,7 @@ public class JiraIssueExportService {
         );
     }
 
-    private JiraIssueRequestPreviewDto buildRequestPreview(String baseUrl, String token, JiraCreateIssueRequest request) {
+    private JiraIssueRequestPreviewDto buildRequestPreview(String jiraApiBaseUrl, JiraCreateIssueRequest request) {
         Map<String, Object> project = new LinkedHashMap<>();
         project.put("key", request.fields().project().key());
 
@@ -923,25 +942,12 @@ public class JiraIssueExportService {
 
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
-        String authorizationHeader = maskedAuthorizationHeader(token);
-        if (authorizationHeader != null) {
-            headers.put(HttpHeaders.AUTHORIZATION, authorizationHeader);
-        }
-
         return new JiraIssueRequestPreviewDto(
             "POST",
-            baseUrl + "/rest/api/2/issue",
+            jiraApiBaseUrl + "/rest/api/2/issue",
             headers,
             body
         );
-    }
-
-    private String maskedAuthorizationHeader(String token) {
-        if (!StringUtils.hasText(token)) {
-            return null;
-        }
-        String encoded = Base64.getEncoder().encodeToString(token.trim().getBytes(StandardCharsets.UTF_8));
-        return "Basic " + encoded;
     }
 
     private BigDecimal resolveStoryPoints(TaskEntity task, UUID participantId, UUID sprintId) {
@@ -984,10 +990,6 @@ public class JiraIssueExportService {
             .map(String::trim)
             .distinct()
             .toList();
-    }
-
-    private String normalizedBaseUrl() {
-        return JIRA_BASE_URL;
     }
 
     private UUID parseRequiredUuid(String value, String fieldName) {
@@ -1186,8 +1188,15 @@ public class JiraIssueExportService {
             List<BatchItemState> items = new ArrayList<>(deserializeItems(batch));
             List<BatchItemState> updated = items.stream()
                 .map(item -> {
-                    if (ITEM_STATUS_PENDING.equals(item.status()) || ITEM_STATUS_IN_PROGRESS.equals(item.status())) {
-                        return item.withManualCheck("Фоновая обработка batch прервана: " + ex.getMessage(), item.jiraRequest());
+                    if (ITEM_STATUS_IN_PROGRESS.equals(item.status())) {
+                        return item.withManualCheck(
+                            "Фоновая обработка batch прервана: " + ex.getMessage()
+                                + ". Требуется ручная проверка, задача могла быть создана в Jira",
+                            item.jiraRequest()
+                        );
+                    }
+                    if (ITEM_STATUS_PENDING.equals(item.status())) {
+                        return item.withFailed("Фоновая обработка batch прервана: " + ex.getMessage(), item.jiraRequest());
                     }
                     return item;
                 })
@@ -1228,16 +1237,20 @@ public class JiraIssueExportService {
     }
 
     private String participantName(TaskJiraIssueEntity entity) {
-        if (entity.getParticipant() == null) {
+        ParticipantEntity participant = entity.getParticipant();
+        if (participant == null) {
             return "Участник";
         }
-        return StringUtils.hasText(entity.getParticipant().getFullName())
-            ? entity.getParticipant().getFullName().trim()
-            : entity.getParticipant().getId().toString();
+        if (!Hibernate.isInitialized(participant)) {
+            return participant.getId() != null ? participant.getId().toString() : "Участник";
+        }
+        return StringUtils.hasText(participant.getFullName())
+            ? participant.getFullName().trim()
+            : participant.getId().toString();
     }
 
     private String issueUrl(String issueKey) {
-        return JIRA_BASE_URL + "/browse/" + issueKey;
+        return JIRA_PUBLIC_BASE_URL + "/browse/" + issueKey;
     }
 
     private record SlotReservationResult(UUID reservationId, TaskJiraIssueEntity existingIssue) {
