@@ -19,6 +19,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -38,7 +39,9 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.server.ResponseStatusException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,6 +88,7 @@ public class JiraIssueExportService {
     public JiraIssueExportResponseDto export(String teamKey, JiraIssueExportRequest request) {
         String baseUrl = normalizedBaseUrl();
         String token = jiraProperties.mockEnabled() ? null : normalizedToken();
+        RestClient jiraClient = jiraProperties.mockEnabled() ? null : createJiraRestClient(baseUrl, token);
         Long jiraSprintId = normalizedJiraSprintId(request.jiraSprintId());
         String projectKey = normalizeRequired(request.projectKey(), "projectKey");
         UUID planningSprintId = parseRequiredUuid(request.planningSprintId(), "planningSprintId");
@@ -229,7 +233,7 @@ public class JiraIssueExportService {
                 );
 
                 try {
-                    JiraCreateIssueResponse jiraResponse = createIssue(baseUrl, token, requestBody);
+                    JiraCreateIssueResponse jiraResponse = createIssue(jiraClient, baseUrl, token, requestBody);
 
                     completeIssueSlot(
                         reservation.reservationId(),
@@ -328,7 +332,7 @@ public class JiraIssueExportService {
         BigDecimal storyPoints
     ) {
         return transactionTemplate.execute(status -> {
-            TaskJiraIssueEntity existing = loadExistingIssue(teamKey, taskId, participantId);
+            TaskJiraIssueEntity existing = loadExistingIssue(teamKey, taskId, participantId, planningSprintId);
             if (existing != null) {
                 if (isStaleInProgress(existing)) {
                     log.warn(
@@ -364,7 +368,7 @@ public class JiraIssueExportService {
                 TaskJiraIssueEntity saved = taskJiraIssueRepository.saveAndFlush(pending);
                 return ReservationResult.created(saved.getId());
             } catch (DataIntegrityViolationException ex) {
-                TaskJiraIssueEntity existingAfterConflict = loadExistingIssue(teamKey, taskId, participantId);
+                TaskJiraIssueEntity existingAfterConflict = loadExistingIssue(teamKey, taskId, participantId, planningSprintId);
                 if (existingAfterConflict != null) {
                     return ReservationResult.existing(existingAfterConflict);
                 }
@@ -392,8 +396,8 @@ public class JiraIssueExportService {
         );
     }
 
-    private TaskJiraIssueEntity loadExistingIssue(String teamKey, UUID taskId, UUID participantId) {
-        return taskJiraIssueRepository.findByTeamKeyAndTaskIdAndParticipantId(teamKey, taskId, participantId)
+    private TaskJiraIssueEntity loadExistingIssue(String teamKey, UUID taskId, UUID participantId, UUID planningSprintId) {
+        return taskJiraIssueRepository.findByTeamKeyAndTaskIdAndParticipantIdAndPlanningSprintId(teamKey, taskId, participantId, planningSprintId)
             .orElse(null);
     }
 
@@ -412,6 +416,7 @@ public class JiraIssueExportService {
     }
 
     private JiraCreateIssueResponse createIssue(
+        RestClient jiraClient,
         String baseUrl,
         String token,
         JiraCreateIssueRequest body
@@ -419,20 +424,23 @@ public class JiraIssueExportService {
         if (jiraProperties.mockEnabled()) {
             return mockCreateIssue(body);
         }
-
-        RestClient client = RestClient.builder()
-            .baseUrl(baseUrl)
-            .defaultHeader(HttpHeaders.AUTHORIZATION, "Basic " + token)
-            .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-            .build();
+        if (jiraClient == null) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Jira client is not configured");
+        }
 
         JiraCreateIssueResponse response;
         try {
-            response = client.post()
+            response = jiraClient.post()
                 .uri("/rest/api/2/issue")
                 .body(body)
                 .retrieve()
                 .body(JiraCreateIssueResponse.class);
+        } catch (ResourceAccessException ex) {
+            throw new ResponseStatusException(
+                HttpStatus.GATEWAY_TIMEOUT,
+                "Jira недоступна или отвечает слишком долго",
+                ex
+            );
         } catch (RestClientResponseException ex) {
             String message = ex.getResponseBodyAsString();
             if (!StringUtils.hasText(message)) {
@@ -445,6 +453,29 @@ public class JiraIssueExportService {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Jira не вернула данные созданной задачи");
         }
         return response;
+    }
+
+    private RestClient createJiraRestClient(String baseUrl, String token) {
+        int connectTimeoutMs = normalizePositiveTimeout(jiraProperties.connectTimeoutMs(), 5000);
+        int readTimeoutMs = normalizePositiveTimeout(jiraProperties.readTimeoutMs(), 30000);
+
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofMillis(connectTimeoutMs));
+        requestFactory.setReadTimeout(Duration.ofMillis(readTimeoutMs));
+
+        return RestClient.builder()
+            .baseUrl(baseUrl)
+            .requestFactory(requestFactory)
+            .defaultHeader(HttpHeaders.AUTHORIZATION, "Basic " + token)
+            .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .build();
+    }
+
+    private int normalizePositiveTimeout(Integer timeoutMs, int fallbackMs) {
+        if (timeoutMs == null || timeoutMs <= 0) {
+            return fallbackMs;
+        }
+        return timeoutMs;
     }
 
     private JiraCreateIssueResponse mockCreateIssue(JiraCreateIssueRequest body) {

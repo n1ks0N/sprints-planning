@@ -14,10 +14,11 @@ public interface TaskJiraIssueRepository extends JpaRepository<TaskJiraIssueEnti
     List<TaskJiraIssueEntity> findAllByTeamKeyAndTaskIdIn(String teamKey, Collection<UUID> taskIds);
 
     @EntityGraph(attributePaths = {"task", "participant"})
-    Optional<TaskJiraIssueEntity> findByTeamKeyAndTaskIdAndParticipantId(
+    Optional<TaskJiraIssueEntity> findByTeamKeyAndTaskIdAndParticipantIdAndPlanningSprintId(
         String teamKey,
         UUID taskId,
-        UUID participantId
+        UUID participantId,
+        UUID planningSprintId
     );
 
     void deleteAllByTeamKeyAndTaskIdAndParticipantIdIn(

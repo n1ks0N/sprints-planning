@@ -22,7 +22,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { Delete, OpenInNew } from "@mui/icons-material";
+import { Delete, DeleteSweep, OpenInNew } from "@mui/icons-material";
 import moment from "moment";
 import "moment/locale/ru";
 
@@ -387,7 +387,19 @@ export default function JiraExportDialog({
                 Список задач пуст.
               </Typography>
             ) : (
-              <TableContainer component={Paper} variant="outlined">
+              <Stack spacing={1}>
+                <Stack direction="row" justifyContent="flex-end">
+                  <Button
+                    color="error"
+                    startIcon={<DeleteSweep />}
+                    onClick={onClearTasks}
+                    disabled={tasks.length === 0 || isLoading}
+                  >
+                    Удалить все
+                  </Button>
+                </Stack>
+
+                <TableContainer component={Paper} variant="outlined">
                 <Table size="small">
                   <TableHead>
                     <TableRow>
@@ -414,7 +426,8 @@ export default function JiraExportDialog({
                     ))}
                   </TableBody>
                 </Table>
-              </TableContainer>
+                </TableContainer>
+              </Stack>
             )}
           </Stack>
         ) : (
