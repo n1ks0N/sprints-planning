@@ -10,7 +10,8 @@ import type {
   Release,
   ReleaseAnchorField,
   ApiSessionHistory,
-  JiraIssueExportResponse,
+  JiraExportBatchStartResponse,
+  JiraExportBatchStatus,
   TaskHistoryItem,
   Team,
   FiltersData,
@@ -1071,7 +1072,7 @@ export const api = createApi({
       keepUnusedDataFor: 0,
     }),
     exportJiraIssues: b.mutation<
-      JiraIssueExportResponse,
+      JiraExportBatchStartResponse,
       {
         taskIds: string[];
         planningSprintId: string;
@@ -1081,10 +1082,31 @@ export const api = createApi({
       }
     >({
       query: (body) => ({ url: "/jira/issues", method: "POST", body }),
-      invalidatesTags: (_result, _error, arg) => [
-        { type: "Task" as const, id: "LIST" as const },
-        ...arg.taskIds.map((taskId) => ({ type: "Task" as const, id: taskId })),
-      ],
+    }),
+    getJiraExportBatch: b.query<JiraExportBatchStatus, string>({
+      query: (batchId) => ({ url: `/jira/issues/batches/${batchId}`, method: "GET" }),
+      keepUnusedDataFor: 0,
+    }),
+    confirmJiraIssueCreated: b.mutation<
+      JiraExportBatchStatus,
+      { taskJiraIssueId: string; jiraIssueKey: string }
+    >({
+      query: ({ taskJiraIssueId, jiraIssueKey }) => ({
+        url: `/jira/issues/items/${taskJiraIssueId}/confirm-created`,
+        method: "POST",
+        body: { jiraIssueKey },
+      }),
+      invalidatesTags: () => [{ type: "Task" as const, id: "LIST" as const }],
+    }),
+    confirmJiraIssueNotCreated: b.mutation<
+      JiraExportBatchStatus,
+      { taskJiraIssueId: string }
+    >({
+      query: ({ taskJiraIssueId }) => ({
+        url: `/jira/issues/items/${taskJiraIssueId}/confirm-not-created`,
+        method: "POST",
+      }),
+      invalidatesTags: () => [{ type: "Task" as const, id: "LIST" as const }],
     }),
     addTask: b.mutation<BacklogItem, Partial<BacklogItem>>({
       query: (body) => ({ url: "/tasks", method: "POST", body }),
@@ -1669,6 +1691,9 @@ export const {
   useGetTaskHistoryQuery,
   useGetTasksQuery,
   useExportJiraIssuesMutation,
+  useGetJiraExportBatchQuery,
+  useConfirmJiraIssueCreatedMutation,
+  useConfirmJiraIssueNotCreatedMutation,
   useAddTaskMutation,
   useUpdateTaskMutation,
   useDeleteTaskMutation,

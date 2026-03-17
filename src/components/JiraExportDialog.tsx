@@ -26,8 +26,20 @@ import { Delete, DeleteSweep, OpenInNew } from "@mui/icons-material";
 import moment from "moment";
 import "moment/locale/ru";
 
-import { useExportJiraIssuesMutation } from "../app/api";
-import type { BacklogItem, JiraIssueExportResult, Participant, Sprint } from "../types";
+import {
+  api,
+  useConfirmJiraIssueCreatedMutation,
+  useConfirmJiraIssueNotCreatedMutation,
+  useExportJiraIssuesMutation,
+  useGetJiraExportBatchQuery,
+} from "../app/api";
+import type {
+  BacklogItem,
+  JiraExportBatchItem,
+  Participant,
+  Sprint,
+} from "../types";
+import { useAppDispatch } from "../views/hooks";
 
 type JiraExportDialogProps = {
   open: boolean;
@@ -51,9 +63,7 @@ const JIRA_LABEL_OPTIONS = ["ai-core", "an&sm", "isugenai"];
 moment.locale("ru");
 
 function normalizeStringArray(values: string[]) {
-  return Array.from(
-    new Set(values.map((value) => value.trim()).filter(Boolean))
-  );
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
 function planningSprintLabel(sprint: Sprint) {
@@ -80,13 +90,10 @@ function readStoredForm() {
     const parsed = JSON.parse(raw);
     return {
       planningSprintId:
-        typeof parsed?.planningSprintId === "string"
-          ? parsed.planningSprintId
-          : "",
+        typeof parsed?.planningSprintId === "string" ? parsed.planningSprintId : "",
       jiraSprintId:
         typeof parsed?.jiraSprintId === "string" ? parsed.jiraSprintId : "",
-      projectKey:
-        typeof parsed?.projectKey === "string" ? parsed.projectKey : "",
+      projectKey: typeof parsed?.projectKey === "string" ? parsed.projectKey : "",
       labels: Array.isArray(parsed?.labels)
         ? parsed.labels.filter((value: unknown): value is string => typeof value === "string")
         : [],
@@ -126,24 +133,61 @@ function buildParticipantsPreview(
     .join(", ");
 }
 
-function ResultAlert({ items }: { items: JiraIssueExportResult[] }) {
-  const created = items.filter((item) => item.status === "created").length;
-  const skipped = items.filter((item) => item.status === "skipped").length;
-  const failed = items.filter((item) => item.status === "failed").length;
+function isTerminalBatchStatus(status?: string | null) {
+  return (
+    status === "COMPLETED" ||
+    status === "COMPLETED_WITH_ERRORS" ||
+    status === "COMPLETED_WITH_MANUAL_ACTION"
+  );
+}
 
-  if (failed > 0) {
+function ResultAlert({
+  createdItems,
+  failedItems,
+  skippedItems,
+  manualCheckItems,
+}: {
+  createdItems: number;
+  failedItems: number;
+  skippedItems: number;
+  manualCheckItems: number;
+}) {
+  if (manualCheckItems > 0) {
     return (
       <Alert severity="warning">
-        Создано: {created}, пропущено: {skipped}, с ошибкой: {failed}
+        Создано: {createdItems}, пропущено: {skippedItems}, с ошибкой: {failedItems}, требуют ручной проверки: {manualCheckItems}
       </Alert>
     );
   }
 
-  return (
-    <Alert severity="success">
-      Создано: {created}, пропущено: {skipped}
-    </Alert>
-  );
+  if (failedItems > 0) {
+    return (
+      <Alert severity="warning">
+        Создано: {createdItems}, пропущено: {skippedItems}, с ошибкой: {failedItems}
+      </Alert>
+    );
+  }
+
+  return <Alert severity="success">Создано: {createdItems}, пропущено: {skippedItems}</Alert>;
+}
+
+function statusLabel(item: JiraExportBatchItem) {
+  switch (item.status) {
+    case "PENDING":
+      return "ожидает";
+    case "IN_PROGRESS":
+      return "в работе";
+    case "CREATED":
+      return "created";
+    case "FAILED":
+      return "failed";
+    case "SKIPPED":
+      return "skipped";
+    case "MANUAL_CHECK_REQUIRED":
+      return "требует проверки";
+    default:
+      return item.status;
+  }
 }
 
 export default function JiraExportDialog({
@@ -155,14 +199,25 @@ export default function JiraExportDialog({
   onRemoveTask,
   onClearTasks,
 }: JiraExportDialogProps) {
+  const dispatch = useAppDispatch();
   const [planningSprintId, setPlanningSprintId] = React.useState("");
   const [jiraSprintId, setJiraSprintId] = React.useState("");
   const [projectKey, setProjectKey] = React.useState("");
   const [labels, setLabels] = React.useState<string[]>([]);
   const [submitAttempted, setSubmitAttempted] = React.useState(false);
   const [requestError, setRequestError] = React.useState("");
-  const [results, setResults] = React.useState<JiraIssueExportResult[]>([]);
-  const [exportJiraIssues, { isLoading }] = useExportJiraIssuesMutation();
+  const [activeBatchId, setActiveBatchId] = React.useState<string | null>(null);
+  const [exportJiraIssues, { isLoading: isStarting }] = useExportJiraIssuesMutation();
+  const [confirmCreated, { isLoading: isConfirmingCreated }] = useConfirmJiraIssueCreatedMutation();
+  const [confirmNotCreated, { isLoading: isConfirmingNotCreated }] = useConfirmJiraIssueNotCreatedMutation();
+
+  const batchQuery = useGetJiraExportBatchQuery(activeBatchId || "", {
+    skip: !open || !activeBatchId,
+    pollingInterval: open && activeBatchId ? 3000 : 0,
+  });
+  const batchData = batchQuery.data;
+  const batchStatus = batchData?.status || null;
+  const terminal = isTerminalBatchStatus(batchStatus);
 
   const currentPlanningSprintId = React.useMemo(() => {
     const today = todayISO();
@@ -188,7 +243,6 @@ export default function JiraExportDialog({
     const storedForm = readStoredForm();
     setSubmitAttempted(false);
     setRequestError("");
-    setResults([]);
     const storedPlanningSprintId = (storedForm?.planningSprintId || "").trim();
     const nextPlanningSprintId = sprints.some((sprint) => sprint.id === storedPlanningSprintId)
       ? storedPlanningSprintId
@@ -229,12 +283,29 @@ export default function JiraExportDialog({
     [planningSprintId, sprints]
   );
 
+  const invalidatedBatchesRef = React.useRef<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    if (!batchData || !terminal) return;
+    if (invalidatedBatchesRef.current.has(batchData.batchId)) return;
+    invalidatedBatchesRef.current.add(batchData.batchId);
+    const taskIds = Array.from(new Set((batchData.items || []).map((item) => item.taskId).filter(Boolean)));
+    dispatch(
+      api.util.invalidateTags([
+        { type: "Task", id: "LIST" },
+        ...taskIds.map((taskId) => ({ type: "Task" as const, id: taskId })),
+      ])
+    );
+  }, [batchData, dispatch, terminal]);
+
   const handleClose = React.useCallback(() => {
     onClose();
   }, [onClose]);
 
   const handleFinish = React.useCallback(() => {
     onClearTasks();
+    setActiveBatchId(null);
+    setRequestError("");
     onClose();
   }, [onClearTasks, onClose]);
 
@@ -265,31 +336,70 @@ export default function JiraExportDialog({
         projectKey: normalizedProjectKey,
         labels,
       }).unwrap();
-      console.log(
-        "Jira backend request previews",
-        (response.items || []).map((item) => item.jiraRequest).filter(Boolean)
-      );
-      setResults(response.items || []);
+      setActiveBatchId(response.batchId);
       setRequestError("");
     } catch (error: any) {
       const message =
-        error?.data?.error || error?.data?.message || "Не удалось завести задачи в Jira";
+        error?.data?.error || error?.data?.message || "Не удалось запустить экспорт в Jira";
       setRequestError(String(message));
     }
   }, [exportJiraIssues, jiraSprintId, labels, planningSprintId, projectKey, selectedPlanningSprint, tasks]);
+
+  const handleConfirmCreated = React.useCallback(
+    async (item: JiraExportBatchItem) => {
+      if (!item.taskJiraIssueId) return;
+      const jiraIssueKey = window.prompt("Введите Jira issue key", item.jiraIssueKey || "");
+      if (!jiraIssueKey || !jiraIssueKey.trim()) {
+        return;
+      }
+      try {
+        const response = await confirmCreated({
+          taskJiraIssueId: item.taskJiraIssueId,
+          jiraIssueKey: jiraIssueKey.trim(),
+        }).unwrap();
+        dispatch(api.util.upsertQueryData("getJiraExportBatch", response.batchId, response));
+      } catch (error: any) {
+        const message =
+          error?.data?.error || error?.data?.message || "Не удалось подтвердить создание Jira-задачи";
+        setRequestError(String(message));
+      }
+    },
+    [confirmCreated, dispatch]
+  );
+
+  const handleConfirmNotCreated = React.useCallback(
+    async (item: JiraExportBatchItem) => {
+      if (!item.taskJiraIssueId) return;
+      if (!window.confirm("Подтвердить, что Jira-задача не была создана?")) {
+        return;
+      }
+      try {
+        const response = await confirmNotCreated({ taskJiraIssueId: item.taskJiraIssueId }).unwrap();
+        dispatch(api.util.upsertQueryData("getJiraExportBatch", response.batchId, response));
+      } catch (error: any) {
+        const message =
+          error?.data?.error || error?.data?.message || "Не удалось подтвердить отсутствие Jira-задачи";
+        setRequestError(String(message));
+      }
+    },
+    [confirmNotCreated, dispatch]
+  );
 
   const planningSprintError = submitAttempted && !planningSprintId;
   const jiraSprintError =
     submitAttempted && (!jiraSprintId.trim() || !/^\d+$/.test(jiraSprintId.trim()));
   const projectKeyError = submitAttempted && !projectKey.trim();
 
+  const batchItems = batchData?.items || [];
+  const isBusy = isStarting || isConfirmingCreated || isConfirmingNotCreated || batchQuery.isFetching;
+
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="lg">
       <DialogTitle>
-        {results.length > 0 ? "Результат заведения задач в Jira" : "Заведение задач в Jira"}
+        {activeBatchId ? "Статус заведения задач в Jira" : "Заведение задач в Jira"}
       </DialogTitle>
       <DialogContent dividers>
-        {results.length === 0 ? (
+        {!activeBatchId ? (
           <Stack spacing={2}>
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
               <TextField
@@ -313,17 +423,13 @@ export default function JiraExportDialog({
                 value={selectedJiraSprintOption}
                 inputValue={jiraSprintId}
                 onChange={(_e, value) =>
-                  setJiraSprintId(
-                    typeof value === "string" ? value : value?.value || ""
-                  )
+                  setJiraSprintId(typeof value === "string" ? value : value?.value || "")
                 }
                 onInputChange={(_e, value, reason) => {
                   if (reason === "reset" && selectedJiraSprintOption) return;
                   setJiraSprintId(value);
                 }}
-                getOptionLabel={(option) =>
-                  typeof option === "string" ? option : option.value
-                }
+                getOptionLabel={(option) => (typeof option === "string" ? option : option.value)}
                 renderOption={(props, option) => {
                   const { key, ...optionProps } = props;
                   return (
@@ -393,46 +499,65 @@ export default function JiraExportDialog({
                     color="error"
                     startIcon={<DeleteSweep />}
                     onClick={onClearTasks}
-                    disabled={tasks.length === 0 || isLoading}
+                    disabled={tasks.length === 0 || isBusy}
                   >
                     Удалить все
                   </Button>
                 </Stack>
 
                 <TableContainer component={Paper} variant="outlined">
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Название задачи</TableCell>
-                      <TableCell>Участники</TableCell>
-                      <TableCell width={72} align="right">
-                        Действия
-                      </TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {tasks.map((task) => (
-                      <TableRow key={task.id} hover>
-                        <TableCell>{task.title || "Без названия"}</TableCell>
-                        <TableCell>
-                          {buildParticipantsPreview(task, planningSprintId, participantMap)}
-                        </TableCell>
-                        <TableCell align="right">
-                          <IconButton size="small" onClick={() => onRemoveTask(task.id)}>
-                            <Delete fontSize="small" />
-                          </IconButton>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Название задачи</TableCell>
+                        <TableCell>Участники</TableCell>
+                        <TableCell width={72} align="right">
+                          Действия
                         </TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHead>
+                    <TableBody>
+                      {tasks.map((task) => (
+                        <TableRow key={task.id} hover>
+                          <TableCell>{task.title || "Без названия"}</TableCell>
+                          <TableCell>
+                            {buildParticipantsPreview(task, planningSprintId, participantMap)}
+                          </TableCell>
+                          <TableCell align="right">
+                            <IconButton size="small" onClick={() => onRemoveTask(task.id)}>
+                              <Delete fontSize="small" />
+                            </IconButton>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 </TableContainer>
               </Stack>
             )}
           </Stack>
         ) : (
           <Stack spacing={2}>
-            <ResultAlert items={results} />
+            {batchData ? (
+              <ResultAlert
+                createdItems={batchData.createdItems}
+                failedItems={batchData.failedItems}
+                skippedItems={batchData.skippedItems}
+                manualCheckItems={batchData.manualCheckItems}
+              />
+            ) : null}
+
+            {!terminal && batchData ? (
+              <Alert severity="info">
+                Обработано {batchData.processedItems} из {batchData.totalItems}
+              </Alert>
+            ) : null}
+
+            {requestError ? (
+              <Typography variant="body2" color="error">
+                {requestError}
+              </Typography>
+            ) : null}
 
             <TableContainer component={Paper} variant="outlined">
               <Table size="small">
@@ -440,17 +565,20 @@ export default function JiraExportDialog({
                   <TableRow>
                     <TableCell>Задача</TableCell>
                     <TableCell>Участник</TableCell>
+                    <TableCell>Спринт</TableCell>
                     <TableCell>Статус</TableCell>
                     <TableCell>Сообщение</TableCell>
                     <TableCell>Jira</TableCell>
+                    <TableCell align="right">Действия</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {results.map((item, index) => (
-                    <TableRow key={`${item.taskId}-${item.participantId || "none"}-${index}`} hover>
+                  {batchItems.map((item) => (
+                    <TableRow key={item.itemId} hover>
                       <TableCell>{item.taskTitle || item.taskId}</TableCell>
                       <TableCell>{item.participantName || "—"}</TableCell>
-                      <TableCell>{item.status}</TableCell>
+                      <TableCell>{item.planningSprintName || "—"}</TableCell>
+                      <TableCell>{statusLabel(item)}</TableCell>
                       <TableCell>{item.message || "—"}</TableCell>
                       <TableCell>
                         {item.jiraIssueUrl && item.jiraIssueKey ? (
@@ -467,6 +595,31 @@ export default function JiraExportDialog({
                           "—"
                         )}
                       </TableCell>
+                      <TableCell align="right">
+                        {item.status === "MANUAL_CHECK_REQUIRED" && item.taskJiraIssueId ? (
+                          <Stack direction="row" spacing={1} justifyContent="flex-end">
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => handleConfirmCreated(item)}
+                              disabled={isBusy}
+                            >
+                              Создана
+                            </Button>
+                            <Button
+                              size="small"
+                              color="warning"
+                              variant="outlined"
+                              onClick={() => handleConfirmNotCreated(item)}
+                              disabled={isBusy}
+                            >
+                              Не создана
+                            </Button>
+                          </Stack>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -479,19 +632,15 @@ export default function JiraExportDialog({
       </DialogContent>
 
       <DialogActions>
-        {results.length === 0 ? (
-          <Button onClick={handleClose}>Закрыть</Button>
-        ) : (
+        {activeBatchId && terminal ? (
           <Button onClick={handleFinish}>Закрыть</Button>
+        ) : (
+          <Button onClick={handleClose}>Закрыть</Button>
         )}
 
-        {results.length === 0 ? (
-          <Button
-            variant="contained"
-            onClick={handleSubmit}
-            disabled={tasks.length === 0 || isLoading}
-          >
-            {isLoading ? "Заведение..." : "Завести"}
+        {!activeBatchId ? (
+          <Button variant="contained" onClick={handleSubmit} disabled={tasks.length === 0 || isBusy}>
+            {isStarting ? "Запуск..." : "Завести"}
           </Button>
         ) : null}
       </DialogActions>

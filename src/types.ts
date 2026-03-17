@@ -28,6 +28,7 @@ export type Participant = {
 
 export type JiraIssueLink = {
   participantId: string;
+  planningSprintId?: string | null;
   jiraIssueId: string;
   jiraIssueKey: string;
   jiraIssueUrl: string;
@@ -85,7 +86,7 @@ export type BacklogItem = {
   loads: Record<string, number>;
   allocations?: Record<string, Record<string, number>>;
   notes?: Record<string, string>;
-  jiraIssues?: Record<string, JiraIssueLink>;
+  jiraIssues?: Record<string, Record<string, JiraIssueLink>>;
   quarterIds?: string[];
   releaseDateId?: string | null;
   initialQuarterId?: string | null;
@@ -205,12 +206,22 @@ export type TaskHistoryItem = {
   meta: Record<string, unknown>;
 };
 
-export type JiraIssueExportResult = {
+export type JiraExportBatchItem = {
+  itemId: string;
+  taskJiraIssueId?: string | null;
   taskId: string;
   taskTitle?: string | null;
+  planningSprintId?: string | null;
+  planningSprintName?: string | null;
   participantId?: string | null;
   participantName?: string | null;
-  status: "created" | "skipped" | "failed";
+  status:
+    | "PENDING"
+    | "IN_PROGRESS"
+    | "CREATED"
+    | "FAILED"
+    | "SKIPPED"
+    | "MANUAL_CHECK_REQUIRED";
   message?: string | null;
   jiraIssueId?: string | null;
   jiraIssueKey?: string | null;
@@ -218,8 +229,22 @@ export type JiraIssueExportResult = {
   jiraRequest?: JiraIssueRequestPreview | null;
 };
 
-export type JiraIssueExportResponse = {
-  items: JiraIssueExportResult[];
+export type JiraExportBatchStartResponse = {
+  batchId: string;
+  status: string;
+  totalItems: number;
+};
+
+export type JiraExportBatchStatus = {
+  batchId: string;
+  status: string;
+  totalItems: number;
+  processedItems: number;
+  createdItems: number;
+  failedItems: number;
+  skippedItems: number;
+  manualCheckItems: number;
+  items: JiraExportBatchItem[];
 };
 
 export type Team = {

@@ -71,7 +71,7 @@ public final class DtoMapper {
     public static TaskDto toTaskDto(
         TaskEntity entity,
         String releaseSprintId,
-        Map<String, TaskJiraIssueDto> jiraIssues
+        Map<String, Map<String, TaskJiraIssueDto>> jiraIssues
     ) {
         List<String> participantIds = new ArrayList<>();
         entity.getParticipants().stream()
@@ -146,6 +146,9 @@ public final class DtoMapper {
         return new TaskJiraIssueDto(
             entity.getParticipant() != null && entity.getParticipant().getId() != null
                 ? entity.getParticipant().getId().toString()
+                : null,
+            entity.getPlanningSprint() != null && entity.getPlanningSprint().getId() != null
+                ? entity.getPlanningSprint().getId().toString()
                 : null,
             entity.getJiraIssueId(),
             entity.getJiraIssueKey(),

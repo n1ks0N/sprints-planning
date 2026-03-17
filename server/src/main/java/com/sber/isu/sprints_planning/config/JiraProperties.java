@@ -7,6 +7,7 @@ public record JiraProperties(
     String basicToken,
     boolean mockEnabled,
     Integer connectTimeoutMs,
-    Integer readTimeoutMs
+    Integer readTimeoutMs,
+    Integer exportWorkerConcurrency
 ) {
 }

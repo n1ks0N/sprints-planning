@@ -51,6 +51,9 @@ public class ApiActionDescriptionResolver {
 
         actions.put("GET /export/excel", "Экспорт плана в Excel");
         actions.put("POST /jira/issues", "Заведение задач в Jira");
+        actions.put("GET /jira/issues/batches/{batchId}", "Получен статус batch экспорта в Jira");
+        actions.put("POST /jira/issues/items/{taskJiraIssueId}/confirm-created", "Подтверждено создание Jira-задачи вручную");
+        actions.put("POST /jira/issues/items/{taskJiraIssueId}/confirm-not-created", "Подтверждено отсутствие Jira-задачи вручную");
     }
 
     public String resolve(String method, String path) {

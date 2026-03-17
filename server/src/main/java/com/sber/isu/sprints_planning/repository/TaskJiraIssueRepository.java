@@ -21,6 +21,11 @@ public interface TaskJiraIssueRepository extends JpaRepository<TaskJiraIssueEnti
         UUID planningSprintId
     );
 
+    @EntityGraph(attributePaths = {"task", "participant", "planningSprint", "exportBatch"})
+    List<TaskJiraIssueEntity> findAllByExportBatchIdOrderByCreatedAtAsc(UUID exportBatchId);
+
+    Optional<TaskJiraIssueEntity> findByIdAndTeamKey(UUID id, String teamKey);
+
     void deleteAllByTeamKeyAndTaskIdAndParticipantIdIn(
         String teamKey,
         UUID taskId,
