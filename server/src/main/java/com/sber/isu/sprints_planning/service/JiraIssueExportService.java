@@ -38,6 +38,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
+import org.hibernate.Hibernate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -661,8 +662,8 @@ public class JiraIssueExportService {
                 }
                 if (LINK_STATUS_IN_PROGRESS.equalsIgnoreCase(existingStatus)) {
                     if (isStaleInProgress(existing)) {
-                        existing.setStatus(LINK_STATUS_MANUAL_CHECK_REQUIRED);
-                        existing.setLastError("Предыдущая попытка зависла и требует ручной проверки");
+                        existing.setStatus(LINK_STATUS_FAILED);
+                        existing.setLastError("Предыдущая попытка зависла");
                         existing.setUpdatedAt(OffsetDateTime.now());
                         taskJiraIssueRepository.saveAndFlush(existing);
                     }
@@ -773,11 +774,29 @@ public class JiraIssueExportService {
             return item.withTaskJiraIssueId(existing.getId().toString())
                 .withExistingCreated(existing.getJiraIssueId(), existing.getJiraIssueKey(), existing.getJiraIssueUrl());
         }
+        if (LINK_STATUS_IN_PROGRESS.equalsIgnoreCase(existingStatus)) {
+            return item.withTaskJiraIssueId(existing.getId().toString())
+                .withStatus(ITEM_STATUS_IN_PROGRESS, "Экспорт в Jira уже выполняется");
+        }
+        if (LINK_STATUS_FAILED.equalsIgnoreCase(existingStatus)) {
+            return item.withTaskJiraIssueId(existing.getId().toString())
+                .withFailed(
+                    StringUtils.hasText(existing.getLastError()) ? existing.getLastError() : "Не удалось завести задачу в Jira",
+                    item.jiraRequest()
+                );
+        }
+        if (LINK_STATUS_MANUAL_CHECK_REQUIRED.equalsIgnoreCase(existingStatus)) {
+            return item.withTaskJiraIssueId(existing.getId().toString())
+                .withManualCheck(
+                    StringUtils.hasText(existing.getLastError()) ? existing.getLastError() : "Требуется ручная проверка",
+                    item.jiraRequest()
+                );
+        }
         return item.withTaskJiraIssueId(existing.getId().toString())
-            .withManualCheck(
+            .withFailed(
                 StringUtils.hasText(existing.getLastError())
                     ? existing.getLastError()
-                    : "Экспорт в Jira уже выполняется или требует проверки",
+                    : "Не удалось завести задачу в Jira",
                 item.jiraRequest()
             );
     }
@@ -815,7 +834,7 @@ public class JiraIssueExportService {
                 .body(JiraCreateIssueResponse.class);
 
             if (response == null || !StringUtils.hasText(response.id()) || !StringUtils.hasText(response.key())) {
-                throw new JiraIssueProcessingException(true, "Jira не вернула данные созданной задачи");
+                throw new JiraIssueProcessingException(false, "Jira не вернула данные созданной задачи");
             }
             return response;
         } catch (ResourceAccessException ex) {
@@ -828,7 +847,9 @@ public class JiraIssueExportService {
             if (ex.getStatusCode().is4xxClientError()) {
                 throw new JiraIssueProcessingException(false, "Jira вернула ошибку: " + message, ex);
             }
-            throw new JiraIssueProcessingException(true, "Jira вернула ошибку: " + message, ex);
+            throw new JiraIssueProcessingException(ex.getStatusCode().value() == 502
+                || ex.getStatusCode().value() == 503
+                || ex.getStatusCode().value() == 504, "Jira вернула ошибку: " + message, ex);
         }
     }
 
@@ -1159,9 +1180,6 @@ public class JiraIssueExportService {
             List<BatchItemState> items = new ArrayList<>(deserializeItems(batch));
             List<BatchItemState> updated = items.stream()
                 .map(item -> {
-                    if (ITEM_STATUS_IN_PROGRESS.equals(item.status()) && StringUtils.hasText(item.taskJiraIssueId())) {
-                        return item.withManualCheck("Фоновая обработка batch прервана: " + ex.getMessage(), item.jiraRequest());
-                    }
                     if (ITEM_STATUS_PENDING.equals(item.status()) || ITEM_STATUS_IN_PROGRESS.equals(item.status())) {
                         return item.withFailed("Фоновая обработка batch прервана: " + ex.getMessage(), item.jiraRequest());
                     }
@@ -1204,12 +1222,16 @@ public class JiraIssueExportService {
     }
 
     private String participantName(TaskJiraIssueEntity entity) {
-        if (entity.getParticipant() == null) {
+        ParticipantEntity participant = entity.getParticipant();
+        if (participant == null) {
             return "Участник";
         }
-        return StringUtils.hasText(entity.getParticipant().getFullName())
-            ? entity.getParticipant().getFullName().trim()
-            : entity.getParticipant().getId().toString();
+        if (!Hibernate.isInitialized(participant)) {
+            return participant.getId() != null ? participant.getId().toString() : "Участник";
+        }
+        return StringUtils.hasText(participant.getFullName())
+            ? participant.getFullName().trim()
+            : participant.getId().toString();
     }
 
     private String issueUrl(String issueKey) {
