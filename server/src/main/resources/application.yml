@@ -32,9 +32,6 @@ app:
   jira:
     basic-token: ${APP_JIRA_BASIC_TOKEN:}
     mock-enabled: ${APP_JIRA_MOCK_ENABLED:false}
-    connect-timeout-ms: ${APP_JIRA_CONNECT_TIMEOUT_MS:5000}
-    read-timeout-ms: ${APP_JIRA_READ_TIMEOUT_MS:30000}
-    export-worker-concurrency: ${APP_JIRA_EXPORT_WORKER_CONCURRENCY:1}
 management:
   endpoints:
     web:

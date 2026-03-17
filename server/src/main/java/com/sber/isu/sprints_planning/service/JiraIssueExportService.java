@@ -90,6 +90,8 @@ public class JiraIssueExportService {
     private static final String BATCH_ENTITY_TYPE = "jira_export_batch";
     private static final String TASK_ENTITY_TYPE = "task";
     private static final String UNKNOWN_JIRA_ISSUE_ID = "UNKNOWN";
+    private static final int JIRA_CONNECT_TIMEOUT_MS = 5000;
+    private static final int JIRA_READ_TIMEOUT_MS = 30000;
     private static final AtomicLong MOCK_ISSUE_SEQUENCE = new AtomicLong(900000);
 
     private final TaskRepository taskRepository;
@@ -958,12 +960,9 @@ public class JiraIssueExportService {
     }
 
     private RestClient createJiraRestClient(String baseUrl, String token) {
-        int connectTimeoutMs = normalizePositiveTimeout(jiraProperties.connectTimeoutMs(), 5000);
-        int readTimeoutMs = normalizePositiveTimeout(jiraProperties.readTimeoutMs(), 30000);
-
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(Duration.ofMillis(connectTimeoutMs));
-        requestFactory.setReadTimeout(Duration.ofMillis(readTimeoutMs));
+        requestFactory.setConnectTimeout(Duration.ofMillis(JIRA_CONNECT_TIMEOUT_MS));
+        requestFactory.setReadTimeout(Duration.ofMillis(JIRA_READ_TIMEOUT_MS));
 
         return RestClient.builder()
             .baseUrl(baseUrl)
@@ -971,13 +970,6 @@ public class JiraIssueExportService {
             .defaultHeader(HttpHeaders.AUTHORIZATION, "Basic " + token)
             .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
             .build();
-    }
-
-    private int normalizePositiveTimeout(Integer timeoutMs, int fallbackMs) {
-        if (timeoutMs == null || timeoutMs <= 0) {
-            return fallbackMs;
-        }
-        return timeoutMs;
     }
 
     private JiraCreateIssueResponse mockCreateIssue(JiraCreateIssueRequest body) {
