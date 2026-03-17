@@ -10,6 +10,7 @@ public record JiraExportBatchItemDto(
     String planningSprintId,
     String planningSprintName,
     String status,
+    boolean manualActionRequired,
     String message,
     String jiraIssueId,
     String jiraIssueKey,

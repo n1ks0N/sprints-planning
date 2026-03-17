@@ -365,6 +365,7 @@ export default function JiraExportDialog({
         const response = await confirmCreated({
           taskJiraIssueId: item.taskJiraIssueId,
           jiraIssueKey: jiraIssueKey.trim(),
+          batchId: activeBatchId,
         }).unwrap();
         dispatch(api.util.upsertQueryData("getJiraExportBatch", response.batchId, response));
       } catch (error: any) {
@@ -373,7 +374,7 @@ export default function JiraExportDialog({
         setRequestError(String(message));
       }
     },
-    [confirmCreated, dispatch]
+    [activeBatchId, confirmCreated, dispatch]
   );
 
   const handleConfirmNotCreated = React.useCallback(
@@ -383,7 +384,10 @@ export default function JiraExportDialog({
         return;
       }
       try {
-        const response = await confirmNotCreated({ taskJiraIssueId: item.taskJiraIssueId }).unwrap();
+        const response = await confirmNotCreated({
+          taskJiraIssueId: item.taskJiraIssueId,
+          batchId: activeBatchId,
+        }).unwrap();
         dispatch(api.util.upsertQueryData("getJiraExportBatch", response.batchId, response));
       } catch (error: any) {
         const message =
@@ -391,7 +395,7 @@ export default function JiraExportDialog({
         setRequestError(String(message));
       }
     },
-    [confirmNotCreated, dispatch]
+    [activeBatchId, confirmNotCreated, dispatch]
   );
 
   const planningSprintError = submitAttempted && !planningSprintId;
@@ -605,7 +609,7 @@ export default function JiraExportDialog({
                         )}
                       </TableCell>
                       <TableCell align="right">
-                        {item.status === "MANUAL_CHECK_REQUIRED" && item.taskJiraIssueId ? (
+                        {item.manualActionRequired && item.taskJiraIssueId ? (
                           <Stack direction="row" spacing={1} justifyContent="flex-end">
                             <Button
                               size="small"

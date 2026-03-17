@@ -8,11 +8,14 @@ import com.sber.isu.sprints_planning.service.JiraIssueExportService;
 import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -26,6 +29,7 @@ public class JiraController {
     }
 
     @PostMapping("/issues")
+    @ResponseStatus(HttpStatus.ACCEPTED)
     public JiraExportBatchStartDto exportIssues(
         @PathVariable String teamKey,
         @RequestBody @Valid JiraIssueExportRequest request,
@@ -52,12 +56,14 @@ public class JiraController {
         @PathVariable String teamKey,
         @PathVariable String taskJiraIssueId,
         @RequestBody @Valid JiraIssueManualConfirmRequest request,
+        @RequestParam(required = false) String batchId,
         HttpServletRequest httpRequest
     ) {
         return jiraIssueExportService.confirmCreated(
             TeamKeyNormalizer.normalize(teamKey),
             taskJiraIssueId,
             request,
+            batchId,
             httpRequest.getHeader("X-Session-Id"),
             httpRequest.getHeader("X-User-Name")
         );
@@ -67,11 +73,13 @@ public class JiraController {
     public JiraExportBatchStatusDto confirmNotCreated(
         @PathVariable String teamKey,
         @PathVariable String taskJiraIssueId,
+        @RequestParam(required = false) String batchId,
         HttpServletRequest httpRequest
     ) {
         return jiraIssueExportService.confirmNotCreated(
             TeamKeyNormalizer.normalize(teamKey),
             taskJiraIssueId,
+            batchId,
             httpRequest.getHeader("X-Session-Id"),
             httpRequest.getHeader("X-User-Name")
         );

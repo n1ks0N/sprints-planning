@@ -89,6 +89,7 @@ public class JiraIssueExportService {
 
     private static final String BATCH_ENTITY_TYPE = "jira_export_batch";
     private static final String TASK_ENTITY_TYPE = "task";
+    private static final String UNKNOWN_JIRA_ISSUE_ID = "UNKNOWN";
     private static final AtomicLong MOCK_ISSUE_SEQUENCE = new AtomicLong(900000);
 
     private final TaskRepository taskRepository;
@@ -135,6 +136,7 @@ public class JiraIssueExportService {
         String effectiveSessionId = StringUtils.hasText(sessionId) ? sessionId.trim() : UUID.randomUUID().toString();
         String userName = normalizeUserName(rawUserName);
         String jiraApiBaseUrl = JIRA_API_BASE_URL;
+        validateJiraRuntimeConfiguration(jiraApiBaseUrl);
         Long jiraSprintId = normalizedJiraSprintId(request.jiraSprintId());
         String projectKey = normalizeRequired(request.projectKey(), "projectKey");
         UUID planningSprintId = parseRequiredUuid(request.planningSprintId(), "planningSprintId");
@@ -214,6 +216,7 @@ public class JiraIssueExportService {
         String teamKey,
         String taskJiraIssueId,
         JiraIssueManualConfirmRequest request,
+        String preferredBatchId,
         String sessionId,
         String rawUserName
     ) {
@@ -222,13 +225,13 @@ public class JiraIssueExportService {
         String userName = normalizeUserName(rawUserName);
         String effectiveSessionId = StringUtils.hasText(sessionId) ? sessionId.trim() : UUID.randomUUID().toString();
 
-        UUID batchId = transactionTemplate.execute(status -> {
+        UUID linkedBatchId = transactionTemplate.execute(status -> {
             TaskJiraIssueEntity entity = taskJiraIssueRepository.findByIdAndTeamKey(issueId, teamKey)
                 .orElseThrow(() -> new EntityNotFoundException("Task Jira issue not found"));
             if (!LINK_STATUS_MANUAL_CHECK_REQUIRED.equalsIgnoreCase(normalizeOptional(entity.getStatus()))) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Подтверждение доступно только для статуса MANUAL_CHECK_REQUIRED");
             }
-            entity.setJiraIssueId(jiraIssueKey);
+            entity.setJiraIssueId(UNKNOWN_JIRA_ISSUE_ID);
             entity.setJiraIssueKey(jiraIssueKey);
             entity.setJiraIssueUrl(issueUrl(jiraIssueKey));
             entity.setStatus(LINK_STATUS_CREATED);
@@ -238,9 +241,16 @@ public class JiraIssueExportService {
             return entity.getExportBatch() != null ? entity.getExportBatch().getId() : null;
         });
 
-        updateBatchItemByTaskJiraIssueId(
+        List<UUID> updatedBatchIds = updateBatchItemsByTaskJiraIssueId(
+            teamKey,
             issueId,
-            item -> item.withManualConfirmation(ITEM_STATUS_CREATED, "Создание подтверждено вручную", jiraIssueKey, issueUrl(jiraIssueKey))
+            item -> item.withManualConfirmation(
+                ITEM_STATUS_CREATED,
+                "Создание подтверждено вручную",
+                UNKNOWN_JIRA_ISSUE_ID,
+                jiraIssueKey,
+                issueUrl(jiraIssueKey)
+            )
         );
 
         TaskJiraIssueEntity entity = taskJiraIssueRepository.findByIdAndTeamKey(issueId, teamKey)
@@ -265,7 +275,8 @@ public class JiraIssueExportService {
             )
         );
 
-        if (batchId != null) {
+        UUID responseBatchId = resolveBatchIdForResponse(teamKey, preferredBatchId, linkedBatchId, updatedBatchIds);
+        if (responseBatchId != null) {
             apiHistoryService.logEntityEvent(
                 teamKey,
                 effectiveSessionId,
@@ -274,7 +285,7 @@ public class JiraIssueExportService {
                 "/jira/issues/items/{id}/confirm-created",
                 200,
                 BATCH_ENTITY_TYPE,
-                batchId,
+                responseBatchId,
                 "jira.batch.item.confirm-created",
                 "Подтверждено создание задачи в Jira вручную",
                 List.of(),
@@ -283,7 +294,7 @@ public class JiraIssueExportService {
                     "jiraIssueKey", jiraIssueKey
                 )
             );
-            return getBatchStatus(teamKey, batchId.toString());
+            return getBatchStatus(teamKey, responseBatchId.toString());
         }
 
         throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Batch not found for Jira issue");
@@ -292,6 +303,7 @@ public class JiraIssueExportService {
     public JiraExportBatchStatusDto confirmNotCreated(
         String teamKey,
         String taskJiraIssueId,
+        String preferredBatchId,
         String sessionId,
         String rawUserName
     ) {
@@ -299,7 +311,7 @@ public class JiraIssueExportService {
         String userName = normalizeUserName(rawUserName);
         String effectiveSessionId = StringUtils.hasText(sessionId) ? sessionId.trim() : UUID.randomUUID().toString();
 
-        UUID batchId = transactionTemplate.execute(status -> {
+        UUID linkedBatchId = transactionTemplate.execute(status -> {
             TaskJiraIssueEntity entity = taskJiraIssueRepository.findByIdAndTeamKey(issueId, teamKey)
                 .orElseThrow(() -> new EntityNotFoundException("Task Jira issue not found"));
             if (!LINK_STATUS_MANUAL_CHECK_REQUIRED.equalsIgnoreCase(normalizeOptional(entity.getStatus()))) {
@@ -315,7 +327,8 @@ public class JiraIssueExportService {
             return entity.getExportBatch() != null ? entity.getExportBatch().getId() : null;
         });
 
-        updateBatchItemByTaskJiraIssueId(
+        List<UUID> updatedBatchIds = updateBatchItemsByTaskJiraIssueId(
+            teamKey,
             issueId,
             item -> item.withStatus(ITEM_STATUS_FAILED, "Пользователь подтвердил, что Jira-задача не была создана")
         );
@@ -341,7 +354,8 @@ public class JiraIssueExportService {
             )
         );
 
-        if (batchId != null) {
+        UUID responseBatchId = resolveBatchIdForResponse(teamKey, preferredBatchId, linkedBatchId, updatedBatchIds);
+        if (responseBatchId != null) {
             apiHistoryService.logEntityEvent(
                 teamKey,
                 effectiveSessionId,
@@ -350,13 +364,13 @@ public class JiraIssueExportService {
                 "/jira/issues/items/{id}/confirm-not-created",
                 200,
                 BATCH_ENTITY_TYPE,
-                batchId,
+                responseBatchId,
                 "jira.batch.item.confirm-not-created",
                 "Подтверждено отсутствие задачи в Jira вручную",
                 List.of(),
                 Map.of("taskJiraIssueId", issueId.toString())
             );
-            return getBatchStatus(teamKey, batchId.toString());
+            return getBatchStatus(teamKey, responseBatchId.toString());
         }
 
         throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Batch not found for Jira issue");
@@ -500,7 +514,7 @@ public class JiraIssueExportService {
                     item.participantId(),
                     ex
                 );
-                processed = item.withFailed(errorMessage, item.jiraRequest());
+                processed = reconcileUnexpectedItemFailure(batch, item, errorMessage);
             }
             updateBatchItem(batchId, processed);
         }
@@ -658,6 +672,59 @@ public class JiraIssueExportService {
         }
     }
 
+    private BatchItemState reconcileUnexpectedItemFailure(
+        JiraExportBatchEntity batch,
+        BatchItemState item,
+        String errorMessage
+    ) {
+        TaskJiraIssueEntity existing = loadExistingIssueSafely(
+            batch.getTeamKey(),
+            item.taskId(),
+            item.participantId(),
+            item.planningSprintId()
+        );
+        if (existing == null) {
+            return item.withFailed(errorMessage, item.jiraRequest());
+        }
+
+        String existingStatus = normalizeOptional(existing.getStatus());
+        String taskJiraIssueId = existing.getId() != null ? existing.getId().toString() : null;
+        if (LINK_STATUS_CREATED.equalsIgnoreCase(existingStatus)) {
+            return item.withTaskJiraIssueId(taskJiraIssueId)
+                .withCreated(
+                    "Jira-задача создана",
+                    existing.getJiraIssueId(),
+                    existing.getJiraIssueKey(),
+                    existing.getJiraIssueUrl(),
+                    item.jiraRequest()
+                );
+        }
+        if (LINK_STATUS_FAILED.equalsIgnoreCase(existingStatus)) {
+            return item.withTaskJiraIssueId(taskJiraIssueId)
+                .withFailed(
+                    StringUtils.hasText(existing.getLastError()) ? existing.getLastError() : errorMessage,
+                    item.jiraRequest()
+                );
+        }
+        if (LINK_STATUS_MANUAL_CHECK_REQUIRED.equalsIgnoreCase(existingStatus)) {
+            return item.withTaskJiraIssueId(taskJiraIssueId)
+                .withManualCheck(
+                    StringUtils.hasText(existing.getLastError()) ? existing.getLastError() : errorMessage,
+                    item.jiraRequest()
+                );
+        }
+        if (!LINK_STATUS_MANUAL_CHECK_REQUIRED.equalsIgnoreCase(existingStatus)) {
+            markIssueManualCheckRequired(existing.getId(), errorMessage);
+            existing = taskJiraIssueRepository.findById(existing.getId())
+                .orElse(existing);
+        }
+        return item.withTaskJiraIssueId(taskJiraIssueId)
+            .withManualCheck(
+                StringUtils.hasText(existing.getLastError()) ? existing.getLastError() : errorMessage,
+                item.jiraRequest()
+            );
+    }
+
     private SlotReservationResult reserveIssueSlot(
         JiraExportBatchEntity batch,
         UUID taskId,
@@ -785,6 +852,24 @@ public class JiraIssueExportService {
             .orElse(null);
     }
 
+    private TaskJiraIssueEntity loadExistingIssueSafely(
+        String teamKey,
+        String taskId,
+        String participantId,
+        String planningSprintId
+    ) {
+        try {
+            return loadExistingIssue(
+                teamKey,
+                UUID.fromString(taskId),
+                UUID.fromString(participantId),
+                UUID.fromString(planningSprintId)
+            );
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
     private BatchItemState toExistingIssueItem(BatchItemState item, TaskJiraIssueEntity existing) {
         String existingStatus = normalizeOptional(existing.getStatus());
         if (LINK_STATUS_CREATED.equalsIgnoreCase(existingStatus)) {
@@ -804,7 +889,7 @@ public class JiraIssueExportService {
         }
         if (LINK_STATUS_MANUAL_CHECK_REQUIRED.equalsIgnoreCase(existingStatus)) {
             return item.withTaskJiraIssueId(existing.getId().toString())
-                .withManualCheck(
+                .withSkippedManualAction(
                     StringUtils.hasText(existing.getLastError()) ? existing.getLastError() : "Требуется ручная проверка",
                     item.jiraRequest()
                 );
@@ -851,7 +936,7 @@ public class JiraIssueExportService {
                 .body(JiraCreateIssueResponse.class);
 
             if (response == null || !StringUtils.hasText(response.id()) || !StringUtils.hasText(response.key())) {
-                throw new JiraIssueProcessingException(false, "Jira не вернула данные созданной задачи");
+                throw new JiraIssueProcessingException(true, "Jira не вернула данные созданной задачи");
             }
             return response;
         } catch (ResourceAccessException ex) {
@@ -864,9 +949,11 @@ public class JiraIssueExportService {
             if (ex.getStatusCode().is4xxClientError()) {
                 throw new JiraIssueProcessingException(false, "Jira вернула ошибку: " + message, ex);
             }
-            throw new JiraIssueProcessingException(ex.getStatusCode().value() == 502
-                || ex.getStatusCode().value() == 503
-                || ex.getStatusCode().value() == 504, "Jira вернула ошибку: " + message, ex);
+            throw new JiraIssueProcessingException(
+                ex.getStatusCode().is5xxServerError(),
+                "Jira вернула ошибку: " + message,
+                ex
+            );
         }
     }
 
@@ -1010,6 +1097,18 @@ public class JiraIssueExportService {
         }
     }
 
+    private UUID parseOptionalUuid(String value, String fieldName) {
+        String normalized = normalizeOptional(value);
+        if (normalized == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(normalized);
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Поле " + fieldName + " должно быть UUID", ex);
+        }
+    }
+
     private List<UUID> parseRequiredUuidList(List<String> values, String fieldName) {
         if (values == null || values.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Поле " + fieldName + " обязательно");
@@ -1023,6 +1122,14 @@ public class JiraIssueExportService {
             parsed.add(parseRequiredUuid(value, fieldName));
         }
         return parsed.stream().distinct().toList();
+    }
+
+    private void validateJiraRuntimeConfiguration(String jiraApiBaseUrl) {
+        if (jiraProperties.mockEnabled()) {
+            return;
+        }
+        String token = normalizedToken();
+        createJiraRestClient(jiraApiBaseUrl, token);
     }
 
     private String normalizedToken() {
@@ -1078,7 +1185,7 @@ public class JiraIssueExportService {
         if (hasInProgress) {
             return BATCH_STATUS_IN_PROGRESS;
         }
-        boolean hasManual = items.stream().anyMatch(item -> ITEM_STATUS_MANUAL_CHECK_REQUIRED.equals(item.status()));
+        boolean hasManual = items.stream().anyMatch(item -> item.manualActionRequired() || ITEM_STATUS_MANUAL_CHECK_REQUIRED.equals(item.status()));
         if (hasManual) {
             return BATCH_STATUS_COMPLETED_WITH_MANUAL_ACTION;
         }
@@ -1122,25 +1229,36 @@ public class JiraIssueExportService {
         });
     }
 
-    private void updateBatchItemByTaskJiraIssueId(UUID taskJiraIssueId, java.util.function.UnaryOperator<BatchItemState> updater) {
-        transactionTemplate.executeWithoutResult(status -> {
-            TaskJiraIssueEntity issue = taskJiraIssueRepository.findById(taskJiraIssueId)
-                .orElseThrow(() -> new EntityNotFoundException("Task Jira issue not found"));
-            JiraExportBatchEntity batch = issue.getExportBatch();
-            if (batch == null) {
-                return;
-            }
-            List<BatchItemState> items = new ArrayList<>(deserializeItems(batch));
-            for (int i = 0; i < items.size(); i++) {
-                BatchItemState current = items.get(i);
-                if (Objects.equals(current.taskJiraIssueId(), taskJiraIssueId.toString())) {
-                    items.set(i, updater.apply(current));
-                    batch.setItemsJson(serializeItems(items));
-                    batch.setStatus(computeBatchStatus(items));
-                    jiraExportBatchRepository.save(batch);
-                    return;
+    private List<UUID> updateBatchItemsByTaskJiraIssueId(
+        String teamKey,
+        UUID taskJiraIssueId,
+        java.util.function.UnaryOperator<BatchItemState> updater
+    ) {
+        return transactionTemplate.execute(status -> {
+            List<UUID> updatedBatchIds = new ArrayList<>();
+            for (JiraExportBatchEntity batch : jiraExportBatchRepository.findAllByTeamKeyOrderByCreatedAtDesc(teamKey)) {
+                List<BatchItemState> items = new ArrayList<>(deserializeItems(batch));
+                boolean changed = false;
+                for (int i = 0; i < items.size(); i++) {
+                    BatchItemState current = items.get(i);
+                    if (!Objects.equals(current.taskJiraIssueId(), taskJiraIssueId.toString())) {
+                        continue;
+                    }
+                    BatchItemState updated = updater.apply(current);
+                    if (!updated.equals(current)) {
+                        items.set(i, updated);
+                        changed = true;
+                    }
                 }
+                if (!changed) {
+                    continue;
+                }
+                batch.setItemsJson(serializeItems(items));
+                batch.setStatus(computeBatchStatus(items));
+                jiraExportBatchRepository.save(batch);
+                updatedBatchIds.add(batch.getId());
             }
+            return updatedBatchIds;
         });
     }
 
@@ -1164,7 +1282,11 @@ public class JiraIssueExportService {
                     processedItems++;
                 }
                 case ITEM_STATUS_SKIPPED -> {
-                    skippedItems++;
+                    if (item.manualActionRequired()) {
+                        manualCheckItems++;
+                    } else {
+                        skippedItems++;
+                    }
                     processedItems++;
                 }
                 case ITEM_STATUS_MANUAL_CHECK_REQUIRED -> {
@@ -1208,15 +1330,12 @@ public class JiraIssueExportService {
             List<BatchItemState> items = new ArrayList<>(deserializeItems(batch));
             List<BatchItemState> updated = items.stream()
                 .map(item -> {
-                    if (ITEM_STATUS_IN_PROGRESS.equals(item.status())) {
-                        return item.withManualCheck(
-                            "Фоновая обработка batch прервана: " + ex.getMessage()
-                                + ". Требуется ручная проверка, задача могла быть создана в Jira",
-                            item.jiraRequest()
-                        );
-                    }
-                    if (ITEM_STATUS_PENDING.equals(item.status())) {
-                        return item.withFailed("Фоновая обработка batch прервана: " + ex.getMessage(), item.jiraRequest());
+                    if (ITEM_STATUS_IN_PROGRESS.equals(item.status()) || ITEM_STATUS_PENDING.equals(item.status())) {
+                        String errorMessage = ITEM_STATUS_IN_PROGRESS.equals(item.status())
+                            ? "Фоновая обработка batch прервана: " + ex.getMessage()
+                                + ". Требуется ручная проверка, задача могла быть создана в Jira"
+                            : "Фоновая обработка batch прервана: " + ex.getMessage();
+                        return reconcileUnexpectedItemFailure(batch, item, errorMessage);
                     }
                     return item;
                 })
@@ -1225,6 +1344,28 @@ public class JiraIssueExportService {
             batch.setStatus(computeBatchStatus(updated));
             jiraExportBatchRepository.save(batch);
         });
+    }
+
+    private UUID resolveBatchIdForResponse(
+        String teamKey,
+        String preferredBatchId,
+        UUID linkedBatchId,
+        List<UUID> updatedBatchIds
+    ) {
+        UUID preferred = parseOptionalUuid(preferredBatchId, "batchId");
+        if (preferred != null && updatedBatchIds.contains(preferred)) {
+            return preferred;
+        }
+        if (linkedBatchId != null && updatedBatchIds.contains(linkedBatchId)) {
+            return linkedBatchId;
+        }
+        if (!updatedBatchIds.isEmpty()) {
+            return updatedBatchIds.get(0);
+        }
+        if (preferred != null && jiraExportBatchRepository.findByIdAndTeamKey(preferred, teamKey).isPresent()) {
+            return preferred;
+        }
+        return linkedBatchId;
     }
 
     private void logTaskJiraEvent(
@@ -1339,6 +1480,7 @@ public class JiraIssueExportService {
         String planningSprintName,
         BigDecimal storyPoints,
         String status,
+        boolean manualActionRequired,
         String message,
         String jiraIssueId,
         String jiraIssueKey,
@@ -1366,6 +1508,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 ITEM_STATUS_PENDING,
+                false,
                 "Ожидает обработки",
                 null,
                 null,
@@ -1394,6 +1537,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 BigDecimal.ZERO,
                 ITEM_STATUS_SKIPPED,
+                false,
                 message,
                 null,
                 null,
@@ -1422,6 +1566,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 BigDecimal.ZERO,
                 ITEM_STATUS_FAILED,
+                false,
                 message,
                 null,
                 null,
@@ -1442,6 +1587,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 nextStatus,
+                ITEM_STATUS_MANUAL_CHECK_REQUIRED.equals(nextStatus),
                 nextMessage,
                 jiraIssueId,
                 jiraIssueKey,
@@ -1462,6 +1608,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 status,
+                manualActionRequired,
                 message,
                 jiraIssueId,
                 jiraIssueKey,
@@ -1488,6 +1635,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 ITEM_STATUS_CREATED,
+                false,
                 nextMessage,
                 nextJiraIssueId,
                 nextJiraIssueKey,
@@ -1508,6 +1656,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 ITEM_STATUS_SKIPPED,
+                false,
                 "Jira-задача уже заведена",
                 nextJiraIssueId,
                 nextJiraIssueKey,
@@ -1528,6 +1677,28 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 ITEM_STATUS_MANUAL_CHECK_REQUIRED,
+                true,
+                nextMessage,
+                jiraIssueId,
+                jiraIssueKey,
+                jiraIssueUrl,
+                nextJiraRequest
+            );
+        }
+
+        private BatchItemState withSkippedManualAction(String nextMessage, JiraIssueRequestPreviewDto nextJiraRequest) {
+            return new BatchItemState(
+                itemId,
+                taskJiraIssueId,
+                taskId,
+                taskTitle,
+                participantId,
+                participantName,
+                planningSprintId,
+                planningSprintName,
+                storyPoints,
+                ITEM_STATUS_SKIPPED,
+                true,
                 nextMessage,
                 jiraIssueId,
                 jiraIssueKey,
@@ -1548,6 +1719,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 ITEM_STATUS_FAILED,
+                false,
                 nextMessage,
                 jiraIssueId,
                 jiraIssueKey,
@@ -1559,6 +1731,7 @@ public class JiraIssueExportService {
         private BatchItemState withManualConfirmation(
             String nextStatus,
             String nextMessage,
+            String nextJiraIssueId,
             String nextJiraIssueKey,
             String nextJiraIssueUrl
         ) {
@@ -1573,8 +1746,9 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 nextStatus,
+                false,
                 nextMessage,
-                nextJiraIssueKey,
+                nextJiraIssueId,
                 nextJiraIssueKey,
                 nextJiraIssueUrl,
                 jiraRequest
@@ -1592,6 +1766,7 @@ public class JiraIssueExportService {
                 planningSprintId,
                 planningSprintName,
                 status,
+                manualActionRequired,
                 message,
                 jiraIssueId,
                 jiraIssueKey,

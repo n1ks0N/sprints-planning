@@ -27,6 +27,7 @@ import {
   FormHelperText,
   Select,
   MenuItem,
+  Menu,
   Alert,
   CircularProgress,
 } from "@mui/material";
@@ -720,6 +721,11 @@ const TaskCard = React.memo(function TaskCard({
   const [noteParticipant, setNoteParticipant] =
     React.useState<Participant | null>(null);
   const [noteDraft, setNoteDraft] = React.useState("");
+  const [jiraMenuAnchorEl, setJiraMenuAnchorEl] =
+    React.useState<HTMLElement | null>(null);
+  const [jiraMenuParticipantId, setJiraMenuParticipantId] = React.useState<
+    string | null
+  >(null);
 
   React.useEffect(() => {
     setCustomersDraft(task.customers || []);
@@ -754,6 +760,24 @@ const TaskCard = React.memo(function TaskCard({
     onUpdateTaskPatch(task, { notes: nextNotes });
     handleCloseNote();
   }, [handleCloseNote, noteDraft, noteParticipant, onUpdateTaskPatch, task]);
+
+  const handleOpenJiraMenu = React.useCallback(
+    (participantId: string) => (event: React.MouseEvent<HTMLElement>) => {
+      setJiraMenuParticipantId(participantId);
+      setJiraMenuAnchorEl(event.currentTarget);
+    },
+    []
+  );
+
+  const handleCloseJiraMenu = React.useCallback(() => {
+    setJiraMenuAnchorEl(null);
+    setJiraMenuParticipantId(null);
+  }, []);
+
+  const jiraMenuParticipantIssues = React.useMemo(
+    () => (jiraMenuParticipantId ? task.jiraIssues?.[jiraMenuParticipantId] || {} : {}),
+    [jiraMenuParticipantId, task.jiraIssues]
+  );
 
   const tooltipContent = (
     <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
@@ -1290,6 +1314,9 @@ const TaskCard = React.memo(function TaskCard({
                   const participantNote = task.notes?.[p.id] ?? "";
                   const participantJiraIssues = task.jiraIssues?.[p.id] || {};
                   const hasNote = participantNote.trim().length > 0;
+                  const hasDisplayedJiraIssue = effectiveSprints.some((s) =>
+                    Boolean(participantJiraIssues[s.id]?.jiraIssueUrl)
+                  );
 
                   return (
                     <SortableParticipantRow key={p.id} participant={p}>
@@ -1366,39 +1393,17 @@ const TaskCard = React.memo(function TaskCard({
                           </TableCell>
 
                           {effectiveSprints.map((s) => {
-                            const sprintJiraIssue = participantJiraIssues[s.id];
                             return (
                             <TableCell key={s.id} align="center">
-                              <Stack
-                                direction="row"
-                                spacing={0.5}
-                                alignItems="center"
-                                justifyContent="center"
-                              >
-                                <EditableNumberCell
-                                  value={Number(row[s.id] || 0)}
-                                  onChange={(v) =>
-                                    onAllocChange(task.id, p.id, s.id, v)
-                                  }
-                                  onCommit={(next) =>
-                                    onAllocCommit(task.id, p.id, s.id, next)
-                                  }
-                                />
-                                {sprintJiraIssue?.jiraIssueUrl ? (
-                                  <Tooltip title={`Открыть Jira: ${sprintJiraIssue.jiraIssueKey}`}>
-                                    <IconButton
-                                      size="small"
-                                      color="info"
-                                      component="a"
-                                      href={sprintJiraIssue.jiraIssueUrl}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      <OpenInNew fontSize="small" />
-                                    </IconButton>
-                                  </Tooltip>
-                                ) : null}
-                              </Stack>
+                              <EditableNumberCell
+                                value={Number(row[s.id] || 0)}
+                                onChange={(v) =>
+                                  onAllocChange(task.id, p.id, s.id, v)
+                                }
+                                onCommit={(next) =>
+                                  onAllocCommit(task.id, p.id, s.id, next)
+                                }
+                              />
                             </TableCell>
                             );
                           })}
@@ -1421,6 +1426,17 @@ const TaskCard = React.memo(function TaskCard({
                               spacing={0.5}
                               justifyContent="flex-end"
                             >
+                              <Tooltip
+                                title="Jira по отображаемым спринтам"
+                              >
+                                <IconButton
+                                  size="small"
+                                  color={hasDisplayedJiraIssue ? "info" : "default"}
+                                  onClick={handleOpenJiraMenu(p.id)}
+                                >
+                                  <OpenInNew fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
                               <Tooltip
                                 title={
                                   hasNote ? (
@@ -1560,6 +1576,81 @@ const TaskCard = React.memo(function TaskCard({
         </TableContainer>
         </DndContext>
       )}
+
+      <Menu
+        anchorEl={jiraMenuAnchorEl}
+        open={Boolean(jiraMenuAnchorEl)}
+        onClose={handleCloseJiraMenu}
+        keepMounted
+      >
+        {effectiveSprints.length === 0 ? (
+          <MenuItem disabled>Спринты не отображаются</MenuItem>
+        ) : (
+          effectiveSprints.map((sprint) => {
+            const sprintJiraIssue = jiraMenuParticipantIssues[sprint.id];
+            const sprintLabel = `${moment(sprint.startDate).format("DD.MM.YYYY")} — ${moment(
+              sprint.endDate
+            ).format("DD.MM.YYYY")}`;
+
+            if (sprintJiraIssue?.jiraIssueUrl) {
+              return (
+                <MenuItem
+                  key={sprint.id}
+                  component="a"
+                  href={sprintJiraIssue.jiraIssueUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={handleCloseJiraMenu}
+                >
+                  <Stack
+                    direction="row"
+                    spacing={2}
+                    justifyContent="space-between"
+                    alignItems="center"
+                    sx={{ width: "100%", minWidth: 360 }}
+                  >
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                        {sprintLabel}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {sprint.name}
+                      </Typography>
+                    </Box>
+                    <Typography variant="body2" color="primary">
+                      {sprintJiraIssue.jiraIssueKey}
+                    </Typography>
+                  </Stack>
+                </MenuItem>
+              );
+            }
+
+            return (
+              <MenuItem key={sprint.id} disabled>
+                <Stack
+                  direction="row"
+                  spacing={2}
+                  justifyContent="space-between"
+                  alignItems="center"
+                  sx={{ width: "100%", minWidth: 360 }}
+                >
+                  <Box>
+                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                      {sprintLabel}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {sprint.name}
+                    </Typography>
+                  </Box>
+                  <Typography variant="body2" color="text.disabled">
+                    —
+                  </Typography>
+                </Stack>
+              </MenuItem>
+            );
+          })
+        )}
+      </Menu>
 
       <Dialog open={Boolean(noteParticipant)} onClose={handleCloseNote} fullWidth>
         <DialogTitle>
