@@ -551,7 +551,8 @@ public class JiraIssueExportService {
             return toExistingIssueItem(item, reservation.existingIssue());
         }
 
-        if (!StringUtils.hasText(participant.getJiraLogin())) {
+        String assigneeLogin = normalizeAssigneeLogin(participant);
+        if (!StringUtils.hasText(assigneeLogin) && !jiraProperties.mockEnabled()) {
             markIssueFailed(reservation.reservationId(), "У участника не заполнен Jira login");
             return item.withTaskJiraIssueId(reservation.reservationId().toString())
                 .withStatus(ITEM_STATUS_FAILED, "У участника не заполнен Jira login");
@@ -562,7 +563,7 @@ public class JiraIssueExportService {
             batch.getJiraSprintId(),
             normalizeLabels(batch.getLabelsJson()),
             task,
-            participant,
+            assigneeLogin,
             item.storyPoints()
         );
         JiraIssueRequestPreviewDto requestPreview = buildRequestPreview(jiraApiBaseUrl, requestBody);
@@ -887,12 +888,19 @@ public class JiraIssueExportService {
         );
     }
 
+    private String normalizeAssigneeLogin(ParticipantEntity participant) {
+        if (participant == null || !StringUtils.hasText(participant.getJiraLogin())) {
+            return jiraProperties.mockEnabled() ? "mock.user" : null;
+        }
+        return participant.getJiraLogin().trim();
+    }
+
     private JiraCreateIssueRequest buildIssueRequest(
         String projectKey,
         Long jiraSprintId,
         List<String> labels,
         TaskEntity task,
-        ParticipantEntity participant,
+        String assigneeLogin,
         BigDecimal storyPoints
     ) {
         return new JiraCreateIssueRequest(
@@ -901,7 +909,7 @@ public class JiraIssueExportService {
                 new JiraIssueType(JIRA_ISSUE_TYPE_ID),
                 normalizedTaskTitle(task),
                 buildDescription(task),
-                new JiraAssignee(participant.getJiraLogin().trim()),
+                new JiraAssignee(assigneeLogin),
                 labels,
                 storyPoints,
                 jiraSprintId
