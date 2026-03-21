@@ -8,15 +8,13 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 @Configuration
 public class JiraExportExecutorConfig {
 
-    @Bean(name = "jiraExportExecutor")
-    public Executor jiraExportExecutor(JiraProperties jiraProperties) {
-        int concurrency = jiraProperties.exportWorkerConcurrency() == null || jiraProperties.exportWorkerConcurrency() <= 0
-            ? 1
-            : jiraProperties.exportWorkerConcurrency();
+    private static final int EXPORT_WORKER_CONCURRENCY = 1;
 
+    @Bean(name = "jiraExportExecutor")
+    public Executor jiraExportExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(concurrency);
-        executor.setMaxPoolSize(concurrency);
+        executor.setCorePoolSize(EXPORT_WORKER_CONCURRENCY);
+        executor.setMaxPoolSize(EXPORT_WORKER_CONCURRENCY);
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("jira-export-");
         executor.initialize();

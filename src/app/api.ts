@@ -1089,22 +1089,24 @@ export const api = createApi({
     }),
     confirmJiraIssueCreated: b.mutation<
       JiraExportBatchStatus,
-      { taskJiraIssueId: string; jiraIssueKey: string }
+      { taskJiraIssueId: string; jiraIssueKey: string; batchId?: string | null }
     >({
-      query: ({ taskJiraIssueId, jiraIssueKey }) => ({
+      query: ({ taskJiraIssueId, jiraIssueKey, batchId }) => ({
         url: `/jira/issues/items/${taskJiraIssueId}/confirm-created`,
         method: "POST",
         body: { jiraIssueKey },
+        params: batchId ? { batchId } : undefined,
       }),
       invalidatesTags: () => [{ type: "Task" as const, id: "LIST" as const }],
     }),
     confirmJiraIssueNotCreated: b.mutation<
       JiraExportBatchStatus,
-      { taskJiraIssueId: string }
+      { taskJiraIssueId: string; batchId?: string | null }
     >({
-      query: ({ taskJiraIssueId }) => ({
+      query: ({ taskJiraIssueId, batchId }) => ({
         url: `/jira/issues/items/${taskJiraIssueId}/confirm-not-created`,
         method: "POST",
+        params: batchId ? { batchId } : undefined,
       }),
       invalidatesTags: () => [{ type: "Task" as const, id: "LIST" as const }],
     }),

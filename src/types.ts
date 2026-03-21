@@ -222,6 +222,7 @@ export type JiraExportBatchItem = {
     | "FAILED"
     | "SKIPPED"
     | "MANUAL_CHECK_REQUIRED";
+  manualActionRequired?: boolean;
   message?: string | null;
   jiraIssueId?: string | null;
   jiraIssueKey?: string | null;

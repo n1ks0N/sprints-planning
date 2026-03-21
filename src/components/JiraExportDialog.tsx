@@ -207,17 +207,26 @@ export default function JiraExportDialog({
   const [submitAttempted, setSubmitAttempted] = React.useState(false);
   const [requestError, setRequestError] = React.useState("");
   const [activeBatchId, setActiveBatchId] = React.useState<string | null>(null);
+  const [batchPollingInterval, setBatchPollingInterval] = React.useState(0);
   const [exportJiraIssues, { isLoading: isStarting }] = useExportJiraIssuesMutation();
   const [confirmCreated, { isLoading: isConfirmingCreated }] = useConfirmJiraIssueCreatedMutation();
   const [confirmNotCreated, { isLoading: isConfirmingNotCreated }] = useConfirmJiraIssueNotCreatedMutation();
 
   const batchQuery = useGetJiraExportBatchQuery(activeBatchId || "", {
     skip: !open || !activeBatchId,
-    pollingInterval: open && activeBatchId ? 3000 : 0,
+    pollingInterval: batchPollingInterval,
   });
   const batchData = batchQuery.data;
   const batchStatus = batchData?.status || null;
   const terminal = isTerminalBatchStatus(batchStatus);
+
+  React.useEffect(() => {
+    if (open && activeBatchId && !terminal) {
+      setBatchPollingInterval(3000);
+      return;
+    }
+    setBatchPollingInterval(0);
+  }, [open, activeBatchId, terminal]);
 
   const currentPlanningSprintId = React.useMemo(() => {
     const today = todayISO();
@@ -356,6 +365,7 @@ export default function JiraExportDialog({
         const response = await confirmCreated({
           taskJiraIssueId: item.taskJiraIssueId,
           jiraIssueKey: jiraIssueKey.trim(),
+          batchId: activeBatchId,
         }).unwrap();
         dispatch(api.util.upsertQueryData("getJiraExportBatch", response.batchId, response));
       } catch (error: any) {
@@ -364,7 +374,7 @@ export default function JiraExportDialog({
         setRequestError(String(message));
       }
     },
-    [confirmCreated, dispatch]
+    [activeBatchId, confirmCreated, dispatch]
   );
 
   const handleConfirmNotCreated = React.useCallback(
@@ -374,7 +384,10 @@ export default function JiraExportDialog({
         return;
       }
       try {
-        const response = await confirmNotCreated({ taskJiraIssueId: item.taskJiraIssueId }).unwrap();
+        const response = await confirmNotCreated({
+          taskJiraIssueId: item.taskJiraIssueId,
+          batchId: activeBatchId,
+        }).unwrap();
         dispatch(api.util.upsertQueryData("getJiraExportBatch", response.batchId, response));
       } catch (error: any) {
         const message =
@@ -382,7 +395,7 @@ export default function JiraExportDialog({
         setRequestError(String(message));
       }
     },
-    [confirmNotCreated, dispatch]
+    [activeBatchId, confirmNotCreated, dispatch]
   );
 
   const planningSprintError = submitAttempted && !planningSprintId;
@@ -596,7 +609,7 @@ export default function JiraExportDialog({
                         )}
                       </TableCell>
                       <TableCell align="right">
-                        {item.status === "MANUAL_CHECK_REQUIRED" && item.taskJiraIssueId ? (
+                        {item.manualActionRequired && item.taskJiraIssueId ? (
                           <Stack direction="row" spacing={1} justifyContent="flex-end">
                             <Button
                               size="small"
