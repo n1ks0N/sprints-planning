@@ -346,7 +346,8 @@ export default function ParticipantWorkloadPage() {
       .filter(
         (t) =>
           t.participantIds.includes(pid) &&
-          ui.priorityFilter.includes(t.priority)
+          ui.priorityFilter.includes(t.priority) &&
+          t.status !== "backlog"
       )
       .map((t) => ({
         task: t,

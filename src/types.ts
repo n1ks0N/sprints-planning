@@ -71,7 +71,8 @@ export type TaskStatus =
   | "done"
   | "notdone"
   | "canceled"
-  | "partial";
+  | "partial"
+  | "backlog";
 
 export type BacklogItem = {
   id: string;

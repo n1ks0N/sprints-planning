@@ -111,6 +111,8 @@ import { CSS } from "@dnd-kit/utilities";
 moment.locale("ru");
 
 const WITHOUT_QUARTER_FILTER_VALUE = "__WITHOUT_QUARTER__";
+const WITHOUT_STREAM_FILTER_VALUE = "__WITHOUT_STREAM__";
+const WITHOUT_CUSTOMER_FILTER_VALUE = "__WITHOUT_CUSTOMER__";
 const NO_INITIAL_QUARTER_VALUE = "__NO_INITIAL_QUARTER__";
 
 // ---------- Utils ----------
@@ -166,6 +168,8 @@ function syncTasksPageMeta(draft: TasksPage) {
 function buildTasksSearchParams(arg: {
   quarterIds?: string[];
   withoutQuarter?: boolean;
+  withoutStream?: boolean;
+  withoutCustomer?: boolean;
   priority?: number[];
   statuses?: string[];
   releaseDateId?: string;
@@ -189,6 +193,8 @@ function buildTasksSearchParams(arg: {
   const quarters = joinOrUndefined(arg.quarterIds);
   if (quarters) params.set("quarterId", quarters);
   if (arg.withoutQuarter) params.set("withoutQuarter", "true");
+  if (arg.withoutStream) params.set("withoutStream", "true");
+  if (arg.withoutCustomer) params.set("withoutCustomer", "true");
 
   const priorities = joinOrUndefined(arg.priority);
   if (priorities) params.set("priority", priorities);
@@ -452,6 +458,7 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
   notdone: "Не сделана",
   canceled: "Отменена",
   partial: "Частично",
+  backlog: "В бэклоге",
 };
 
 const STATUS_COLOR: Record<
@@ -463,6 +470,7 @@ const STATUS_COLOR: Record<
   notdone: "error",
   canceled: "info",
   partial: "warning",
+  backlog: "default",
 };
 
 const PRIORITY_VALUES: readonly number[] = [1, 2, 3];
@@ -2104,6 +2112,8 @@ export default function BacklogPage() {
     priorityFilter,
     streamFilter,
     customerFilter,
+    withoutStreamFilter,
+    withoutCustomerFilter,
     statusFilter,
     releaseSprintFilter,
     searchQuery,
@@ -2202,6 +2212,8 @@ export default function BacklogPage() {
       JSON.stringify({
         selectedQuarterIds: selectedQuarterIds.slice().sort(),
         withoutQuarterFilter,
+        withoutStreamFilter,
+        withoutCustomerFilter,
         priorityFilter,
         statusFilter,
         releaseSprintFilter,
@@ -2217,6 +2229,8 @@ export default function BacklogPage() {
       releaseSprintFilter,
       selectedQuarterIds,
       withoutQuarterFilter,
+      withoutStreamFilter,
+      withoutCustomerFilter,
       statusFilter,
       streamFilter,
       customerFilter,
@@ -2237,6 +2251,8 @@ export default function BacklogPage() {
     () => ({
       quarterIds: selectedQuarterIds,
       withoutQuarter: withoutQuarterFilter,
+      withoutStream: withoutStreamFilter,
+      withoutCustomer: withoutCustomerFilter,
       priority: priorityFilter,
       statuses: statusFilter,
       releaseDateId:
@@ -2255,6 +2271,8 @@ export default function BacklogPage() {
       releaseSprintFilter,
       streamFilter,
       customerFilter,
+      withoutStreamFilter,
+      withoutCustomerFilter,
       normalizedSearch,
       pinnedTaskId,
       effectiveTasksPageNumber,
@@ -2665,6 +2683,22 @@ export default function BacklogPage() {
     []
   );
 
+  const streamFilterOptions = React.useMemo(
+    () => [
+      { value: WITHOUT_STREAM_FILTER_VALUE, label: "Без стрима" },
+      ...streamOptions.map((stream) => ({ value: stream, label: stream })),
+    ],
+    [streamOptions]
+  );
+
+  const customerFilterOptions = React.useMemo(
+    () => [
+      { value: WITHOUT_CUSTOMER_FILTER_VALUE, label: "Без заказчика" },
+      ...customerOptions.map((customer) => ({ value: customer, label: customer })),
+    ],
+    [customerOptions]
+  );
+
   const releaseFilterOptions = React.useMemo(() => {
     const entries = releases
       .map((r: any) => ({
@@ -2762,32 +2796,48 @@ export default function BacklogPage() {
 
   const handleStreamFilterChange = React.useCallback(
     (values: string[]) => {
+      const nextWithoutStream = values.includes(WITHOUT_STREAM_FILTER_VALUE);
+      const nextValues = values.filter((value) => value !== WITHOUT_STREAM_FILTER_VALUE);
       if (
-        values.length === streamFilter.length &&
-        values.every((v, i) => streamFilter[i] === v)
+        nextWithoutStream === withoutStreamFilter &&
+        nextValues.length === streamFilter.length &&
+        nextValues.every((v, i) => streamFilter[i] === v)
       ) {
         return;
       }
       startFiltersTransition(() => {
-        dispatch(setBacklogFilters({ streamFilter: values }));
+        dispatch(
+          setBacklogFilters({
+            streamFilter: nextValues,
+            withoutStreamFilter: nextWithoutStream,
+          })
+        );
       });
     },
-    [dispatch, streamFilter, startFiltersTransition]
+    [dispatch, streamFilter, startFiltersTransition, withoutStreamFilter]
   );
 
   const handleCustomerFilterChange = React.useCallback(
     (values: string[]) => {
+      const nextWithoutCustomer = values.includes(WITHOUT_CUSTOMER_FILTER_VALUE);
+      const nextValues = values.filter((value) => value !== WITHOUT_CUSTOMER_FILTER_VALUE);
       if (
-        values.length === customerFilter.length &&
-        values.every((v, i) => customerFilter[i] === v)
+        nextWithoutCustomer === withoutCustomerFilter &&
+        nextValues.length === customerFilter.length &&
+        nextValues.every((v, i) => customerFilter[i] === v)
       ) {
         return;
       }
       startFiltersTransition(() => {
-        dispatch(setBacklogFilters({ customerFilter: values }));
+        dispatch(
+          setBacklogFilters({
+            customerFilter: nextValues,
+            withoutCustomerFilter: nextWithoutCustomer,
+          })
+        );
       });
     },
-    [dispatch, customerFilter, startFiltersTransition]
+    [dispatch, customerFilter, startFiltersTransition, withoutCustomerFilter]
   );
 
   const handleTasksPageSizeChange = React.useCallback(
@@ -2911,6 +2961,8 @@ export default function BacklogPage() {
           quarterId: "all",
           selectedQuarterIds: [],
           withoutQuarterFilter: false,
+          withoutStreamFilter: false,
+          withoutCustomerFilter: false,
           releaseSprintFilter: "all",
           priorityFilter: [],
           streamFilter: [],
@@ -3646,8 +3698,10 @@ export default function BacklogPage() {
                 multiple: true,
                 allowCustom: false,
                 label: "Стрим по задаче",
-                options: streamOptions.map((s) => ({ label: s, value: s })),
-                value: streamFilter,
+                options: streamFilterOptions,
+                value: withoutStreamFilter
+                  ? [...streamFilter, WITHOUT_STREAM_FILTER_VALUE]
+                  : streamFilter,
                 onChange: handleStreamFilterChange,
               },
             },
@@ -3659,8 +3713,10 @@ export default function BacklogPage() {
                 multiple: true,
                 allowCustom: false,
                 label: "Заказчик",
-                options: customerOptions.map((c) => ({ label: c, value: c })),
-                value: customerFilter,
+                options: customerFilterOptions,
+                value: withoutCustomerFilter
+                  ? [...customerFilter, WITHOUT_CUSTOMER_FILTER_VALUE]
+                  : customerFilter,
                 onChange: handleCustomerFilterChange,
               },
             },

@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -248,12 +249,12 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             predicates.add(cb.equal(task.get("releaseDate").get("id"), filter.releaseDateId()));
         }
 
-        if (!filter.streams().isEmpty()) {
-            predicates.add(streamExists(query, cb, task, filter.streams()));
+        if (!filter.streams().isEmpty() || filter.withoutStream()) {
+            predicates.add(streamMatches(query, cb, task, filter.streams(), filter.withoutStream()));
         }
 
-        if (!filter.customers().isEmpty()) {
-            predicates.add(customerExists(query, cb, task, filter.customers()));
+        if (!filter.customers().isEmpty() || filter.withoutCustomer()) {
+            predicates.add(customerMatches(query, cb, task, filter.customers(), filter.withoutCustomer()));
         }
 
         if (filter.searchQuery() != null) {
@@ -273,6 +274,11 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
 
         if (!filter.statuses().isEmpty()) {
             predicates.add(cb.lower(task.get("status")).in(filter.statuses()));
+        } else {
+            predicates.add(cb.or(
+                cb.isNull(task.get("status")),
+                cb.notEqual(cb.lower(task.get("status")), "backlog")
+            ));
         }
 
         Predicate basePredicate = cb.and(predicates.toArray(new Predicate[0]));
@@ -356,6 +362,32 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         return cb.exists(sub);
     }
 
+    private Predicate streamMissing(CriteriaQuery<?> query, CriteriaBuilder cb, Root<TaskEntity> task) {
+        var sub = query.subquery(UUID.class);
+        Root<TaskEntity> subTask = sub.from(TaskEntity.class);
+        sub.select(subTask.get("id"))
+            .where(
+                cb.equal(subTask.get("id"), task.get("id")),
+                cb.isNotEmpty(subTask.get("streams"))
+            );
+        return cb.not(cb.exists(sub));
+    }
+
+    private Predicate streamMatches(
+        CriteriaQuery<?> query,
+        CriteriaBuilder cb,
+        Root<TaskEntity> task,
+        Set<String> streamNames,
+        boolean withoutStream
+    ) {
+        Predicate named = streamNames.isEmpty() ? null : streamExists(query, cb, task, streamNames);
+        Predicate missing = withoutStream ? streamMissing(query, cb, task) : null;
+        if (named != null && missing != null) {
+            return cb.or(named, missing);
+        }
+        return named != null ? named : missing;
+    }
+
     private Predicate customerExists(
         CriteriaQuery<?> query,
         CriteriaBuilder cb,
@@ -373,6 +405,32 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
                 customerFilter
             );
         return cb.exists(sub);
+    }
+
+    private Predicate customerMissing(CriteriaQuery<?> query, CriteriaBuilder cb, Root<TaskEntity> task) {
+        var sub = query.subquery(UUID.class);
+        Root<TaskEntity> subTask = sub.from(TaskEntity.class);
+        sub.select(subTask.get("id"))
+            .where(
+                cb.equal(subTask.get("id"), task.get("id")),
+                cb.isNotEmpty(subTask.get("customers"))
+            );
+        return cb.not(cb.exists(sub));
+    }
+
+    private Predicate customerMatches(
+        CriteriaQuery<?> query,
+        CriteriaBuilder cb,
+        Root<TaskEntity> task,
+        Set<String> customerNames,
+        boolean withoutCustomer
+    ) {
+        Predicate named = customerNames.isEmpty() ? null : customerExists(query, cb, task, customerNames);
+        Predicate missing = withoutCustomer ? customerMissing(query, cb, task) : null;
+        if (named != null && missing != null) {
+            return cb.or(named, missing);
+        }
+        return named != null ? named : missing;
     }
 
     private Predicate quarterMatches(CriteriaQuery<?> query, CriteriaBuilder cb, Root<TaskEntity> task, TaskFilter filter) {

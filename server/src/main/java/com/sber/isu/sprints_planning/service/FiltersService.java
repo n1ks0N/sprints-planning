@@ -23,7 +23,8 @@ public class FiltersService {
         "done",
         "notdone",
         "canceled",
-        "partial"
+        "partial",
+        "backlog"
     );
 
     private static final List<Integer> TASK_PRIORITIES = List.of(1, 2, 3);

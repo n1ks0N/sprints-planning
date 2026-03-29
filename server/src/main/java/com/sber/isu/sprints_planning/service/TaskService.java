@@ -60,6 +60,16 @@ import org.springframework.stereotype.Service;
 @Service
 public class TaskService {
 
+    private static final String DEFAULT_STATUS = "inprogress";
+    private static final Set<String> ALLOWED_STATUSES = Set.of(
+        "inprogress",
+        "done",
+        "notdone",
+        "canceled",
+        "partial",
+        "backlog"
+    );
+
     private final TaskRepository taskRepository;
     private final TaskLoadRepository taskLoadRepository;
     private final TaskAllocationRepository taskAllocationRepository;
@@ -252,6 +262,8 @@ public class TaskService {
             reorderTask(teamKey, entity, request.order());
         }
         entity.setUpdatedAt(LocalDate.now());
+        taskRepository.flush();
+        cleanupUnusedTaskReferenceValues(teamKey);
         TaskHistorySnapshot afterSnapshot = snapshotTask(entity);
         List<TaskHistoryChangeDto> changes = buildTaskUpdateChanges(beforeSnapshot, afterSnapshot);
         if (!changes.isEmpty()) {
@@ -280,6 +292,8 @@ public class TaskService {
         TaskHistorySnapshot beforeSnapshot = snapshotTask(entity);
         int order = entity.getDisplayOrder();
         taskRepository.delete(entity);
+        taskRepository.flush();
+        cleanupUnusedTaskReferenceValues(teamKey);
         taskRepository.decrementDisplayOrderAfter(teamKey, order);
         List<TaskHistoryChangeDto> changes = buildTaskUpdateChanges(beforeSnapshot, emptyTaskHistorySnapshot());
         if (!changes.isEmpty()) {
@@ -703,9 +717,10 @@ public class TaskService {
 
     private String normalizeStatus(String status) {
         if (status == null || status.isBlank()) {
-            return "inprogress";
+            return DEFAULT_STATUS;
         }
-        return status.trim().toLowerCase();
+        String normalized = status.trim().toLowerCase();
+        return ALLOWED_STATUSES.contains(normalized) ? normalized : DEFAULT_STATUS;
     }
 
     private void updateTaskCustomers(String teamKey, TaskEntity entity, List<String> customerNames) {
@@ -767,6 +782,17 @@ public class TaskService {
                 stream = taskStreamRepository.save(stream);
             }
             entity.getStreams().add(stream);
+        }
+    }
+
+    private void cleanupUnusedTaskReferenceValues(String teamKey) {
+        List<UUID> unusedStreamIds = taskStreamRepository.findUnusedIdsByTeamKey(teamKey);
+        if (!unusedStreamIds.isEmpty()) {
+            taskStreamRepository.deleteAllByIdInBatch(unusedStreamIds);
+        }
+        List<UUID> unusedCustomerIds = taskCustomerRepository.findUnusedIdsByTeamKey(teamKey);
+        if (!unusedCustomerIds.isEmpty()) {
+            taskCustomerRepository.deleteAllByIdInBatch(unusedCustomerIds);
         }
     }
 

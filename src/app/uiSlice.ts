@@ -6,6 +6,8 @@ export type UIState = {
     quarterId: string; // "all" | qid
     selectedQuarterIds: string[];
     withoutQuarterFilter: boolean;
+    withoutStreamFilter: boolean;
+    withoutCustomerFilter: boolean;
     releaseSprintFilter: string; // "all" | "" | releaseDateId
     priorityFilter: number[]; // [1,2,3]
     streamFilter: string[]; // multi-select
@@ -48,6 +50,7 @@ const BACKLOG_STATUSES: TaskStatus[] = [
   "notdone",
   "canceled",
   "partial",
+  "backlog",
 ];
 
 function defaultState(): UIState {
@@ -56,6 +59,8 @@ function defaultState(): UIState {
       quarterId: "all",
       selectedQuarterIds: [],
       withoutQuarterFilter: false,
+      withoutStreamFilter: false,
+      withoutCustomerFilter: false,
       releaseSprintFilter: "all",
       priorityFilter: [],
       streamFilter: [],
@@ -135,6 +140,14 @@ function sanitizeBacklog(
       typeof input?.withoutQuarterFilter === "boolean"
         ? input.withoutQuarterFilter
         : defaults.withoutQuarterFilter,
+    withoutStreamFilter:
+      typeof input?.withoutStreamFilter === "boolean"
+        ? input.withoutStreamFilter
+        : defaults.withoutStreamFilter,
+    withoutCustomerFilter:
+      typeof input?.withoutCustomerFilter === "boolean"
+        ? input.withoutCustomerFilter
+        : defaults.withoutCustomerFilter,
     priorityFilter,
     streamFilter,
     customerFilter,

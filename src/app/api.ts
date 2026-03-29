@@ -286,7 +286,7 @@ const buildExcelExportUrl = (state: any) => {
     quarterIds.length > 0 ? quarterIds : singleQuarter ? [singleQuarter] : [];
   const quarters = joinFilterValues(quarterFilter);
   if (quarters) params.set("quarterId", quarters);
-  if (backlog?.withoutQuarter) params.set("withoutQuarter", "true");
+  if (backlog?.withoutQuarterFilter) params.set("withoutQuarter", "true");
 
   const priorities = joinFilterValues(backlog?.priorityFilter);
   if (priorities) params.set("priority", priorities);
@@ -304,9 +304,11 @@ const buildExcelExportUrl = (state: any) => {
 
   const streams = joinFilterValues(backlog?.streamFilter);
   if (streams) params.set("stream", streams);
+  if (backlog?.withoutStreamFilter) params.set("withoutStream", "true");
 
   const customers = joinFilterValues(backlog?.customerFilter);
   if (customers) params.set("customer", customers);
+  if (backlog?.withoutCustomerFilter) params.set("withoutCustomer", "true");
 
   const search =
     typeof backlog?.searchQuery === "string" ? backlog.searchQuery.trim() : "";
@@ -934,6 +936,8 @@ export const api = createApi({
       | {
           quarterIds?: string[];
           withoutQuarter?: boolean;
+          withoutStream?: boolean;
+          withoutCustomer?: boolean;
           priority?: number[];
           statuses?: string[];
           releaseDateId?: string;
@@ -959,6 +963,8 @@ export const api = createApi({
         const quarters = joinOrUndefined(arg?.quarterIds);
         if (quarters) params.quarterId = quarters;
         if (arg?.withoutQuarter) params.withoutQuarter = "true";
+        if (arg?.withoutStream) params.withoutStream = "true";
+        if (arg?.withoutCustomer) params.withoutCustomer = "true";
 
         const priorities = joinOrUndefined(arg?.priority);
         if (priorities) params.priority = priorities;

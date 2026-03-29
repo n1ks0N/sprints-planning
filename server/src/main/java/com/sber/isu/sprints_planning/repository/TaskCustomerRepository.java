@@ -22,4 +22,17 @@ public interface TaskCustomerRepository extends JpaRepository<TaskCustomerEntity
 
     @Query("SELECT DISTINCT tc.name FROM TaskCustomerEntity tc WHERE tc.teamKey = :teamKey ORDER BY tc.name")
     List<String> findAllNamesByTeamKey(@Param("teamKey") String teamKey);
+
+    @Query("""
+        SELECT tc.id
+        FROM TaskCustomerEntity tc
+        WHERE tc.teamKey = :teamKey
+          AND NOT EXISTS (
+            SELECT t.id
+            FROM TaskEntity t
+            JOIN t.customers c
+            WHERE t.teamKey = :teamKey AND c.id = tc.id
+          )
+        """)
+    List<UUID> findUnusedIdsByTeamKey(@Param("teamKey") String teamKey);
 }

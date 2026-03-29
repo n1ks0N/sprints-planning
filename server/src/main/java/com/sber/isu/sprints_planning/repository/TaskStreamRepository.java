@@ -22,4 +22,17 @@ public interface TaskStreamRepository extends JpaRepository<TaskStreamEntity, UU
 
     @Query("SELECT DISTINCT ts.name FROM TaskStreamEntity ts WHERE ts.teamKey = :teamKey ORDER BY ts.name")
     List<String> findAllNamesByTeamKey(@Param("teamKey") String teamKey);
+
+    @Query("""
+        SELECT ts.id
+        FROM TaskStreamEntity ts
+        WHERE ts.teamKey = :teamKey
+          AND NOT EXISTS (
+            SELECT t.id
+            FROM TaskEntity t
+            JOIN t.streams s
+            WHERE t.teamKey = :teamKey AND s.id = ts.id
+          )
+        """)
+    List<UUID> findUnusedIdsByTeamKey(@Param("teamKey") String teamKey);
 }
