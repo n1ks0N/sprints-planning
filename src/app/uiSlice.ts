@@ -16,6 +16,8 @@ export type UIState = {
     searchQuery: string;
     tasksPageSize: string;
     hideAllParticipants: boolean;
+    sortBy: "manual" | "load" | "releaseDate" | "priority";
+    sortDirection: "asc" | "desc";
   };
   capacity: {
     selectedQuarterIds: string[];
@@ -69,6 +71,8 @@ function defaultState(): UIState {
       searchQuery: "",
       tasksPageSize: "20",
       hideAllParticipants: false,
+      sortBy: "manual",
+      sortDirection: "asc",
     },
     capacity: {
       selectedQuarterIds: [],
@@ -162,6 +166,17 @@ function sanitizeBacklog(
       typeof input?.hideAllParticipants === "boolean"
         ? input.hideAllParticipants
         : defaults.hideAllParticipants,
+    sortBy:
+      input?.sortBy === "load" ||
+      input?.sortBy === "releaseDate" ||
+      input?.sortBy === "priority" ||
+      input?.sortBy === "manual"
+        ? input.sortBy
+        : defaults.sortBy,
+    sortDirection:
+      input?.sortDirection === "desc" || input?.sortDirection === "asc"
+        ? input.sortDirection
+        : defaults.sortDirection,
   };
 }
 

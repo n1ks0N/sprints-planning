@@ -264,7 +264,9 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
                 cb.like(cb.lower(task.get("description")), like),
                 cb.like(cb.lower(task.get("dod")), like),
                 cb.like(cb.lower(task.get("customer")), like),
-                cb.like(cb.lower(task.get("stream")), like)
+                cb.like(cb.lower(task.get("stream")), like),
+                customerNameLike(query, cb, task, like),
+                streamNameLike(query, cb, task, like)
             ));
         }
 
@@ -416,6 +418,30 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
                 cb.isNotEmpty(subTask.get("customers"))
             );
         return cb.not(cb.exists(sub));
+    }
+
+    private Predicate customerNameLike(CriteriaQuery<?> query, CriteriaBuilder cb, Root<TaskEntity> task, String like) {
+        var sub = query.subquery(UUID.class);
+        Root<TaskEntity> subTask = sub.from(TaskEntity.class);
+        Join<TaskEntity, TaskCustomerEntity> customer = subTask.join("customers");
+        sub.select(subTask.get("id"))
+            .where(
+                cb.equal(subTask.get("id"), task.get("id")),
+                cb.like(cb.lower(customer.get("name")), like)
+            );
+        return cb.exists(sub);
+    }
+
+    private Predicate streamNameLike(CriteriaQuery<?> query, CriteriaBuilder cb, Root<TaskEntity> task, String like) {
+        var sub = query.subquery(UUID.class);
+        Root<TaskEntity> subTask = sub.from(TaskEntity.class);
+        Join<TaskEntity, TaskStreamEntity> stream = subTask.join("streams");
+        sub.select(subTask.get("id"))
+            .where(
+                cb.equal(subTask.get("id"), task.get("id")),
+                cb.like(cb.lower(stream.get("name")), like)
+            );
+        return cb.exists(sub);
     }
 
     private Predicate customerMatches(

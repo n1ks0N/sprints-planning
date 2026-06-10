@@ -1,19 +1,23 @@
 package com.sber.isu.sprints_planning.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 import com.sber.isu.sprints_planning.dto.TaskDto;
+import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationRequest;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
 import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
+import com.sber.isu.sprints_planning.model.TaskCustomerEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationId;
 import com.sber.isu.sprints_planning.model.TaskEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadId;
+import com.sber.isu.sprints_planning.model.TaskStreamEntity;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
 import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
@@ -33,11 +37,14 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 @ExtendWith(MockitoExtension.class)
 class TaskServiceAllocationTest {
@@ -85,7 +92,8 @@ class TaskServiceAllocationTest {
             new ApiHistoryService(
                 apiCallHistoryRepository,
                 new ApiActionDescriptionResolver(),
-                teamRepository
+                teamRepository,
+                Runnable::run
             )
         );
     }
@@ -147,6 +155,83 @@ class TaskServiceAllocationTest {
         assertThat(task.getLoads()).isEmpty();
     }
 
+    @Test
+    void upsertLoadRejectsTaskWithParticipants() {
+        TaskEntity task = task("11111111-1111-1111-1111-111111111111");
+        ParticipantEntity participant = participant("22222222-2222-2222-2222-222222222222");
+        task.getParticipants().add(participantLink(task, participant, "team-a"));
+        when(taskRepository.findByIdAndTeamKey(task.getId(), "team-a")).thenReturn(Optional.of(task));
+
+        assertThatThrownBy(() -> taskService.upsertLoad(
+            "team-a",
+            new com.sber.isu.sprints_planning.dto.request.TaskLoadRequest(
+                task.getId().toString(),
+                "33333333-3333-3333-3333-333333333333",
+                new BigDecimal("3")
+            )
+        ))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(error -> {
+                ResponseStatusException ex = (ResponseStatusException) error;
+                assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+            });
+    }
+
+    @Test
+    void createSynchronizesLegacyCustomerAndStreamFields() {
+        AtomicReference<TaskEntity> savedTask = new AtomicReference<>();
+        lenient().when(taskRepository.findMaxDisplayOrder("team-a")).thenReturn(0);
+        lenient().when(taskRepository.save(org.mockito.ArgumentMatchers.any(TaskEntity.class))).thenAnswer(invocation -> {
+            TaskEntity entity = invocation.getArgument(0);
+            if (entity.getId() == null) {
+                entity.setId(UUID.fromString("44444444-4444-4444-4444-444444444444"));
+            }
+            savedTask.set(entity);
+            return entity;
+        });
+        lenient().when(sprintRepository.findByTeamKeyOrderByQuarterAndOrder("team-a")).thenReturn(List.of());
+        lenient().when(taskJiraIssueRepository.findAllByTeamKeyAndTaskIdIn(
+            org.mockito.ArgumentMatchers.eq("team-a"),
+            org.mockito.ArgumentMatchers.anySet()
+        )).thenReturn(List.of());
+        when(taskCustomerRepository.findByNamesAndTeamKey(Set.of("B Customer", "A Customer"), "team-a")).thenReturn(List.of());
+        when(taskStreamRepository.findByNamesAndTeamKey(Set.of("B Stream", "A Stream"), "team-a")).thenReturn(List.of());
+        when(taskCustomerRepository.save(org.mockito.ArgumentMatchers.any(TaskCustomerEntity.class))).thenAnswer(invocation -> {
+            TaskCustomerEntity entity = invocation.getArgument(0);
+            entity.setId(UUID.randomUUID());
+            return entity;
+        });
+        when(taskStreamRepository.save(org.mockito.ArgumentMatchers.any(TaskStreamEntity.class))).thenAnswer(invocation -> {
+            TaskStreamEntity entity = invocation.getArgument(0);
+            entity.setId(UUID.randomUUID());
+            return entity;
+        });
+
+        taskService.create("team-a", new TaskCreateRequest(
+            "Task",
+            "Desc",
+            "DoD",
+            (short) 2,
+            "inprogress",
+            List.of("B Customer", "A Customer"),
+            List.of("B Stream", "A Stream"),
+            List.of(),
+            List.of(),
+            List.of(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+        ));
+
+        assertThat(savedTask.get()).isNotNull();
+        assertThat(savedTask.get().getCustomer()).isEqualTo("A Customer");
+        assertThat(savedTask.get().getStream()).isEqualTo("A Stream");
+    }
+
     private void commonTaskStubs(TaskEntity task, SprintEntity sprint) {
         when(taskRepository.findByIdAndTeamKey(task.getId(), "team-a")).thenReturn(Optional.of(task));
         when(sprintRepository.findByTeamKeyOrderByQuarterAndOrder("team-a")).thenReturn(List.of(sprint));
@@ -177,6 +262,20 @@ class TaskServiceAllocationTest {
         entity.setUpdatedAt(LocalDate.of(2026, 1, 1));
         entity.setTeamKey("team-a");
         return entity;
+    }
+
+    private com.sber.isu.sprints_planning.model.TaskParticipantEntity participantLink(
+        TaskEntity task,
+        ParticipantEntity participant,
+        String teamKey
+    ) {
+        com.sber.isu.sprints_planning.model.TaskParticipantEntity link =
+            new com.sber.isu.sprints_planning.model.TaskParticipantEntity();
+        link.setId(new com.sber.isu.sprints_planning.model.TaskParticipantId(task.getId(), participant.getId()));
+        link.setTask(task);
+        link.setParticipant(participant);
+        link.setTeamKey(teamKey);
+        return link;
     }
 
     private ParticipantEntity participant(String id) {

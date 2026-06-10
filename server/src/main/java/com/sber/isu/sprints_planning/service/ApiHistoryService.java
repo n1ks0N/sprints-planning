@@ -7,6 +7,7 @@ import com.sber.isu.sprints_planning.dto.TaskHistoryItemDto;
 import com.sber.isu.sprints_planning.mapper.DtoMapper;
 import com.sber.isu.sprints_planning.model.ApiCallHistoryEntity;
 import com.sber.isu.sprints_planning.repository.ApiCallHistoryRepository;
+import com.sber.isu.sprints_planning.repository.ApiHistorySessionSummaryProjection;
 import com.sber.isu.sprints_planning.util.ApiActionDescriptionResolver;
 import com.sber.isu.sprints_planning.repository.TeamRepository;
 import jakarta.servlet.http.HttpServletRequest;
@@ -19,8 +20,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -39,32 +43,59 @@ public class ApiHistoryService {
     private final ApiCallHistoryRepository historyRepository;
     private final ApiActionDescriptionResolver actionDescriptionResolver;
     private final TeamRepository teamRepository;
+    private final Executor apiHistoryExecutor;
+    private final java.util.Set<String> teamsBeingDeleted = ConcurrentHashMap.newKeySet();
 
     public ApiHistoryService(ApiCallHistoryRepository historyRepository,
         ApiActionDescriptionResolver actionDescriptionResolver,
-        TeamRepository teamRepository) {
+        TeamRepository teamRepository,
+        @Qualifier("apiHistoryExecutor") Executor apiHistoryExecutor) {
         this.historyRepository = historyRepository;
         this.actionDescriptionResolver = actionDescriptionResolver;
         this.teamRepository = teamRepository;
+        this.apiHistoryExecutor = apiHistoryExecutor;
     }
 
-    @Transactional
-    public void log(HttpServletRequest request, int statusCode) {
-        String sessionId = request.getHeader("X-Session-Id");
-        String userName = decodeUserName(request.getHeader("X-User-Name"));
+    public void logAsync(
+        String httpMethod,
+        String requestUri,
+        String contextPath,
+        String sessionId,
+        String rawUserName,
+        int statusCode
+    ) {
+        String userName = decodeUserName(rawUserName);
         if (sessionId == null || sessionId.isBlank()) {
             return;
         }
+        ApiCallLogEntry entry = new ApiCallLogEntry(
+            sessionId,
+            userName,
+            httpMethod,
+            extractPath(requestUri, contextPath),
+            statusCode
+        );
+        try {
+            apiHistoryExecutor.execute(() -> persistApiCall(entry));
+        } catch (RuntimeException e) {
+            logger.warn("Failed to enqueue API call history persistence", e);
+        }
+    }
 
-        String teamKey = resolveTeamKey(request);
+    @Transactional
+    private void persistApiCall(ApiCallLogEntry entry) {
+        String teamKey = resolveTeamKey(entry.path());
+        if (teamKey != null && teamsBeingDeleted.contains(teamKey)) {
+            return;
+        }
 
         ApiCallHistoryEntity entity = new ApiCallHistoryEntity();
-        entity.setSessionId(sessionId);
-        entity.setUserName(userName == null || userName.isBlank() ? "unknown" : userName);
-        entity.setHttpMethod(request.getMethod());
-        entity.setPath(extractPath(request));
+        entity.setSessionId(entry.sessionId());
+        entity.setUserName(entry.userName() == null || entry.userName().isBlank() ? "unknown" : entry.userName());
+        entity.setHttpMethod(entry.httpMethod());
+        entity.setPath(entry.path());
         entity.setAction(actionDescriptionResolver.resolve(entity.getHttpMethod(), entity.getPath()));
-        entity.setStatusCode(statusCode);
+        entity.setStatusCode(entry.statusCode());
         entity.setCreatedAt(OffsetDateTime.now());
         entity.setTeamKey(teamKey);
 
@@ -75,42 +106,55 @@ public class ApiHistoryService {
         }
     }
 
+    public void markTeamDeletionInProgress(String teamKey) {
+        if (teamKey == null || teamKey.isBlank()) {
+            return;
+        }
+        teamsBeingDeleted.add(teamKey);
+    }
+
+    public void clearTeamDeletionInProgress(String teamKey) {
+        if (teamKey == null || teamKey.isBlank()) {
+            return;
+        }
+        teamsBeingDeleted.remove(teamKey);
+    }
+
     @Transactional(readOnly = true)
     public List<ApiSessionHistoryDto> getHistory(String teamKey, int page, int size) {
-        List<ApiCallHistoryEntity> items = historyRepository.findAllByTeamKey(teamKey,
-            Sort.by(Sort.Direction.DESC, "createdAt"));
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, size);
+        Pageable pageable = PageRequest.of(safePage, safeSize);
+        Page<ApiHistorySessionSummaryProjection> summaryPage = historyRepository.findActionSessionSummaries(teamKey, pageable);
+        if (summaryPage.isEmpty()) {
+            return List.of();
+        }
 
-        List<ApiCallHistoryEntity> actions = items.stream()
-            .filter(this::isAction)
-            .sorted(Comparator.comparing(ApiCallHistoryEntity::getCreatedAt).reversed())
-            .toList();
-
-        List<ApiSessionHistoryDto> result = new ArrayList<>();
-        List<ApiCallHistoryEntity> current = new ArrayList<>();
-        String currentSession = null;
-        String currentUser = null;
-
+        LinkedHashMap<String, SessionSummary> orderedSessions = new LinkedHashMap<>();
+        for (ApiHistorySessionSummaryProjection summary : summaryPage.getContent()) {
+            orderedSessions.put(sessionKey(summary.getSessionId(), summary.getUserName()), new SessionSummary(
+                summary.getSessionId(),
+                summary.getUserName(),
+                summary.getLatestCreatedAt()
+            ));
+        }
+        List<ApiCallHistoryEntity> actions = historyRepository.findActionHistoryByTeamKeyAndSessionIds(
+            teamKey,
+            orderedSessions.values().stream().map(SessionSummary::sessionId).distinct().toList()
+        );
+        Map<String, List<ApiCallHistoryEntity>> actionsBySession = new LinkedHashMap<>();
+        orderedSessions.keySet().forEach(key -> actionsBySession.put(key, new ArrayList<>()));
         for (ApiCallHistoryEntity entity : actions) {
-            boolean sameGroup = currentSession != null
-                && currentUser != null
-                && currentSession.equals(entity.getSessionId())
-                && currentUser.equals(entity.getUserName());
-
-            if (!sameGroup && !current.isEmpty()) {
-                result.add(toSessionDto(current));
-                current = new ArrayList<>();
+            String key = sessionKey(entity.getSessionId(), entity.getUserName());
+            List<ApiCallHistoryEntity> sessionActions = actionsBySession.get(key);
+            if (sessionActions != null) {
+                sessionActions.add(entity);
             }
-
-            currentSession = entity.getSessionId();
-            currentUser = entity.getUserName();
-            current.add(entity);
         }
 
-        if (!current.isEmpty()) {
-            result.add(toSessionDto(current));
-        }
-
-        return paginate(result, page, size);
+        return orderedSessions.entrySet().stream()
+            .map(entry -> toSessionDto(entry.getValue(), actionsBySession.getOrDefault(entry.getKey(), List.of())))
+            .toList();
     }
 
     @Transactional(readOnly = true)
@@ -226,7 +270,10 @@ public class ApiHistoryService {
         }
     }
 
-    private ApiSessionHistoryDto toSessionDto(List<ApiCallHistoryEntity> entities) {
+    private ApiSessionHistoryDto toSessionDto(SessionSummary summary, List<ApiCallHistoryEntity> entities) {
+        if (entities.isEmpty()) {
+            return new ApiSessionHistoryDto(summary.sessionId(), summary.userName(), summary.latestCreatedAt(), List.of());
+        }
         List<ApiCallHistoryEntity> sorted = entities.stream()
             .sorted(Comparator.comparing(ApiCallHistoryEntity::getCreatedAt).reversed())
             .toList();
@@ -281,24 +328,6 @@ public class ApiHistoryService {
         }
         return left.getHttpMethod().equalsIgnoreCase(right.getHttpMethod())
             && left.getPath().equalsIgnoreCase(right.getPath());
-    }
-
-    private List<ApiSessionHistoryDto> paginate(List<ApiSessionHistoryDto> sessions, int page, int size) {
-        int safePage = Math.max(0, page);
-        int safeSize = Math.max(1, size);
-        int fromIndex = safePage * safeSize;
-        if (fromIndex >= sessions.size()) {
-            return List.of();
-        }
-        int toIndex = Math.min(sessions.size(), fromIndex + safeSize);
-        return new ArrayList<>(sessions.subList(fromIndex, toIndex));
-    }
-
-    private boolean isAction(ApiCallHistoryEntity entity) {
-        if ("GET".equalsIgnoreCase(entity.getHttpMethod())) {
-            return false;
-        }
-        return entity.getEntityType() == null || entity.getEntityType().isBlank();
     }
 
     private TaskHistoryItemDto toTaskHistoryItemDto(ApiCallHistoryEntity entity) {
@@ -380,16 +409,20 @@ public class ApiHistoryService {
     }
 
     private String extractPath(HttpServletRequest request) {
-        String contextPath = request.getContextPath();
-        String uri = request.getRequestURI();
+        return extractPath(request.getRequestURI(), request.getContextPath());
+    }
+
+    private String extractPath(String uri, String contextPath) {
+        if (uri == null) {
+            return null;
+        }
         if (contextPath != null && !contextPath.isBlank() && uri.startsWith(contextPath)) {
             return uri.substring(contextPath.length());
         }
         return uri;
     }
 
-    private String resolveTeamKey(HttpServletRequest request) {
-        String path = extractPath(request);
+    private String resolveTeamKey(String path) {
         if (path == null) {
             return null;
         }
@@ -428,5 +461,25 @@ public class ApiHistoryService {
             || normalized.equals("v3")
             || normalized.equals("api-docs")
             || normalized.equals("actuator");
+    }
+
+    private String sessionKey(String sessionId, String userName) {
+        return (sessionId == null ? "" : sessionId) + '\u0000' + (userName == null ? "" : userName);
+    }
+
+    private record ApiCallLogEntry(
+        String sessionId,
+        String userName,
+        String httpMethod,
+        String path,
+        int statusCode
+    ) {
+    }
+
+    private record SessionSummary(
+        String sessionId,
+        String userName,
+        OffsetDateTime latestCreatedAt
+    ) {
     }
 }

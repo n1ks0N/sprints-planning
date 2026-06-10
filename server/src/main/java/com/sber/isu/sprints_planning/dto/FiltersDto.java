@@ -8,7 +8,9 @@ public record FiltersDto(
     List<Integer> priorities,
     List<String> streams,
     List<String> customers,
-    List<ReleaseOption> releases
+    List<ReleaseOption> releases,
+    List<String> participantRoles,
+    List<String> participantStreams
 ) {
     public record QuarterOption(String id, String name) {}
     public record ReleaseOption(String id, String promDate) {}

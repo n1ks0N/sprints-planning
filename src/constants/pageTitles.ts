@@ -8,6 +8,7 @@ export const PAGE_TITLES = {
   team: "Участники",
   releases: "Релизы",
   history: "История",
+  planning: "Планирование",
   teams: "Команды",
 } as const;
 

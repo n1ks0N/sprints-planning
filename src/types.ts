@@ -74,6 +74,37 @@ export type TaskStatus =
   | "partial"
   | "backlog";
 
+export type PlanningDemandKind = "ROLE" | "PARTICIPANT";
+
+export type PlanningDemand = {
+  kind: PlanningDemandKind;
+  role?: string | null;
+  participantId?: string | null;
+  stream?: string | null;
+  days: number;
+};
+
+export type PlanningWorkbenchItem = {
+  id: string;
+  title: string;
+  description: string;
+  dod: string;
+  priority: TaskPriority;
+  customers: string[];
+  streams: string[];
+  estimateDays: number;
+  planningDemands: PlanningDemand[];
+  planningQuarterIds: string[];
+  planningSprintIds: string[];
+  loads: Record<string, number>;
+  allocations: Record<string, Record<string, number>>;
+  releaseDateId?: string | null;
+  initialQuarterId?: string | null;
+  order?: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type BacklogItem = {
   id: string;
   title: string;
@@ -84,6 +115,8 @@ export type BacklogItem = {
   customers: string[];
   streams: string[];
   participantIds: string[];
+  planningQuarterIds?: string[];
+  planningSprintIds?: string[];
   loads: Record<string, number>;
   allocations?: Record<string, Record<string, number>>;
   notes?: Record<string, string>;
@@ -249,6 +282,46 @@ export type JiraExportBatchStatus = {
   items: JiraExportBatchItem[];
 };
 
+export type PlanningParticipantLoadCell = {
+  participantId: string;
+  sprintId: string;
+  capacity: number;
+  committed: number;
+  draft: number;
+  total: number;
+  overload: number;
+  free: number;
+};
+
+export type PlanningParticipantLoadRow = {
+  participant: Participant;
+  cells: PlanningParticipantLoadCell[];
+  totalCapacity: number;
+  totalCommitted: number;
+  totalDraft: number;
+  totalLoad: number;
+  totalOverload: number;
+  totalFree: number;
+};
+
+export type PlanningSolveSummary = {
+  taskCount: number;
+  participantCount: number;
+  plannedDays: number;
+  unplannedDays: number;
+  overloadedCells: number;
+};
+
+export type PlanningWorkbenchPreview = {
+  selectedItemIds: string[];
+  sprintIds: string[];
+  summary: PlanningSolveSummary;
+  warnings: string[];
+  items: PlanningWorkbenchItem[];
+  participantSummary: PlanningParticipantLoadRow[];
+  canApply: boolean;
+};
+
 export type Team = {
   key: string;
   name: string;
@@ -261,4 +334,6 @@ export type FiltersData = {
   streams: string[];
   customers: string[];
   releases: { id: string; promDate: string }[];
+  participantRoles: string[];
+  participantStreams: string[];
 };

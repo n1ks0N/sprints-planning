@@ -27,6 +27,8 @@ import BacklogPage from "./BacklogPage";
 import ParticipantWorkloadPage from "./ParticipantWorkloadPage";
 import ReleasesPage from "./ReleasesPage";
 import HistoryPage from "./HistoryPage";
+import PlanningWorkbenchPage from "./PlanningWorkbenchPage";
+import PlanningWorkbenchReviewPage from "./PlanningWorkbenchReviewPage";
 import { useDispatch, useSelector, useStore } from "react-redux";
 import { undoLast } from "../app/undoSlice";
 import { exportExcelFile } from "../app/api";
@@ -94,6 +96,10 @@ function TeamScopedApp() {
   const isBacklogPage = normalizedPathSuffix === "/";
 
   const teamScopedPageTitle = React.useMemo(() => {
+    if (normalizedPathSuffix.startsWith("/planning")) {
+      return PAGE_TITLES.planning;
+    }
+
     const titleMap: Record<string, string> = {
       "/": PAGE_TITLES.backlog,
       "/capacity": PAGE_TITLES.capacity,
@@ -108,6 +114,24 @@ function TeamScopedApp() {
   }, [normalizedPathSuffix]);
 
   const helpContent = React.useMemo<PageHelpContent>(() => {
+    if (normalizedPathSuffix.startsWith("/planning")) {
+      return {
+        title: "Справка: Планирование",
+        description:
+          "Отдельная рабочая страница для ведения planning backlog и массового автораспределения нагрузки перед публикацией реальных задач по спринтам.",
+        bullets: [
+          "Слева показывается отдельный planning backlog из специальной таблицы, а не live-задачи со страницы бэклога.",
+          "Справа собирается текущий набор для расчета: задачи переносятся кнопками, а не drag-and-drop.",
+          "Кнопки «Все в план» и «Все убрать» массово собирают или очищают текущий набор.",
+          "Сверху доступны фильтр по кварталу и сортировки по порядку, нагрузке, дате реализации и приоритету.",
+          "В planning-диалоге задаются только общие параметры: приоритет, стартовый квартал, релиз, заказчики, стримы и demand-строки по ролям или участникам.",
+          "Нагрузка по спринтам на этой странице не редактируется. Она появляется только на review-странице после автораспределения.",
+          "Кнопка автораспределения открывает review-страницу с матрицей нагрузки, предупреждениями и итоговой загрузкой участников.",
+          "До подтверждения никакие live-задачи в backlog не создаются и не меняются.",
+        ],
+      };
+    }
+
     const contentMap: Record<string, PageHelpContent> = {
       "/": {
         title: "Справка: Бэклог",
@@ -324,6 +348,9 @@ function TeamScopedAppContent({
             <Button component={Link} to={buildPath("/releases")}>
               Релизы
             </Button>
+            <Button component={Link} to={buildPath("/planning")}>
+              Планирование
+            </Button>
             <Button component={Link} to={buildPath("/history")}>
               История
             </Button>
@@ -402,6 +429,8 @@ function TeamScopedAppContent({
           <Route path="team" element={<TeamPage />} />
           <Route path="capacity" element={<CapacityPage />} />
           <Route path="/" element={<BacklogPage />} />
+          <Route path="planning" element={<PlanningWorkbenchPage />} />
+          <Route path="planning/review" element={<PlanningWorkbenchReviewPage />} />
           <Route
             path="participant-work"
             element={<ParticipantWorkloadPage />}

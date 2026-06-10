@@ -17,7 +17,6 @@ import {
   useGetQuartersQuery,
   useGetSprintsQuery,
   useGetCapacityQuery,
-  useGetTasksQuery,
   useUpsertTaskAllocationMutation,
 } from "../app/api";
 import EditableNumberCell from "../components/EditableNumberCell";
@@ -31,6 +30,10 @@ import { setParticipantWorkloadFilters } from "../app/uiSlice";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import { selectCurrentTeamKey } from "../app/teamSlice";
+
+type TasksPage = {
+  content?: BacklogItem[];
+};
 
 function byStart(a: Sprint, b: Sprint) {
   return a.startDate.localeCompare(b.startDate);
@@ -63,26 +66,107 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   return true;
 }
 
+function buildTasksSearchParams(arg: {
+  quarterIds?: string[];
+  priority?: number[];
+  participantIds?: string[];
+  roles?: string[];
+  userStreams?: string[];
+  streams?: string[];
+}) {
+  const params = new URLSearchParams();
+  const joinOrUndefined = (values?: string[] | number[]) => {
+    const normalized = (values || [])
+      .map((value) => String(value).trim())
+      .filter(Boolean);
+    return normalized.length > 0 ? normalized.join(",") : undefined;
+  };
+
+  const quarters = joinOrUndefined(arg.quarterIds);
+  if (quarters) params.set("quarterId", quarters);
+
+  const priorities = joinOrUndefined(arg.priority);
+  if (priorities) params.set("priority", priorities);
+
+  const participantIds = joinOrUndefined(arg.participantIds);
+  if (participantIds) params.set("participantId", participantIds);
+
+  const roles = joinOrUndefined(arg.roles);
+  if (roles) params.set("role", roles);
+
+  const userStreams = joinOrUndefined(arg.userStreams);
+  if (userStreams) params.set("userStream", userStreams);
+
+  const streams = joinOrUndefined(arg.streams);
+  if (streams) params.set("stream", streams);
+
+  return params;
+}
+
 export default function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
   const currentTeamKey = useAppSelector(selectCurrentTeamKey);
   const ui = useAppSelector((s) => s.ui.participantWorkload);
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [allocations, setAllocations] = React.useState<Allocations>({});
+  const [tasks, setTasks] = React.useState<BacklogItem[]>([]);
+  const [tasksError, setTasksError] = React.useState("");
 
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: participants = [] } = useGetParticipantsQuery();
   const { data: sprintsData = [] } = useGetSprintsQuery(undefined);
   const allSprints = sprintsData;
-  const { data: tasksPage } = useGetTasksQuery({
-    quarterIds: ui.selectedQuarterIds,
-    participantIds: ui.selectedParticipantIds,
-    roles: ui.rolesFilter,
-    userStreams: ui.userStreamsFilter,
-    priority: ui.priorityFilter,
-    streams: ui.taskStreamFilter ? [ui.taskStreamFilter] : undefined,
-  });
-  const tasks: BacklogItem[] = tasksPage?.content ?? [];
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const loadTasks = async () => {
+      try {
+        setTasksError("");
+        const baseUrl = process.env.API_URL || "/api/v1/sprints-planning";
+        const params = buildTasksSearchParams({
+          quarterIds: ui.selectedQuarterIds,
+          participantIds: ui.selectedParticipantIds,
+          roles: ui.rolesFilter,
+          userStreams: ui.userStreamsFilter,
+          priority: ui.priorityFilter,
+          streams: ui.taskStreamFilter ? [ui.taskStreamFilter] : undefined,
+        });
+        const query = params.toString();
+        const response = await fetch(
+          `${baseUrl}/${currentTeamKey}/tasks${query ? `?${query}` : ""}`
+        );
+        if (!response.ok) {
+          throw new Error("Не удалось загрузить задачи");
+        }
+        const data = (await response.json()) as TasksPage;
+
+        if (!cancelled) {
+          setTasks(Array.isArray(data.content) ? data.content : []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Не удалось загрузить все задачи для страницы по сотрудникам", error);
+          setTasks([]);
+          setTasksError("Не удалось загрузить задачи по текущим фильтрам");
+        }
+      }
+    };
+
+    void loadTasks();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentTeamKey,
+    ui.priorityFilter,
+    ui.rolesFilter,
+    ui.selectedParticipantIds,
+    ui.selectedQuarterIds,
+    ui.taskStreamFilter,
+    ui.userStreamsFilter,
+  ]);
 
   const sprintsInScope = React.useMemo(() => {
     const selected = new Set(ui.selectedQuarterIds);
@@ -210,15 +294,10 @@ export default function ParticipantWorkloadPage() {
     ui.userStreamsFilter,
   ]);
 
-  const capacityParticipantIds = React.useMemo(
-    () => participantsInScope.map((p) => p.id),
-    [participantsInScope]
-  );
-
   const { data: capacityRows = [] } = useGetCapacityQuery({
     quarterIds: ui.selectedQuarterIds.length ? ui.selectedQuarterIds : undefined,
-    participantIds: capacityParticipantIds.length
-      ? capacityParticipantIds
+    participantIds: ui.selectedParticipantIds.length
+      ? ui.selectedParticipantIds
       : undefined,
     roles: ui.rolesFilter.length ? ui.rolesFilter : undefined,
     userStreams: ui.userStreamsFilter.length ? ui.userStreamsFilter : undefined,
@@ -470,6 +549,9 @@ export default function ParticipantWorkloadPage() {
       />
 
       <Stack spacing={2}>
+        {tasksError && (
+          <Typography sx={{ color: "error.main" }}>{tasksError}</Typography>
+        )}
         {participantsInScope.map((p) => {
           const rows = getRowsForParticipant(p.id);
           const totalsBySprint = sprintsInScope.map((_, idx) =>

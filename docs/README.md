@@ -7,6 +7,9 @@ This directory is the top-level documentation entry point for the project.
 - `docs/architecture.md`
   General project architecture: frontend, backend, data model, and major runtime flows.
 
+- `docs/planning-workbench-overview.md`
+  Product-level overview of the current planning workbench, global auto-distribution workflow over the separate planning backlog, and the automated test contours for planning.
+
 - `server/docs/README.md`
   Backend documentation index.
 
@@ -14,7 +17,7 @@ This directory is the top-level documentation entry point for the project.
   Detailed description of how tasks, loads, allocations, and capacity currently work.
 
 - `server/docs/task-auto-distribution-design.md`
-  Proposed backend design for smart task auto-distribution.
+  Detailed backend design for planning workbench auto-distribution and solver integration.
 
 ## Documentation rules
 

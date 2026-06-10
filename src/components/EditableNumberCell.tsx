@@ -6,6 +6,7 @@ export type EditableNumberCellProps = {
   onChange: (next: number) => void;
   onCommit?: (next: number) => void;
   title?: string;
+  dataTestId?: string;
 };
 
 const toInt = (value: number) =>
@@ -16,6 +17,7 @@ export default function EditableNumberCell({
   onChange,
   onCommit,
   title,
+  dataTestId,
 }: EditableNumberCellProps) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(value ?? 0);
@@ -64,6 +66,7 @@ export default function EditableNumberCell({
         }}
         title={title || "Клик для редактирования"}
         onClick={handleStart}
+        data-testid={dataTestId}
       >
         <Typography component="span">{toInt(value)}</Typography>
       </Box>
@@ -113,6 +116,7 @@ export default function EditableNumberCell({
           id: inputId,
           name: title || "allocation-value",
           "aria-label": title || "Значение нагрузки",
+          "data-testid": dataTestId,
         }}
       />
     </Box>

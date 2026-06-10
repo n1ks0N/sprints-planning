@@ -11,12 +11,17 @@ public class TeamCleanupService {
     private final JdbcTemplate jdbcTemplate;
 
     private static final List<String> TEAM_TABLES = List.of(
+        "planning_backlog_items",
         "jira_export_batches",
         "task_jira_issues",
         "task_allocations",
         "task_loads",
         "task_participants",
         "tasks",
+        "task_customers",
+        "task_streams",
+        "participant_role_values",
+        "participant_stream_values",
         "releases",
         "api_call_history",
         "participants",

@@ -15,6 +15,9 @@ import type {
   TaskHistoryItem,
   Team,
   FiltersData,
+  PlanningWorkbenchPreview,
+  PlanningWorkbenchItem,
+  PlanningDemand,
 } from "../types";
 import { DEFAULT_TEAM_KEY } from "../teams";
 import { selectCurrentTeamKey } from "./teamSlice";
@@ -465,6 +468,8 @@ const TASK_LIST_AFFECTING_FIELDS = new Set([
   "streams",
   "customers",
   "participantIds",
+  "planningQuarterIds",
+  "planningSprintIds",
   "title",
   "description",
   "dod",
@@ -482,6 +487,7 @@ export const api = createApi({
     "Participant",
     "Capacity",
     "Task",
+    "PlanningItem",
     "Release",
     "History",
     "Team",
@@ -1063,6 +1069,171 @@ export const api = createApi({
         { type: "Task" as const, id: "LIST" as const },
       ],
     }),
+    getPlanningWorkbenchBacklog: b.query<PlanningWorkbenchItem[], void>({
+      query: () => ({ url: "/planning-workbench/backlog", method: "GET" }),
+      providesTags: (result) =>
+        result
+          ? [
+              { type: "PlanningItem" as const, id: "LIST" as const },
+              ...result.map((item) => ({ type: "PlanningItem" as const, id: item.id })),
+            ]
+          : [{ type: "PlanningItem" as const, id: "LIST" as const }],
+    }),
+    addPlanningWorkbenchItem: b.mutation<
+      PlanningWorkbenchItem,
+      {
+        title: string;
+        description?: string;
+        dod?: string;
+        priority: 1 | 2 | 3;
+        customers: string[];
+        streams: string[];
+        planningDemands: PlanningDemand[];
+        releaseDateId?: string | null;
+        initialQuarterId?: string | null;
+        planningQuarterIds?: string[];
+        planningSprintIds?: string[];
+        order?: number;
+      }
+    >({
+      query: (body) => ({ url: "/planning-workbench/items", method: "POST", body }),
+      invalidatesTags: () => [{ type: "PlanningItem" as const, id: "LIST" as const }],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getPlanningWorkbenchBacklog", undefined, (draft) => {
+              const index = draft.findIndex((item) => item.id === data.id);
+              if (index >= 0) {
+                draft[index] = data;
+              } else {
+                draft.push(data);
+              }
+              draft.sort((left, right) => (left.order || 0) - (right.order || 0));
+            })
+          );
+        } catch (error) {
+          notifyError("Не удалось создать задачу для планирования", error);
+        }
+      },
+    }),
+    updatePlanningWorkbenchItem: b.mutation<
+      PlanningWorkbenchItem,
+      {
+        id: string;
+        title: string;
+        description?: string;
+        dod?: string;
+        priority: 1 | 2 | 3;
+        customers: string[];
+        streams: string[];
+        planningDemands: PlanningDemand[];
+        releaseDateId?: string | null;
+        initialQuarterId?: string | null;
+        planningQuarterIds?: string[];
+        planningSprintIds?: string[];
+        order?: number;
+      }
+    >({
+      query: ({ id, ...body }) => ({ url: `/planning-workbench/items/${id}`, method: "PUT", body }),
+      invalidatesTags: (_result, _error, arg) => [
+        { type: "PlanningItem" as const, id: arg.id },
+        { type: "PlanningItem" as const, id: "LIST" as const },
+      ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(
+            api.util.updateQueryData("getPlanningWorkbenchBacklog", undefined, (draft) => {
+              const index = draft.findIndex((item) => item.id === data.id);
+              if (index >= 0) {
+                draft[index] = data;
+              }
+            })
+          );
+        } catch (error) {
+          notifyError("Не удалось обновить задачу для планирования", error);
+        }
+      },
+    }),
+    deletePlanningWorkbenchItem: b.mutation<void, string>({
+      query: (id) => ({ url: `/planning-workbench/items/${id}`, method: "DELETE" }),
+      invalidatesTags: (_result, _error, id) => [
+        { type: "PlanningItem" as const, id },
+        { type: "PlanningItem" as const, id: "LIST" as const },
+      ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData("getPlanningWorkbenchBacklog", undefined, (draft) => {
+            const index = draft.findIndex((item) => item.id === arg);
+            if (index >= 0) {
+              draft.splice(index, 1);
+            }
+          })
+        );
+        try {
+          await queryFulfilled;
+        } catch (error) {
+          patch.undo();
+          notifyError("Не удалось удалить задачу из планирования", error);
+        }
+      },
+    }),
+    previewPlanningWorkbench: b.mutation<
+      PlanningWorkbenchPreview,
+      { plannerType: "ALGORITHM" | "AI"; itemIds: string[] }
+    >({
+      query: (body) => ({ url: "/planning-workbench/preview", method: "POST", body }),
+      async onQueryStarted(arg, { queryFulfilled }) {
+        try {
+          await queryFulfilled;
+        } catch (error) {
+          notifyError("Не удалось построить автораспределение", error);
+        }
+      },
+    }),
+    applyPlanningWorkbench: b.mutation<
+      BacklogItem[],
+      {
+        itemIds: string[];
+        allocations: Record<string, Record<string, Record<string, number>>>;
+        itemPatches?: Record<
+          string,
+          {
+            title: string;
+            description?: string;
+            dod?: string;
+            priority: 1 | 2 | 3;
+            status?: string;
+            customers: string[];
+            streams: string[];
+            participantIds?: string[];
+            planningDemands?: PlanningDemand[];
+            releaseDateId?: string | null;
+            initialQuarterId?: string | null;
+            planningQuarterIds?: string[];
+            planningSprintIds?: string[];
+            notes?: Record<string, string>;
+            leaderId?: string | null;
+            order?: number;
+          }
+        >;
+      }
+    >({
+      query: (body) => ({ url: "/planning-workbench/apply", method: "POST", body }),
+      invalidatesTags: () => [
+        { type: "Task" as const, id: "LIST" as const },
+        { type: "PlanningItem" as const, id: "LIST" as const },
+        { type: "Capacity" as const, id: "LIST" as const },
+      ],
+      async onQueryStarted(arg, { queryFulfilled }) {
+        try {
+          await queryFulfilled;
+        } catch (error) {
+          notifyError("Не удалось применить распределение", error);
+        }
+      },
+    }),
     getTaskHistory: b.query<
       Page<TaskHistoryItem>,
       { taskId: string; page: number; size: number }
@@ -1136,6 +1307,12 @@ export const api = createApi({
           streams: Array.isArray(arg.streams) ? [...arg.streams] : [],
           participantIds: Array.isArray(arg.participantIds)
             ? [...arg.participantIds]
+            : [],
+          planningQuarterIds: Array.isArray(arg.planningQuarterIds)
+            ? [...arg.planningQuarterIds]
+            : [],
+          planningSprintIds: Array.isArray(arg.planningSprintIds)
+            ? [...arg.planningSprintIds]
             : [],
           loads: { ...(arg.loads || {}) },
           allocations: arg.allocations ? { ...arg.allocations } : undefined,
@@ -1698,6 +1875,12 @@ export const {
   useGetTaskQuery,
   useGetTaskHistoryQuery,
   useGetTasksQuery,
+  useGetPlanningWorkbenchBacklogQuery,
+  useAddPlanningWorkbenchItemMutation,
+  useUpdatePlanningWorkbenchItemMutation,
+  useDeletePlanningWorkbenchItemMutation,
+  usePreviewPlanningWorkbenchMutation,
+  useApplyPlanningWorkbenchMutation,
   useExportJiraIssuesMutation,
   useGetJiraExportBatchQuery,
   useConfirmJiraIssueCreatedMutation,

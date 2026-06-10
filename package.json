@@ -5,8 +5,12 @@
   "scripts": {
     "dev:local": "cross-env API_URL=/api/v1/sprints-planning webpack serve --mode development --open",
     "dev:remote": "webpack serve --mode development --open",
+    "dev:e2e": "cross-env API_URL=/api/v1/sprints-planning webpack serve --mode development --port 4173",
     "build": "webpack --config webpack.build.js --mode production",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "e2e": "playwright test",
+    "e2e:real": "playwright test --config playwright.real.config.ts",
+    "e2e:headed": "playwright test --headed"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -27,6 +31,7 @@
     "react-router-dom": "^6.26.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/moment": "^2.11.29",
     "@types/node": "^22.7.5",
     "@types/react-dom": "^18.3.7",

@@ -48,8 +48,8 @@ public class TaskController {
         @RequestParam(value = "userStream", required = false) String userStream,
         @RequestParam(value = "withoutQuarter", required = false) String withoutQuarter,
         @RequestParam(value = "id", required = false) String pinnedTaskId,
-        @RequestParam(value = "page", required = false) Integer page,
-        @RequestParam(value = "size", required = false) Integer size) {
+        @RequestParam(value = "page", defaultValue = "0") Integer page,
+        @RequestParam(value = "size", defaultValue = "50") Integer size) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
         TaskFilter filter = TaskFilter.from(
             quarterId,

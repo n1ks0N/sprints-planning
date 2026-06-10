@@ -28,6 +28,13 @@ public class ApiCallLoggingFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
         FilterChain filterChain) throws ServletException, IOException {
         filterChain.doFilter(request, response);
-        apiHistoryService.log(request, response.getStatus());
+        apiHistoryService.logAsync(
+            request.getMethod(),
+            request.getRequestURI(),
+            request.getContextPath(),
+            request.getHeader("X-Session-Id"),
+            request.getHeader("X-User-Name"),
+            response.getStatus()
+        );
     }
 }

@@ -15,7 +15,9 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -79,6 +81,14 @@ public class TaskEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "initial_quarter_id")
     private QuarterEntity initialQuarter;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "planning_quarter_ids", columnDefinition = "jsonb")
+    private List<UUID> planningQuarterIds = new ArrayList<>();
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "planning_sprint_ids", columnDefinition = "jsonb")
+    private List<UUID> planningSprintIds = new ArrayList<>();
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
@@ -205,6 +215,22 @@ public class TaskEntity {
         this.initialQuarter = initialQuarter;
     }
 
+    public List<UUID> getPlanningQuarterIds() {
+        return planningQuarterIds;
+    }
+
+    public void setPlanningQuarterIds(List<UUID> planningQuarterIds) {
+        this.planningQuarterIds = planningQuarterIds;
+    }
+
+    public List<UUID> getPlanningSprintIds() {
+        return planningSprintIds;
+    }
+
+    public void setPlanningSprintIds(List<UUID> planningSprintIds) {
+        this.planningSprintIds = planningSprintIds;
+    }
+
     public Map<UUID, String> getNotes() {
         return notes;
     }
@@ -284,6 +310,12 @@ public class TaskEntity {
         }
         if (status == null) {
             status = DEFAULT_STATUS;
+        }
+        if (planningQuarterIds == null) {
+            planningQuarterIds = new ArrayList<>();
+        }
+        if (planningSprintIds == null) {
+            planningSprintIds = new ArrayList<>();
         }
     }
 }

@@ -105,6 +105,12 @@ public final class DtoMapper {
         String initialQuarterId = entity.getInitialQuarter() != null && entity.getInitialQuarter().getId() != null
             ? entity.getInitialQuarter().getId().toString()
             : null;
+        List<String> planningQuarterIds = entity.getPlanningQuarterIds() == null
+            ? List.of()
+            : entity.getPlanningQuarterIds().stream().map(UUID::toString).toList();
+        List<String> planningSprintIds = entity.getPlanningSprintIds() == null
+            ? List.of()
+            : entity.getPlanningSprintIds().stream().map(UUID::toString).toList();
 
         // Extract customer names from many-to-many relationship
         List<String> customers = entity.getCustomers().stream()
@@ -128,6 +134,8 @@ public final class DtoMapper {
             customers,
             streams,
             participantIds,
+            planningQuarterIds,
+            planningSprintIds,
             loads,
             allocations,
             notes,
@@ -200,4 +208,5 @@ public final class DtoMapper {
     private static String toIso(LocalDate date) {
         return date != null ? date.toString() : null;
     }
+
 }

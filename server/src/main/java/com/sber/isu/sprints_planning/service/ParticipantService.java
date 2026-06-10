@@ -7,10 +7,15 @@ import com.sber.isu.sprints_planning.dto.request.ParticipantReorderRequest;
 import com.sber.isu.sprints_planning.dto.request.ParticipantUpdateRequest;
 import com.sber.isu.sprints_planning.mapper.DtoMapper;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
+import com.sber.isu.sprints_planning.model.ParticipantRoleValueEntity;
+import com.sber.isu.sprints_planning.model.ParticipantStreamValueEntity;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
+import com.sber.isu.sprints_planning.repository.ParticipantRoleValueRepository;
+import com.sber.isu.sprints_planning.repository.ParticipantStreamValueRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -22,9 +27,17 @@ import org.springframework.stereotype.Service;
 public class ParticipantService {
 
     private final ParticipantRepository participantRepository;
+    private final ParticipantRoleValueRepository participantRoleValueRepository;
+    private final ParticipantStreamValueRepository participantStreamValueRepository;
 
-    public ParticipantService(ParticipantRepository participantRepository) {
+    public ParticipantService(
+        ParticipantRepository participantRepository,
+        ParticipantRoleValueRepository participantRoleValueRepository,
+        ParticipantStreamValueRepository participantStreamValueRepository
+    ) {
         this.participantRepository = participantRepository;
+        this.participantRoleValueRepository = participantRoleValueRepository;
+        this.participantStreamValueRepository = participantStreamValueRepository;
     }
 
     public List<ParticipantDto> findAll(String teamKey) {
@@ -47,6 +60,7 @@ public class ParticipantService {
             .orElse(0) + 1;
         entity.setDisplayOrder(nextOrder);
         entity.setTeamKey(teamKey);
+        syncReferenceValues(teamKey, request.role(), entity.getUserStreams());
         ParticipantEntity saved = participantRepository.save(entity);
         return DtoMapper.toParticipantDto(saved);
     }
@@ -71,6 +85,8 @@ public class ParticipantService {
         if (request.jiraLogin() != null) {
             entity.setJiraLogin(normalizeOptional(request.jiraLogin()));
         }
+        syncReferenceValues(teamKey, entity.getRole(), entity.getUserStreams());
+        cleanupUnusedReferenceValues(teamKey);
         return DtoMapper.toParticipantDto(entity);
     }
 
@@ -79,6 +95,8 @@ public class ParticipantService {
         ParticipantEntity entity = participantRepository.findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
         participantRepository.delete(entity);
+        participantRepository.flush();
+        cleanupUnusedReferenceValues(teamKey);
         return DtoMapper.toParticipantDto(entity);
     }
 
@@ -119,5 +137,41 @@ public class ParticipantService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private void syncReferenceValues(String teamKey, String role, Set<String> userStreams) {
+        String normalizedRole = normalizeOptional(role);
+        if (normalizedRole != null && participantRoleValueRepository.findByNameAndTeamKey(normalizedRole, teamKey).isEmpty()) {
+            ParticipantRoleValueEntity value = new ParticipantRoleValueEntity();
+            value.setName(normalizedRole);
+            value.setTeamKey(teamKey);
+            value.setCreatedAt(LocalDateTime.now());
+            participantRoleValueRepository.save(value);
+        }
+        for (String stream : userStreams) {
+            String normalizedStream = normalizeOptional(stream);
+            if (normalizedStream == null) {
+                continue;
+            }
+            if (participantStreamValueRepository.findByNameAndTeamKey(normalizedStream, teamKey).isPresent()) {
+                continue;
+            }
+            ParticipantStreamValueEntity value = new ParticipantStreamValueEntity();
+            value.setName(normalizedStream);
+            value.setTeamKey(teamKey);
+            value.setCreatedAt(LocalDateTime.now());
+            participantStreamValueRepository.save(value);
+        }
+    }
+
+    private void cleanupUnusedReferenceValues(String teamKey) {
+        List<UUID> unusedRoleIds = participantRoleValueRepository.findUnusedIdsByTeamKey(teamKey);
+        if (!unusedRoleIds.isEmpty()) {
+            participantRoleValueRepository.deleteAllByIdInBatch(unusedRoleIds);
+        }
+        List<UUID> unusedStreamIds = participantStreamValueRepository.findUnusedIdsByTeamKey(teamKey);
+        if (!unusedStreamIds.isEmpty()) {
+            participantStreamValueRepository.deleteAllByIdInBatch(unusedStreamIds);
+        }
     }
 }

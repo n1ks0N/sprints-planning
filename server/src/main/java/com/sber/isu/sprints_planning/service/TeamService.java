@@ -17,11 +17,17 @@ public class TeamService {
 
     private final TeamRepository teamRepository;
     private final TeamCleanupService teamCleanupService;
+    private final ApiHistoryService apiHistoryService;
     private static final Pattern KEY_PATTERN = Pattern.compile("^[a-z0-9_-]+$");
 
-    public TeamService(TeamRepository teamRepository, TeamCleanupService teamCleanupService) {
+    public TeamService(
+        TeamRepository teamRepository,
+        TeamCleanupService teamCleanupService,
+        ApiHistoryService apiHistoryService
+    ) {
         this.teamRepository = teamRepository;
         this.teamCleanupService = teamCleanupService;
+        this.apiHistoryService = apiHistoryService;
     }
 
     public TeamEntity getTeamOrThrow(String teamKey) {
@@ -63,26 +69,31 @@ public class TeamService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Команда не найдена");
         }
 
-        if (deleteData) {
-            teamCleanupService.deleteTeamData(normalizedKey);
-        } else {
-            long usage = teamCleanupService.countTeamData(normalizedKey);
-            if (usage > 0) {
+        apiHistoryService.markTeamDeletionInProgress(normalizedKey);
+        try {
+            if (deleteData) {
+                teamCleanupService.deleteTeamData(normalizedKey);
+            } else {
+                long usage = teamCleanupService.countTeamData(normalizedKey);
+                if (usage > 0) {
+                    throw new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Невозможно удалить команду с существующими данными без очистки"
+                    );
+                }
+            }
+
+            try {
+                teamRepository.deleteById(normalizedKey);
+            } catch (DataIntegrityViolationException ex) {
                 throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
-                    "Невозможно удалить команду с существующими данными без очистки"
+                    "Не удалось удалить команду из-за связанных данных",
+                    ex
                 );
             }
-        }
-
-        try {
-            teamRepository.deleteById(normalizedKey);
-        } catch (DataIntegrityViolationException ex) {
-            throw new ResponseStatusException(
-                HttpStatus.CONFLICT,
-                "Не удалось удалить команду из-за связанных данных",
-                ex
-            );
+        } finally {
+            apiHistoryService.clearTeamDeletionInProgress(normalizedKey);
         }
     }
 

@@ -22,6 +22,7 @@ import { Delete, Edit, Save, Close, DragIndicator } from "@mui/icons-material";
 
 import {
   api,
+  useGetFiltersQuery,
   useGetParticipantsQuery,
   useAddParticipantMutation,
   useUpdateParticipantMutation,
@@ -117,6 +118,7 @@ function SortableRow({
 
 export default function TeamPage() {
   const { data: participants = [] } = useGetParticipantsQuery();
+  const { data: filters } = useGetFiltersQuery();
   const [addParticipant] = useAddParticipantMutation();
   const [updateParticipant] = useUpdateParticipantMutation();
   const [deleteParticipant] = useDeleteParticipantMutation();
@@ -151,8 +153,8 @@ export default function TeamPage() {
 
   const allRoleOptions = React.useMemo(
     () =>
-      Array.from(new Set([...PRESET_ROLES, ...uniqueRolesFrom(participants)])),
-    [participants]
+      Array.from(new Set([...PRESET_ROLES, ...(filters?.participantRoles || []), ...uniqueRolesFrom(participants)])),
+    [filters?.participantRoles, participants]
   );
 
   // Набор ставок для подсказок (и фильтров): пресеты + уникальные из участников
@@ -167,8 +169,8 @@ export default function TeamPage() {
   }, [participants]);
 
   const allUserStreamOptions = React.useMemo(
-    () => uniqueUserStreamsFrom(participants),
-    [participants]
+    () => Array.from(new Set([...(filters?.participantStreams || []), ...uniqueUserStreamsFrom(participants)])),
+    [filters?.participantStreams, participants]
   );
 
   const handleRoleFilterChange = React.useCallback(

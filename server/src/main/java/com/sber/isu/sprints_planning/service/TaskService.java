@@ -69,7 +69,6 @@ public class TaskService {
         "partial",
         "backlog"
     );
-
     private final TaskRepository taskRepository;
     private final TaskLoadRepository taskLoadRepository;
     private final TaskAllocationRepository taskAllocationRepository;
@@ -114,13 +113,8 @@ public class TaskService {
     @Transactional
     public Page<TaskDto> findPage(String teamKey, TaskFilter filter, Integer page, Integer size) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
-        if (page == null && size == null) {
-            List<TaskEntity> tasks = taskRepository.findFilteredWithDetails(teamKey, effectiveFilter);
-            List<TaskDto> content = toDtos(teamKey, tasks);
-            return new PageImpl<>(content);
-        }
         int safePage = page == null ? 0 : Math.max(page, 0);
-        int safeSize = size == null ? 20 : Math.max(size, 1);
+        int safeSize = size == null ? 50 : Math.min(Math.max(size, 1), 200);
         Page<TaskEntity> filtered = taskRepository.findFilteredPageWithDetails(teamKey, effectiveFilter, safePage, safeSize);
         List<TaskDto> content = toDtos(teamKey, filtered.getContent());
         return new PageImpl<>(content, filtered.getPageable(), filtered.getTotalElements());
@@ -154,6 +148,8 @@ public class TaskService {
         entity.setCreatedAt(LocalDate.now());
         entity.setUpdatedAt(LocalDate.now());
         entity.setNotes(convertNotes(request.notes()));
+        entity.setPlanningQuarterIds(resolvePlanningQuarterIds(request.planningQuarterIds()));
+        entity.setPlanningSprintIds(resolvePlanningSprintIds(teamKey, request.planningSprintIds()));
         if (request.releaseDateId() != null) {
             entity.setReleaseDate(resolveRelease(teamKey, request.releaseDateId()));
         }
@@ -175,6 +171,7 @@ public class TaskService {
         if (request.streams() != null) {
             updateTaskStreams(teamKey, saved, request.streams());
         }
+        syncLegacyCustomerAndStream(saved);
 
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
@@ -226,6 +223,13 @@ public class TaskService {
         }
         if (request.streams() != null) {
             updateTaskStreams(teamKey, entity, request.streams());
+        }
+        syncLegacyCustomerAndStream(entity);
+        if (request.planningQuarterIds() != null) {
+            entity.setPlanningQuarterIds(resolvePlanningQuarterIds(request.planningQuarterIds()));
+        }
+        if (request.planningSprintIds() != null) {
+            entity.setPlanningSprintIds(resolvePlanningSprintIds(teamKey, request.planningSprintIds()));
         }
         if (request.releaseDateId() != null) {
             entity.setReleaseDate(resolveRelease(teamKey, request.releaseDateId()));
@@ -507,6 +511,12 @@ public class TaskService {
     public TaskDto upsertLoad(String teamKey, TaskLoadRequest request) {
         TaskEntity task = taskRepository.findByIdAndTeamKey(UUID.fromString(request.taskId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
+        if (!task.getParticipants().isEmpty() || !task.getAllocations().isEmpty()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT,
+                "Прямое редактирование суммарной нагрузки доступно только для задач без участников и распределения"
+            );
+        }
         SprintEntity sprint = fetchSprint(teamKey, request.sprintId());
         TaskLoadId id = new TaskLoadId(task.getId(), sprint.getId());
         BigDecimal nextDays = maxOrZero(request.days());
@@ -723,6 +733,40 @@ public class TaskService {
         return ALLOWED_STATUSES.contains(normalized) ? normalized : DEFAULT_STATUS;
     }
 
+    private List<UUID> resolvePlanningQuarterIds(List<String> quarterIds) {
+        if (quarterIds == null) {
+            return List.of();
+        }
+        return quarterIds.stream()
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .filter(value -> !value.isBlank())
+            .map(UUID::fromString)
+            .distinct()
+            .toList();
+    }
+
+    private List<UUID> resolvePlanningSprintIds(String teamKey, List<String> sprintIds) {
+        if (sprintIds == null) {
+            return List.of();
+        }
+        List<UUID> ids = sprintIds.stream()
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .filter(value -> !value.isBlank())
+            .map(UUID::fromString)
+            .distinct()
+            .toList();
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        List<SprintEntity> sprints = sprintRepository.findByTeamKeyAndIdIn(teamKey, ids);
+        if (sprints.size() != ids.size()) {
+            throw new EntityNotFoundException("One or more planning sprints not found");
+        }
+        return ids;
+    }
+
     private void updateTaskCustomers(String teamKey, TaskEntity entity, List<String> customerNames) {
         Set<String> newNames = customerNames.stream()
             .filter(name -> name != null && !name.isBlank())
@@ -752,6 +796,7 @@ public class TaskService {
             }
             entity.getCustomers().add(customer);
         }
+        syncLegacyCustomerAndStream(entity);
     }
 
     private void updateTaskStreams(String teamKey, TaskEntity entity, List<String> streamNames) {
@@ -783,6 +828,7 @@ public class TaskService {
             }
             entity.getStreams().add(stream);
         }
+        syncLegacyCustomerAndStream(entity);
     }
 
     private void cleanupUnusedTaskReferenceValues(String teamKey) {
@@ -794,6 +840,25 @@ public class TaskService {
         if (!unusedCustomerIds.isEmpty()) {
             taskCustomerRepository.deleteAllByIdInBatch(unusedCustomerIds);
         }
+    }
+
+    private void syncLegacyCustomerAndStream(TaskEntity entity) {
+        entity.setCustomer(resolveLegacyScalarValue(entity.getCustomers().stream()
+            .map(TaskCustomerEntity::getName)
+            .toList()));
+        entity.setStream(resolveLegacyScalarValue(entity.getStreams().stream()
+            .map(TaskStreamEntity::getName)
+            .toList()));
+    }
+
+    private String resolveLegacyScalarValue(List<String> values) {
+        return values.stream()
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .filter(value -> !value.isBlank())
+            .sorted()
+            .findFirst()
+            .orElse("");
     }
 
     private void recalcLoad(TaskEntity task, SprintEntity sprint) {
@@ -1030,6 +1095,8 @@ public class TaskService {
             extractCustomerNames(entity),
             extractStreamNames(entity),
             extractParticipantIds(entity),
+            entity.getPlanningQuarterIds() == null ? List.of() : entity.getPlanningQuarterIds().stream().map(UUID::toString).toList(),
+            entity.getPlanningSprintIds() == null ? List.of() : entity.getPlanningSprintIds().stream().map(UUID::toString).toList(),
             releaseDateId,
             initialQuarterId,
             leaderId,
@@ -1045,6 +1112,8 @@ public class TaskService {
             null,
             null,
             null,
+            List.of(),
+            List.of(),
             List.of(),
             List.of(),
             List.of(),
@@ -1066,6 +1135,8 @@ public class TaskService {
         addTaskHistoryChange(changes, "customers", "Заказчики", before.customers(), after.customers());
         addTaskHistoryChange(changes, "streams", "Стримы", before.streams(), after.streams());
         addTaskHistoryChange(changes, "participantIds", "Участники", before.participantIds(), after.participantIds());
+        addTaskHistoryChange(changes, "planningQuarterIds", "Кварталы планирования", before.planningQuarterIds(), after.planningQuarterIds());
+        addTaskHistoryChange(changes, "planningSprintIds", "Спринты планирования", before.planningSprintIds(), after.planningSprintIds());
         addTaskHistoryChange(changes, "releaseDateId", "Релиз", before.releaseDateId(), after.releaseDateId());
         addTaskHistoryChange(changes, "initialQuarterId", "Квартал создания", before.initialQuarterId(), after.initialQuarterId());
         addTaskHistoryChange(changes, "leaderId", "Лидер", before.leaderId(), after.leaderId());
@@ -1189,6 +1260,8 @@ public class TaskService {
         List<String> customers,
         List<String> streams,
         List<String> participantIds,
+        List<String> planningQuarterIds,
+        List<String> planningSprintIds,
         String releaseDateId,
         String initialQuarterId,
         String leaderId,
@@ -1196,4 +1269,5 @@ public class TaskService {
         Map<String, String> notes
     ) {
     }
+
 }

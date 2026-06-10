@@ -8,7 +8,7 @@ This directory stores backend- and domain-specific documentation.
   Current model of tasks, loads, allocations, filters, and capacity.
 
 - `server/docs/task-auto-distribution-design.md`
-  Proposed design for smart release-aware auto-distribution of task load by participants.
+  Current backend architecture for planning backlog items, solver integration, preview/review flow, and publish semantics.
 
 ## Writing rules
 

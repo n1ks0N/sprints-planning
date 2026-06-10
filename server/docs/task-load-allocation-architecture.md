@@ -133,10 +133,11 @@ Endpoint:
 
 Behavior:
 
-- writes `task_loads` directly
-- does not rebuild participant allocations
+- allowed only for tasks that do not have participants and do not have participant allocations
+- writes `task_loads` directly for unassigned backlog-level effort
+- explicitly rejects direct writes once the task participates in participant planning
 
-This is the main legacy inconsistency in the current architecture.
+This keeps `task_allocations` authoritative for any participant-bound plan.
 
 ## Current read paths
 
@@ -185,9 +186,7 @@ The code currently behaves as if these rules are true:
 2. Task total load for a sprint should equal the sum of participant allocations in that sprint.
 3. Removing a participant removes their allocations and then recalculates task loads.
 
-But one rule is not fully enforced:
-
-4. Direct edits to `task_loads` can temporarily break the participant-first model.
+4. Direct edits to `task_loads` are only allowed before a task enters participant-level planning.
 
 ## Architectural conclusion
 
@@ -208,62 +207,75 @@ Any auto-distribution feature should:
 4. Preserve manual edits unless the chosen UX explicitly says "redistribute and overwrite".
 5. Be deterministic enough that repeated runs on unchanged input give the same result.
 
-## Product decision that must be made first
+## Current planning workbench integration
 
-There are two different meanings of "auto-distribute" in the current system:
+The user-facing planning flow now works through `planning_backlog_items` and only creates live tasks on final apply.
 
-1. Split an already known task total load across participants.
-2. Rebalance an already existing participant allocation sum across participants.
+Key consequence:
 
-Because the current UI mostly edits participant allocations directly, the second interpretation is already naturally supported by the model.
+- the page where a manager prepares tasks for auto-distribution does not edit live `tasks`
+- it edits dedicated draft records in `planning_backlog_items`
+- preview generates a draft allocation matrix only in memory / browser session state
+- live `task_allocations` and `task_loads` are touched only on final apply
 
-The first interpretation is only clean if the product explicitly defines the source total per sprint:
+Then:
 
-- existing `task_loads`
-- current summed allocations
-- newly entered total values in a dedicated UI
+1. the workbench preview converts selected planning items into solver input
+2. the solver produces participant/sprint allocations
+3. apply creates new live tasks through `TaskService.create(...)`
+4. `task_allocations` are written on those created tasks
+5. `task_loads` are recalculated from the new allocation matrix
 
-Without this decision, the backend can implement an algorithm but the feature semantics will stay ambiguous.
+This preserves the same core invariant:
 
-## Good API shapes for future work
+- live planning truth remains `task_allocations`
+- `task_loads` remain derived totals
 
-Two practical options fit the current backend best.
+Additional current rule:
 
-### Option A: explicit action endpoint
+- if a planning item was role-based during preview, final apply materializes those approved role allocations into concrete participant demand rows before task creation
 
-Example:
+This keeps created live tasks aligned with what the user approved on the review page.
 
-- `POST /{teamKey}/tasks/{taskId}/auto-distribute`
+## Fit for future planning sessions
 
-Payload could contain:
+The same allocation-first model is also the correct publication target for a future draft planning workflow.
 
-- sprint scope
-- strategy
-- overwrite mode
-- locked participant cells
+Recommended rule:
 
-Backend would:
+- planning sessions keep their own draft allocations
+- publish writes those allocations into real `task_allocations`
+- real `task_loads` are recalculated from real allocations only at publish time
 
-- load task + participants + allocations
-- compute new allocation matrix
-- persist through the same logic as bulk multi update
+This gives a clean separation:
 
-### Option B: preview + apply
+- draft planning data remains isolated during review
+- production planning remains consistent after publish
 
-Two-step flow:
+That means the planning-session feature should reuse the current live allocation model as its final target, but it should not use live task tables as temporary draft storage.
 
-- preview distribution
-- apply accepted matrix
+## Current compatibility notes
 
-This is safer if the distribution logic becomes non-trivial.
+Live tasks still keep legacy planning-related columns such as:
 
-## Simplification recommendation
+- `estimate_days`
+- `planning_assignment_mode`
+- `planning_role`
+- `planning_quarter_ids`
+- `planning_sprint_ids`
+- `planning_demands`
 
-Before or during auto-distribution, consider deprecating direct task load editing as a primary write path.
+These fields are still written on real tasks because:
 
-Target model:
+- backlog editing still exposes planning metadata on created tasks
+- the final published task should preserve the approved planning intent
+- backward compatibility for older task-level flows is still required
 
-- user edits allocations
-- total task load is always derived
+But they are no longer the source of truth for the planning workbench itself.
 
-This removes the biggest ambiguity in the current architecture and makes auto-distribution a natural extension instead of a parallel model.
+Legacy scalar fields `tasks.customer` and `tasks.stream` are also still mirrored for compatibility with older read paths, but that compatibility is only partial:
+
+- the real source of truth is now the many-value relation tables
+- scalar legacy fields can hold only one value each
+- backend currently mirrors the first normalized value into those scalar columns
+- therefore a rollback to older code can only observe one customer and one stream per task

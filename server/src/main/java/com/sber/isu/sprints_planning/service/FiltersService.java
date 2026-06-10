@@ -5,6 +5,8 @@ import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.ReleaseEntity;
 import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
+import com.sber.isu.sprints_planning.repository.ParticipantRoleValueRepository;
+import com.sber.isu.sprints_planning.repository.ParticipantStreamValueRepository;
 import com.sber.isu.sprints_planning.repository.TaskCustomerRepository;
 import com.sber.isu.sprints_planning.repository.TaskStreamRepository;
 import java.util.List;
@@ -17,6 +19,8 @@ public class FiltersService {
     private final ReleaseRepository releaseRepository;
     private final TaskStreamRepository taskStreamRepository;
     private final TaskCustomerRepository taskCustomerRepository;
+    private final ParticipantRoleValueRepository participantRoleValueRepository;
+    private final ParticipantStreamValueRepository participantStreamValueRepository;
 
     private static final List<String> TASK_STATUSES = List.of(
         "inprogress",
@@ -33,12 +37,16 @@ public class FiltersService {
         QuarterRepository quarterRepository,
         ReleaseRepository releaseRepository,
         TaskStreamRepository taskStreamRepository,
-        TaskCustomerRepository taskCustomerRepository
+        TaskCustomerRepository taskCustomerRepository,
+        ParticipantRoleValueRepository participantRoleValueRepository,
+        ParticipantStreamValueRepository participantStreamValueRepository
     ) {
         this.quarterRepository = quarterRepository;
         this.releaseRepository = releaseRepository;
         this.taskStreamRepository = taskStreamRepository;
         this.taskCustomerRepository = taskCustomerRepository;
+        this.participantRoleValueRepository = participantRoleValueRepository;
+        this.participantStreamValueRepository = participantStreamValueRepository;
     }
 
     public FiltersDto getFilters(String teamKey) {
@@ -58,6 +66,8 @@ public class FiltersService {
 
         List<String> streams = taskStreamRepository.findAllNamesByTeamKey(teamKey);
         List<String> customers = taskCustomerRepository.findAllNamesByTeamKey(teamKey);
+        List<String> participantRoles = participantRoleValueRepository.findAllNamesByTeamKey(teamKey);
+        List<String> participantStreams = participantStreamValueRepository.findAllNamesByTeamKey(teamKey);
 
         return new FiltersDto(
             quarters,
@@ -65,7 +75,9 @@ public class FiltersService {
             TASK_PRIORITIES,
             streams,
             customers,
-            releases
+            releases,
+            participantRoles,
+            participantStreams
         );
     }
 }

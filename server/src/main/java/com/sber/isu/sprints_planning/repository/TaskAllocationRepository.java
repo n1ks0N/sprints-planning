@@ -20,12 +20,29 @@ public interface TaskAllocationRepository extends JpaRepository<TaskAllocationEn
         join ta.task t
         where ta.teamKey = :teamKey
           and ta.sprint.id in :sprintIds
-          and t.priority in (1, 2)
           and lower(coalesce(t.status, 'inprogress')) <> 'backlog'
         group by ta.participant.id, ta.sprint.id
         """)
     List<WorkloadAggregation> aggregateWorkloadByParticipantAndSprint(
         @Param("teamKey") String teamKey,
         @Param("sprintIds") Collection<UUID> sprintIds
+    );
+
+    @Query("""
+        select ta.participant.id as participantId, ta.sprint.id as sprintId, sum(ta.days) as totalDays
+        from TaskAllocationEntity ta
+        join ta.task t
+        where ta.teamKey = :teamKey
+          and ta.participant.id in :participantIds
+          and ta.sprint.id in :sprintIds
+          and t.id <> :taskId
+          and lower(coalesce(t.status, 'inprogress')) <> 'backlog'
+        group by ta.participant.id, ta.sprint.id
+        """)
+    List<WorkloadAggregation> aggregateScheduledWorkloadByParticipantAndSprintExcludingTask(
+        @Param("teamKey") String teamKey,
+        @Param("participantIds") Collection<UUID> participantIds,
+        @Param("sprintIds") Collection<UUID> sprintIds,
+        @Param("taskId") UUID taskId
     );
 }
