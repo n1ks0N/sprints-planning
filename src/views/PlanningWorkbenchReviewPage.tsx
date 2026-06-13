@@ -111,6 +111,15 @@ const getAllocatedDays = (allocations: Record<string, Record<string, number>> = 
 
 const formatSignedDays = (value: number) => `${value > 0 ? "+" : ""}${value} дн.`;
 
+const apiErrorMessage = (err: any, fallback: string) => {
+  const data = err?.data;
+  if (typeof data === "string") return data;
+  if (data?.message) return String(data.message);
+  if (data?.error) return String(data.error);
+  if (err?.message) return String(err.message);
+  return fallback;
+};
+
 const formatDate = (value?: string | null) => {
   if (!value) return "";
   const [year, month, day] = value.split("-");
@@ -626,7 +635,7 @@ export default function PlanningWorkbenchReviewPage() {
       setDraftAllocations(buildDraftAllocations(next.items));
       setHiddenParticipantsTaskIds(new Set());
     } catch (err: any) {
-      setError(String(err?.data?.message || err?.data || "Не удалось пересчитать автораспределение"));
+      setError(apiErrorMessage(err, "Не удалось пересчитать автораспределение"));
     }
   };
 
@@ -642,7 +651,7 @@ export default function PlanningWorkbenchReviewPage() {
       clearPlanningWorkbenchPreview();
       navigate(`/${teamKey}/`);
     } catch (err: any) {
-      setError(String(err?.data?.message || err?.data || "Не удалось применить распределение"));
+      setError(apiErrorMessage(err, "Не удалось применить распределение"));
     }
   };
 

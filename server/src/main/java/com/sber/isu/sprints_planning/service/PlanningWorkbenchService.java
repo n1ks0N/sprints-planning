@@ -178,11 +178,7 @@ public class PlanningWorkbenchService {
         }
         Map<String, ApplyItemState> applyStates = buildApplyStates(teamKey, items, request.itemPatches());
         Map<String, Map<String, Map<String, BigDecimal>>> normalized = normalizeAllocations(request.allocations());
-        validateAllocationMatrix(
-            applyStates.values().stream().map(ApplyItemState::item).toList(),
-            normalized,
-            teamKey
-        );
+        validateAllocationMatrix(applyStates, normalized, teamKey);
 
         List<TaskDto> createdTasks = new ArrayList<>();
         for (PlanningBacklogItemEntity item : items) {
@@ -610,7 +606,7 @@ public class PlanningWorkbenchService {
     }
 
     private void validateAllocationMatrix(
-        List<PlanningBacklogItemEntity> items,
+        Map<String, ApplyItemState> applyStates,
         Map<String, Map<String, Map<String, BigDecimal>>> allocations,
         String teamKey
     ) {
@@ -618,15 +614,20 @@ public class PlanningWorkbenchService {
             .collect(Collectors.toMap(participant -> participant.getId().toString(), Function.identity()));
         Map<String, SprintEntity> sprintsById = sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey).stream()
             .collect(Collectors.toMap(sprint -> sprint.getId().toString(), Function.identity()));
-        for (PlanningBacklogItemEntity item : items) {
+        for (ApplyItemState applyState : applyStates.values()) {
+            PlanningBacklogItemEntity item = applyState.item();
             Map<String, Map<String, BigDecimal>> itemAllocations = allocations.getOrDefault(item.getId().toString(), Map.of());
             List<SprintEntity> allowedSprints = resolveAllowedSprints(item, teamKey);
             Set<String> allowedSprintIds = allowedSprints.stream()
                 .map(sprint -> sprint.getId().toString())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+            Set<String> allowedParticipantOverrides = applyState.participantIdsOverride().stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
             for (Map.Entry<String, Map<String, BigDecimal>> participantEntry : itemAllocations.entrySet()) {
                 ParticipantEntity participant = participantsById.get(participantEntry.getKey());
-                if (participant == null || !isParticipantAllowed(item, participant)) {
+                if (participant == null
+                    || (!allowedParticipantOverrides.contains(participantEntry.getKey()) && !isParticipantAllowed(item, participant))) {
                     throw new ResponseStatusException(HttpStatus.CONFLICT,
                         "Planning item '" + item.getTitle() + "' has allocation outside allowed participants");
                 }
