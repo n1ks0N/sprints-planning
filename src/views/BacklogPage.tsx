@@ -144,12 +144,6 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   return true;
 }
 
-function compareValues<T extends string | number>(left: T, right: T, direction: SortDirection) {
-  if (left === right) return 0;
-  const result = left < right ? -1 : 1;
-  return direction === "asc" ? result : -result;
-}
-
 function normalizeSparseRow(row?: Record<string, number>) {
   if (!row) return undefined;
   const filtered = Object.entries(row).reduce<Record<string, number>>((acc, [sprintId, days]) => {
@@ -160,18 +154,6 @@ function normalizeSparseRow(row?: Record<string, number>) {
     return acc;
   }, {});
   return Object.keys(filtered).length > 0 ? filtered : undefined;
-}
-
-function sumTaskLoad(task: BacklogItem) {
-  const fromLoads = Object.values(task.loads || {}).reduce((sum, days) => sum + toInt(Number(days) || 0), 0);
-  if (fromLoads > 0) {
-    return fromLoads;
-  }
-  return Object.values(task.allocations || {}).reduce(
-    (taskSum, row) =>
-      taskSum + Object.values(row || {}).reduce((rowSum, days) => rowSum + toInt(Number(days) || 0), 0),
-    0
-  );
 }
 
 type TasksPage = Page<BacklogItem>;
@@ -213,6 +195,8 @@ function buildTasksSearchParams(arg: {
   roles?: string[];
   userStreams?: string[];
   pinnedId?: string;
+  sortBy?: string;
+  sortDirection?: string;
   page?: number;
   size?: number;
 }) {
@@ -258,6 +242,12 @@ function buildTasksSearchParams(arg: {
 
   const pinnedId = (arg.pinnedId || "").trim();
   if (pinnedId) params.set("id", pinnedId);
+
+  const sortBy = (arg.sortBy || "").trim();
+  if (sortBy) params.set("sortBy", sortBy);
+
+  const sortDirection = (arg.sortDirection || "").trim();
+  if (sortDirection) params.set("sortDirection", sortDirection);
 
   if (typeof arg.page === "number") params.set("page", String(arg.page));
   if (typeof arg.size === "number") params.set("size", String(arg.size));
@@ -1258,6 +1248,8 @@ export default function BacklogPage() {
       customers: customerFilter.length > 0 ? customerFilter : undefined,
       search: normalizedSearch,
       pinnedId: pinnedTaskId ?? undefined,
+      sortBy,
+      sortDirection,
       page: effectiveTasksPageNumber,
       size: TASKS_PAGE_SIZE,
     }),
@@ -1275,6 +1267,8 @@ export default function BacklogPage() {
       effectiveTasksPageNumber,
       TASKS_PAGE_SIZE,
       withoutQuarterFilter,
+      sortBy,
+      sortDirection,
     ]
   );
 
@@ -1688,15 +1682,6 @@ export default function BacklogPage() {
     () => new Map(releaseFilterOptions.map((option) => [option.value, option.label])),
     [releaseFilterOptions]
   );
-  const releasePromDateById = React.useMemo(
-    () =>
-      new Map(
-        releases
-          .map((release) => [String(release.id), release.promDate] as const)
-          .filter((entry): entry is [string, string] => Boolean(entry[0] && entry[1]))
-      ),
-    [releases]
-  );
 
   const tasksPageSizeOptions = React.useMemo(
     () =>
@@ -1871,69 +1856,7 @@ export default function BacklogPage() {
     },
     [dispatch, normalizedSearch, startFiltersTransition]
   );
-  const deferredStatusFilter = React.useDeferredValue(statusFilter);
-
-  const resolveTaskDateSortKey = React.useCallback(
-    (task: BacklogItem) => {
-      const releaseDate = task.releaseDateId ? releasePromDateById.get(task.releaseDateId) : undefined;
-      if (releaseDate) {
-        return releaseDate;
-      }
-
-      const quarterStart = deriveTaskQuarters(task, allSprints)
-        .map((quarterId) => quarters.find((quarter) => quarter.id === quarterId)?.startDate || null)
-        .filter((value): value is string => Boolean(value))
-        .sort()[0];
-
-      return quarterStart || "9999-12-31";
-    },
-    [allSprints, quarters, releasePromDateById]
-  );
-
-  const filteredTasks = React.useMemo(() => {
-    const byStatus =
-      deferredStatusFilter.length === 0
-        ? allTasks
-        : allTasks.filter((t) => {
-            const st = t.status ?? "inprogress";
-            return deferredStatusFilter.includes(st);
-          });
-
-    const pinnedTask = pinnedTaskId
-      ? allTasks.find((t) => t.id === pinnedTaskId) ?? null
-      : null;
-    const withPinned =
-      pinnedTask && !byStatus.some((t) => t.id === pinnedTask.id)
-        ? [pinnedTask, ...byStatus]
-        : byStatus;
-
-    const withOrder = withPinned.slice().sort((a, b) => {
-      if (pinnedTaskId) {
-        if (a.id === pinnedTaskId) return -1;
-        if (b.id === pinnedTaskId) return 1;
-      }
-      if (sortBy === "load") {
-        const result = compareValues(sumTaskLoad(a), sumTaskLoad(b), sortDirection);
-        if (result !== 0) return result;
-      } else if (sortBy === "releaseDate") {
-        const result = compareValues(resolveTaskDateSortKey(a), resolveTaskDateSortKey(b), sortDirection);
-        if (result !== 0) return result;
-      } else if (sortBy === "priority") {
-        const result = compareValues(Number(a.priority || 0), Number(b.priority || 0), sortDirection);
-        if (result !== 0) return result;
-      }
-      const oa = Number.isFinite(a.order)
-        ? Number(a.order)
-        : Number.MAX_SAFE_INTEGER;
-      const ob = Number.isFinite(b.order)
-        ? Number(b.order)
-        : Number.MAX_SAFE_INTEGER;
-      if (oa !== ob) return oa - ob;
-      return (a.createdAt || "").localeCompare(b.createdAt || "");
-    });
-
-    return withOrder;
-  }, [allTasks, deferredStatusFilter, pinnedTaskId, resolveTaskDateSortKey, sortBy, sortDirection]);
+  const filteredTasks = allTasks;
 
   const displayedTasksCount = filteredTasks.length;
 
@@ -1967,13 +1890,8 @@ export default function BacklogPage() {
       page += 1;
     }
 
-    return tasks.slice().sort((a, b) => {
-      const oa = Number.isFinite(a.order) ? Number(a.order) : Number.MAX_SAFE_INTEGER;
-      const ob = Number.isFinite(b.order) ? Number(b.order) : Number.MAX_SAFE_INTEGER;
-      if (oa !== ob) return oa - ob;
-      return (a.createdAt || "").localeCompare(b.createdAt || "");
-    });
-  }, [tasksQueryArgs, teamKey, totalTasksCount]);
+    return tasks;
+  }, [tasksQueryArgs, teamKey]);
 
   const handleAddAllToJira = React.useCallback(async () => {
     setAddAllToJiraError("");

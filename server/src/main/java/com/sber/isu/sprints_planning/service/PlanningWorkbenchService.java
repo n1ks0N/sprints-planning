@@ -91,9 +91,117 @@ public class PlanningWorkbenchService {
 
     @Transactional(readOnly = true)
     public List<PlanningWorkbenchItemDto> getBacklogCandidates(String teamKey) {
+        return getBacklogCandidates(teamKey, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PlanningWorkbenchItemDto> getBacklogCandidates(String teamKey, String sortBy, String sortDirection) {
         return planningBacklogItemRepository.findAllByTeamKeyOrderByDisplayOrderAscCreatedAtAsc(teamKey).stream()
+            .sorted(planningItemComparator(teamKey, sortBy, sortDirection))
             .map(item -> toPlanningItemDto(item, Map.of()))
             .toList();
+    }
+
+    private Comparator<PlanningBacklogItemEntity> planningItemComparator(
+        String teamKey,
+        String sortBy,
+        String sortDirection
+    ) {
+        Comparator<PlanningBacklogItemEntity> comparator = planningPrimaryComparator(teamKey, sortBy, sortDirection);
+        return comparator
+            .thenComparingInt(PlanningBacklogItemEntity::getDisplayOrder)
+            .thenComparing(item -> item.getCreatedAt() == null ? LocalDate.MAX : item.getCreatedAt())
+            .thenComparing(item -> item.getId() == null ? "" : item.getId().toString());
+    }
+
+    private Comparator<PlanningBacklogItemEntity> planningPrimaryComparator(
+        String teamKey,
+        String sortBy,
+        String sortDirection
+    ) {
+        String normalizedSortBy = normalizeSortBy(sortBy);
+        boolean desc = isDescending(sortDirection);
+        Comparator<PlanningBacklogItemEntity> comparator;
+        if ("load".equals(normalizedSortBy)) {
+            comparator = Comparator.comparing(this::sumPlanningItemLoad);
+        } else if ("releaseDate".equals(normalizedSortBy)) {
+            List<SprintEntity> sprints = sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey);
+            Map<UUID, SprintEntity> sprintById = sprints.stream()
+                .collect(Collectors.toMap(SprintEntity::getId, Function.identity(), (left, right) -> left));
+            Map<UUID, QuarterEntity> quarterById = quarterRepository.findByTeamKeyOrderByStartDateAsc(teamKey).stream()
+                .collect(Collectors.toMap(QuarterEntity::getId, Function.identity(), (left, right) -> left));
+            comparator = Comparator.comparing(item -> planningItemDateSortKey(item, sprintById, quarterById));
+        } else if ("priority".equals(normalizedSortBy)) {
+            comparator = Comparator.comparingInt(item -> item.getPriority());
+        } else {
+            return (left, right) -> 0;
+        }
+        return desc ? comparator.reversed() : comparator;
+    }
+
+    private BigDecimal sumPlanningItemLoad(PlanningBacklogItemEntity item) {
+        if (item.getPlanningDemands() == null || item.getPlanningDemands().isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+        return item.getPlanningDemands().stream()
+            .map(TaskPlanningDemandValue::getDays)
+            .filter(Objects::nonNull)
+            .filter(days -> days.signum() > 0)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private LocalDate planningItemDateSortKey(
+        PlanningBacklogItemEntity item,
+        Map<UUID, SprintEntity> sprintById,
+        Map<UUID, QuarterEntity> quarterById
+    ) {
+        if (item.getReleaseDate() != null && item.getReleaseDate().getPromDate() != null) {
+            return item.getReleaseDate().getPromDate();
+        }
+        LocalDate sprintQuarterStart = item.getPlanningSprintIds() == null
+            ? null
+            : item.getPlanningSprintIds().stream()
+                .map(sprintById::get)
+                .filter(Objects::nonNull)
+                .map(SprintEntity::getQuarter)
+                .filter(Objects::nonNull)
+                .map(QuarterEntity::getStartDate)
+                .filter(Objects::nonNull)
+                .min(LocalDate::compareTo)
+                .orElse(null);
+        if (sprintQuarterStart != null) {
+            return sprintQuarterStart;
+        }
+        LocalDate planningQuarterStart = item.getPlanningQuarterIds() == null
+            ? null
+            : item.getPlanningQuarterIds().stream()
+                .map(quarterById::get)
+                .filter(Objects::nonNull)
+                .map(QuarterEntity::getStartDate)
+                .filter(Objects::nonNull)
+                .min(LocalDate::compareTo)
+                .orElse(null);
+        if (planningQuarterStart != null) {
+            return planningQuarterStart;
+        }
+        if (item.getInitialQuarter() != null && item.getInitialQuarter().getStartDate() != null) {
+            return item.getInitialQuarter().getStartDate();
+        }
+        return LocalDate.MAX;
+    }
+
+    private String normalizeSortBy(String sortBy) {
+        if (sortBy == null) {
+            return "manual";
+        }
+        return switch (sortBy.trim()) {
+            case "load", "releaseDate", "priority" -> sortBy.trim();
+            default -> "manual";
+        };
+    }
+
+    private boolean isDescending(String sortDirection) {
+        return sortDirection != null && "desc".equalsIgnoreCase(sortDirection.trim());
     }
 
     @Transactional

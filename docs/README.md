@@ -10,6 +10,9 @@ This directory is the top-level documentation entry point for the project.
 - `docs/planning-workbench-overview.md`
   Product-level overview of the current planning workbench, global auto-distribution workflow over the separate planning backlog, and the automated test contours for planning.
 
+- `docs/database-normalization-roadmap.md`
+  Roadmap for improving the database schema toward stronger normal forms, stricter constraints, and safer planning data persistence.
+
 - `server/docs/README.md`
   Backend documentation index.
 

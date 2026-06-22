@@ -19,6 +19,7 @@ public record TaskDto(
     Map<String, Map<String, java.math.BigDecimal>> allocations,
     Map<String, String> notes,
     Map<String, Map<String, TaskJiraIssueDto>> jiraIssues,
+    TaskJiraIssueDto jiraStoryIssue,
     String releaseDateId,
     String initialQuarterId,
     String releaseSprintId,

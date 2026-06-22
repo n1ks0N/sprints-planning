@@ -71,7 +71,8 @@ public final class DtoMapper {
     public static TaskDto toTaskDto(
         TaskEntity entity,
         String releaseSprintId,
-        Map<String, Map<String, TaskJiraIssueDto>> jiraIssues
+        Map<String, Map<String, TaskJiraIssueDto>> jiraIssues,
+        TaskJiraIssueDto jiraStoryIssue
     ) {
         List<String> participantIds = new ArrayList<>();
         entity.getParticipants().stream()
@@ -140,6 +141,7 @@ public final class DtoMapper {
             allocations,
             notes,
             jiraIssues == null ? Map.of() : jiraIssues,
+            jiraStoryIssue,
             releaseDateId,
             initialQuarterId,
             releaseSprintId,

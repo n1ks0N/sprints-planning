@@ -7,6 +7,7 @@ import com.sber.isu.sprints_planning.dto.JiraExportBatchItemDto;
 import com.sber.isu.sprints_planning.dto.JiraExportBatchStartDto;
 import com.sber.isu.sprints_planning.dto.JiraExportBatchStatusDto;
 import com.sber.isu.sprints_planning.dto.JiraIssueRequestPreviewDto;
+import com.sber.isu.sprints_planning.dto.JiraSprintOptionDto;
 import com.sber.isu.sprints_planning.dto.TaskHistoryChangeDto;
 import com.sber.isu.sprints_planning.dto.request.JiraIssueExportRequest;
 import com.sber.isu.sprints_planning.dto.request.JiraIssueManualConfirmRequest;
@@ -17,10 +18,12 @@ import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
 import com.sber.isu.sprints_planning.model.TaskEntity;
 import com.sber.isu.sprints_planning.model.TaskJiraIssueEntity;
 import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
+import com.sber.isu.sprints_planning.model.TeamEntity;
 import com.sber.isu.sprints_planning.repository.JiraExportBatchRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskJiraIssueRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
+import com.sber.isu.sprints_planning.repository.TeamRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
 import java.math.BigDecimal;
@@ -65,7 +68,9 @@ public class JiraIssueExportService {
 
     private static final String JIRA_API_BASE_URL = "http://jira.sberbank.ru:27062";
     private static final String JIRA_PUBLIC_BASE_URL = "https://jira.sberbank.ru";
-    private static final String JIRA_ISSUE_TYPE_ID = "3";
+    private static final String DEFAULT_STORY_ISSUE_TYPE_ID = "10001";
+    private static final String DEFAULT_PARTICIPANT_ISSUE_TYPE_ID = "3";
+    private static final String JIRA_LINK_TYPE_PART_OF = "PartOf";
     private static final String HISTORY_FIELD = "jiraIssue";
     private static final String HISTORY_LABEL = "Jira";
 
@@ -90,6 +95,8 @@ public class JiraIssueExportService {
     private static final String BATCH_ENTITY_TYPE = "jira_export_batch";
     private static final String TASK_ENTITY_TYPE = "task";
     private static final String UNKNOWN_JIRA_ISSUE_ID = "UNKNOWN";
+    private static final String ISSUE_SCOPE_STORY = "STORY";
+    private static final String ISSUE_SCOPE_PARTICIPANT = "PARTICIPANT";
     private static final int JIRA_CONNECT_TIMEOUT_MS = 5000;
     private static final int JIRA_READ_TIMEOUT_MS = 30000;
     private static final AtomicLong MOCK_ISSUE_SEQUENCE = new AtomicLong(900000);
@@ -98,6 +105,7 @@ public class JiraIssueExportService {
     private final TaskJiraIssueRepository taskJiraIssueRepository;
     private final SprintRepository sprintRepository;
     private final JiraExportBatchRepository jiraExportBatchRepository;
+    private final TeamRepository teamRepository;
     private final ApiHistoryService apiHistoryService;
     private final JiraProperties jiraProperties;
     private final EntityManager entityManager;
@@ -110,6 +118,7 @@ public class JiraIssueExportService {
         TaskJiraIssueRepository taskJiraIssueRepository,
         SprintRepository sprintRepository,
         JiraExportBatchRepository jiraExportBatchRepository,
+        TeamRepository teamRepository,
         ApiHistoryService apiHistoryService,
         JiraProperties jiraProperties,
         EntityManager entityManager,
@@ -121,12 +130,44 @@ public class JiraIssueExportService {
         this.taskJiraIssueRepository = taskJiraIssueRepository;
         this.sprintRepository = sprintRepository;
         this.jiraExportBatchRepository = jiraExportBatchRepository;
+        this.teamRepository = teamRepository;
         this.apiHistoryService = apiHistoryService;
         this.jiraProperties = jiraProperties;
         this.entityManager = entityManager;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.jiraExportExecutor = jiraExportExecutor;
         this.objectMapper = objectMapper;
+    }
+
+    public List<JiraSprintOptionDto> getSprintOptions(String teamKey, String query) {
+        TeamEntity team = teamRepository.findById(teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Team not found"));
+        Long boardId = team.getJiraBoardId();
+        if (boardId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Для команды не настроен Jira boardId");
+        }
+
+        String normalizedQuery = normalizeOptional(query);
+        String jiraApiBaseUrl = JIRA_API_BASE_URL;
+        validateJiraRuntimeConfiguration(jiraApiBaseUrl);
+        if (!jiraProperties.mockEnabled() && isNumeric(normalizedQuery)) {
+            JiraSprintOptionDto sprint = fetchJiraSprintById(jiraApiBaseUrl, Long.valueOf(normalizedQuery));
+            if (sprint != null && Objects.equals(sprint.boardId(), boardId)) {
+                return List.of(sprint);
+            }
+        }
+        List<JiraSprintOptionDto> sprints = jiraProperties.mockEnabled()
+            ? mockSprintOptions(boardId)
+            : fetchJiraSprintOptions(jiraApiBaseUrl, boardId, normalizedQuery);
+
+        if (normalizedQuery == null) {
+            return sprints;
+        }
+        String queryLower = normalizedQuery.toLowerCase();
+        return sprints.stream()
+            .filter(sprint -> sprint.id().contains(normalizedQuery)
+                || normalizeOptional(sprint.name()) != null && sprint.name().toLowerCase().contains(queryLower))
+            .toList();
     }
 
     public JiraExportBatchStartDto startExport(
@@ -140,7 +181,7 @@ public class JiraIssueExportService {
         String jiraApiBaseUrl = JIRA_API_BASE_URL;
         validateJiraRuntimeConfiguration(jiraApiBaseUrl);
         Long jiraSprintId = normalizedJiraSprintId(request.jiraSprintId());
-        String projectKey = normalizeRequired(request.projectKey(), "projectKey");
+        String projectKey = normalizeRequiredProjectKey(request.projectKey());
         UUID planningSprintId = parseRequiredUuid(request.planningSprintId(), "planningSprintId");
         SprintEntity planningSprint = sprintRepository.findByIdAndTeamKey(planningSprintId, teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Sprint not found"));
@@ -157,9 +198,9 @@ public class JiraIssueExportService {
             tasksById,
             planningSprint,
             jiraSprintId,
-            projectKey,
             labels,
-            jiraApiBaseUrl
+            jiraApiBaseUrl,
+            request
         );
 
         JiraExportBatchEntity batch = new JiraExportBatchEntity();
@@ -190,7 +231,7 @@ public class JiraIssueExportService {
             Map.of(
                 "planningSprintId", planningSprintId.toString(),
                 "jiraSprintId", jiraSprintId,
-                "projectKey", projectKey,
+                "projectKey", batch.getProjectKey(),
                 "totalItems", items.size()
             )
         );
@@ -227,12 +268,14 @@ public class JiraIssueExportService {
         String userName = normalizeUserName(rawUserName);
         String effectiveSessionId = StringUtils.hasText(sessionId) ? sessionId.trim() : UUID.randomUUID().toString();
 
-        UUID linkedBatchId = transactionTemplate.execute(status -> {
+        ManualConfirmContext confirmContext = transactionTemplate.execute(status -> {
             TaskJiraIssueEntity entity = taskJiraIssueRepository.findByIdAndTeamKey(issueId, teamKey)
                 .orElseThrow(() -> new EntityNotFoundException("Task Jira issue not found"));
             if (!LINK_STATUS_MANUAL_CHECK_REQUIRED.equalsIgnoreCase(normalizeOptional(entity.getStatus()))) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Подтверждение доступно только для статуса MANUAL_CHECK_REQUIRED");
             }
+            UUID taskId = entity.getTask() != null ? entity.getTask().getId() : null;
+            boolean storyIssue = ISSUE_SCOPE_STORY.equalsIgnoreCase(normalizeOptional(entity.getIssueScope()));
             entity.setJiraIssueId(UNKNOWN_JIRA_ISSUE_ID);
             entity.setJiraIssueKey(jiraIssueKey);
             entity.setJiraIssueUrl(issueUrl(jiraIssueKey));
@@ -240,7 +283,13 @@ public class JiraIssueExportService {
             entity.setLastError(null);
             entity.setUpdatedAt(OffsetDateTime.now());
             taskJiraIssueRepository.saveAndFlush(entity);
-            return entity.getExportBatch() != null ? entity.getExportBatch().getId() : null;
+            return new ManualConfirmContext(
+                entity.getExportBatch() != null ? entity.getExportBatch().getId() : null,
+                taskId,
+                storyIssue,
+                entity.getId(),
+                jiraIssueKey
+            );
         });
 
         List<UUID> updatedBatchIds = updateBatchItemsByTaskJiraIssueId(
@@ -257,6 +306,14 @@ public class JiraIssueExportService {
 
         TaskJiraIssueEntity entity = taskJiraIssueRepository.findByIdAndTeamKey(issueId, teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Task Jira issue not found"));
+        if (confirmContext != null && confirmContext.storyIssue() && confirmContext.taskId() != null) {
+            linkExistingParticipantIssuesToStory(
+                teamKey,
+                confirmContext.taskId(),
+                confirmContext.storyIssueId(),
+                confirmContext.storyIssueKey()
+            );
+        }
 
         logTaskJiraEvent(
             teamKey,
@@ -277,7 +334,12 @@ public class JiraIssueExportService {
             )
         );
 
-        UUID responseBatchId = resolveBatchIdForResponse(teamKey, preferredBatchId, linkedBatchId, updatedBatchIds);
+        UUID responseBatchId = resolveBatchIdForResponse(
+            teamKey,
+            preferredBatchId,
+            confirmContext == null ? null : confirmContext.linkedBatchId(),
+            updatedBatchIds
+        );
         if (responseBatchId != null) {
             apiHistoryService.logEntityEvent(
                 teamKey,
@@ -384,11 +446,12 @@ public class JiraIssueExportService {
         Map<UUID, TaskEntity> tasksById,
         SprintEntity planningSprint,
         Long jiraSprintId,
-        String projectKey,
         List<String> labels,
-        String jiraApiBaseUrl
+        String jiraApiBaseUrl,
+        JiraIssueExportRequest request
     ) {
         List<BatchItemState> items = new ArrayList<>();
+        String projectKey = normalizeRequiredProjectKey(request.projectKey());
 
         for (UUID taskId : requestedTaskIds) {
             TaskEntity task = tasksById.get(taskId);
@@ -396,6 +459,7 @@ public class JiraIssueExportService {
                 items.add(BatchItemState.failed(
                     taskId.toString(),
                     null,
+                    ISSUE_SCOPE_PARTICIPANT,
                     null,
                     null,
                     planningSprint.getId().toString(),
@@ -408,11 +472,52 @@ public class JiraIssueExportService {
             List<TaskParticipantEntity> participants = task.getParticipants().stream()
                 .sorted(Comparator.comparingInt(TaskParticipantEntity::getDisplayOrder))
                 .toList();
+            List<TaskParticipantEntity> selectedParticipants = filterSelectedParticipants(task, participants, requestParticipantIds(request, task.getId()));
+
+            if (shouldCreateStory(request, task.getId())) {
+                BigDecimal storyPoints = new BigDecimal("0.1");
+                ParticipantEntity storyAssignee = resolveStoryAssignee(task, participants);
+                if (storyAssignee == null || !StringUtils.hasText(storyAssignee.getJiraLogin())) {
+                    items.add(BatchItemState.failed(
+                        task.getId().toString(),
+                        task.getTitle(),
+                        ISSUE_SCOPE_STORY,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "Не удалось определить Jira assignee для Story"
+                    ));
+                } else {
+                    JiraCreateIssueRequest requestBody = buildStoryIssueRequest(
+                        projectKey,
+                        jiraSprintId,
+                        labels,
+                        task,
+                        storyAssignee,
+                        storyPoints
+                    );
+                    JiraIssueRequestPreviewDto requestPreview = buildRequestPreview(jiraApiBaseUrl, requestBody);
+                    items.add(BatchItemState.pending(
+                        task.getId().toString(),
+                        task.getTitle(),
+                        ISSUE_SCOPE_STORY,
+                        null,
+                        null,
+                        null,
+                        null,
+                        storyPoints,
+                        projectKey,
+                        requestPreview
+                    ));
+                }
+            }
 
             if (participants.isEmpty()) {
                 items.add(BatchItemState.skipped(
                     task.getId().toString(),
                     task.getTitle(),
+                    ISSUE_SCOPE_PARTICIPANT,
                     null,
                     null,
                     planningSprint.getId().toString(),
@@ -422,7 +527,21 @@ public class JiraIssueExportService {
                 continue;
             }
 
-            for (TaskParticipantEntity taskParticipant : participants) {
+            if (selectedParticipants.isEmpty()) {
+                items.add(BatchItemState.skipped(
+                    task.getId().toString(),
+                    task.getTitle(),
+                    ISSUE_SCOPE_PARTICIPANT,
+                    null,
+                    null,
+                    planningSprint.getId().toString(),
+                    planningSprint.getName(),
+                    "Для задачи не выбраны участники для заведения в Jira"
+                ));
+                continue;
+            }
+
+            for (TaskParticipantEntity taskParticipant : selectedParticipants) {
                 ParticipantEntity participant = taskParticipant.getParticipant();
                 if (participant == null || participant.getId() == null) {
                     continue;
@@ -436,6 +555,7 @@ public class JiraIssueExportService {
                     items.add(BatchItemState.skipped(
                         task.getId().toString(),
                         task.getTitle(),
+                        ISSUE_SCOPE_PARTICIPANT,
                         participantId.toString(),
                         participantName,
                         planningSprint.getId().toString(),
@@ -449,6 +569,7 @@ public class JiraIssueExportService {
                     items.add(BatchItemState.failed(
                         task.getId().toString(),
                         task.getTitle(),
+                        ISSUE_SCOPE_PARTICIPANT,
                         participantId.toString(),
                         participantName,
                         planningSprint.getId().toString(),
@@ -470,17 +591,76 @@ public class JiraIssueExportService {
                 items.add(BatchItemState.pending(
                     task.getId().toString(),
                     task.getTitle(),
+                    ISSUE_SCOPE_PARTICIPANT,
                     participantId.toString(),
                     participantName,
                     planningSprint.getId().toString(),
                     planningSprint.getName(),
                     storyPoints,
+                    projectKey,
                     requestPreview
                 ));
             }
         }
 
         return items;
+    }
+
+    private String normalizeRequiredProjectKey(String projectKey) {
+        if (!StringUtils.hasText(projectKey)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Поле projectKey обязательно");
+        }
+        return projectKey.trim().toUpperCase();
+    }
+
+    private ParticipantEntity resolveStoryAssignee(
+        TaskEntity task,
+        List<TaskParticipantEntity> orderedParticipants
+    ) {
+        ParticipantEntity leader = task.getLeaderParticipant();
+        if (leader != null && leader.getId() != null) {
+            return leader;
+        }
+        return orderedParticipants.stream()
+            .map(TaskParticipantEntity::getParticipant)
+            .filter(Objects::nonNull)
+            .findFirst()
+            .orElse(null);
+    }
+
+    private List<String> requestParticipantIds(JiraIssueExportRequest request, UUID taskId) {
+        if (request.participantIdsByTaskId() == null || taskId == null) {
+            return List.of();
+        }
+        return request.participantIdsByTaskId().getOrDefault(taskId.toString(), List.of());
+    }
+
+    private boolean shouldCreateStory(JiraIssueExportRequest request, UUID taskId) {
+        if (request.createStoryByTaskId() != null && taskId != null) {
+            return Boolean.TRUE.equals(request.createStoryByTaskId().get(taskId.toString()));
+        }
+        return false;
+    }
+
+    private List<TaskParticipantEntity> filterSelectedParticipants(
+        TaskEntity task,
+        List<TaskParticipantEntity> participants,
+        List<String> requestedParticipantIds
+    ) {
+        if (requestedParticipantIds == null || requestedParticipantIds.isEmpty()) {
+            return participants;
+        }
+        List<UUID> selectedIds = requestedParticipantIds.stream()
+            .filter(StringUtils::hasText)
+            .map(value -> parseRequiredUuid(value, "participantIdsByTaskId[" + task.getId() + "]"))
+            .toList();
+        if (selectedIds.isEmpty()) {
+            return List.of();
+        }
+        return participants.stream()
+            .filter(taskParticipant -> taskParticipant.getParticipant() != null)
+            .filter(taskParticipant -> selectedIds.contains(taskParticipant.getParticipant().getId()))
+            .toList();
     }
 
     private void processBatch(UUID batchId) {
@@ -552,6 +732,9 @@ public class JiraIssueExportService {
         RestClient jiraClient,
         String jiraApiBaseUrl
     ) {
+        if (ISSUE_SCOPE_STORY.equalsIgnoreCase(normalizeOptional(item.issueScope()))) {
+            return processPendingStoryItem(batch, item, jiraClient, jiraApiBaseUrl);
+        }
         UUID taskId = parseRequiredUuid(item.taskId(), "taskId");
         UUID participantId = parseRequiredUuid(item.participantId(), "participantId");
         UUID planningSprintId = parseRequiredUuid(item.planningSprintId(), "planningSprintId");
@@ -570,13 +753,14 @@ public class JiraIssueExportService {
         if (participant == null) {
             return item.withStatus(ITEM_STATUS_FAILED, "Участник не найден в задаче");
         }
+        String projectKey = normalizeRequiredProjectKey(batch.getProjectKey());
 
         SlotReservationResult reservation = reserveIssueSlot(
             batch,
             taskId,
             participantId,
             planningSprintId,
-            batch.getProjectKey(),
+            projectKey,
             batch.getJiraSprintId(),
             item.storyPoints()
         );
@@ -591,7 +775,7 @@ public class JiraIssueExportService {
         }
 
         JiraCreateIssueRequest requestBody = buildIssueRequest(
-            batch.getProjectKey(),
+            projectKey,
             batch.getJiraSprintId(),
             normalizeLabels(batch.getLabelsJson()),
             task,
@@ -607,6 +791,14 @@ public class JiraIssueExportService {
                 jiraResponse.id(),
                 jiraResponse.key(),
                 issueUrl(jiraResponse.key())
+            );
+            LinkResult linkResult = linkParticipantIssueToStoryIfNeeded(
+                batch,
+                taskId,
+                projectKey,
+                reservation.reservationId(),
+                jiraResponse.key(),
+                jiraClient
             );
 
             TaskJiraIssueEntity createdEntity = taskJiraIssueRepository.findById(reservation.reservationId())
@@ -627,21 +819,25 @@ public class JiraIssueExportService {
                 ),
                 Map.of(
                     "source", "POST /jira/issues",
-                    "projectKey", batch.getProjectKey(),
+                    "projectKey", projectKey,
                     "planningSprintId", planningSprintId.toString(),
                     "jiraSprintId", batch.getJiraSprintId(),
                     "participantId", participantId.toString()
                 )
             );
 
-            return item.withTaskJiraIssueId(reservation.reservationId().toString())
+            BatchItemState createdItem = item.withTaskJiraIssueId(reservation.reservationId().toString())
                 .withCreated(
-                    "Jira-задача создана",
+                    linkResult.message(),
                     jiraResponse.id(),
                     jiraResponse.key(),
                     issueUrl(jiraResponse.key()),
                     requestPreview
                 );
+            if (!linkResult.linked()) {
+                return createdItem.withManualCheck(linkResult.message(), requestPreview);
+            }
+            return createdItem;
         } catch (JiraIssueProcessingException ex) {
             if (ex.manualCheckRequired()) {
                 markIssueManualCheckRequired(reservation.reservationId(), ex.getMessage());
@@ -668,6 +864,83 @@ public class JiraIssueExportService {
                 .withFailed(ex.getMessage(), requestPreview);
         } catch (RuntimeException ex) {
             String message = "Экспорт в Jira не завершен, требуется ручная проверка";
+            markIssueManualCheckRequired(reservation.reservationId(), message);
+            return item.withTaskJiraIssueId(reservation.reservationId().toString())
+                .withManualCheck(message, requestPreview);
+        }
+    }
+
+    private BatchItemState processPendingStoryItem(
+        JiraExportBatchEntity batch,
+        BatchItemState item,
+        RestClient jiraClient,
+        String jiraApiBaseUrl
+    ) {
+        UUID taskId = parseRequiredUuid(item.taskId(), "taskId");
+
+        TaskEntity task = taskRepository.findWithDetailsById(taskId, batch.getTeamKey());
+        if (task == null) {
+            return item.withStatus(ITEM_STATUS_FAILED, "Задача не найдена");
+        }
+        String projectKey = normalizeRequiredProjectKey(batch.getProjectKey());
+
+        SlotReservationResult reservation = reserveStorySlot(
+            batch,
+            taskId,
+            projectKey,
+            batch.getJiraSprintId(),
+            item.storyPoints()
+        );
+        if (reservation.existingIssue() != null) {
+            return toExistingIssueItem(item, reservation.existingIssue());
+        }
+
+        ParticipantEntity storyAssignee = resolveStoryAssignee(task, task.getParticipants().stream()
+            .sorted(Comparator.comparingInt(TaskParticipantEntity::getDisplayOrder))
+            .toList());
+        if (storyAssignee == null || !StringUtils.hasText(storyAssignee.getJiraLogin())) {
+            markIssueFailed(reservation.reservationId(), "Не удалось определить Jira assignee для Story");
+            return item.withTaskJiraIssueId(reservation.reservationId().toString())
+                .withStatus(ITEM_STATUS_FAILED, "Не удалось определить Jira assignee для Story");
+        }
+
+        JiraCreateIssueRequest requestBody = buildStoryIssueRequest(
+            projectKey,
+            batch.getJiraSprintId(),
+            normalizeLabels(batch.getLabelsJson()),
+            task,
+            storyAssignee,
+            item.storyPoints()
+        );
+        JiraIssueRequestPreviewDto requestPreview = buildRequestPreview(jiraApiBaseUrl, requestBody);
+
+        try {
+            JiraCreateIssueResponse jiraResponse = createIssue(jiraClient, requestBody);
+            completeIssueSlot(
+                reservation.reservationId(),
+                jiraResponse.id(),
+                jiraResponse.key(),
+                issueUrl(jiraResponse.key())
+            );
+            return item.withTaskJiraIssueId(reservation.reservationId().toString())
+                .withCreated(
+                    "Jira Story создана",
+                    jiraResponse.id(),
+                    jiraResponse.key(),
+                    issueUrl(jiraResponse.key()),
+                    requestPreview
+                );
+        } catch (JiraIssueProcessingException ex) {
+            if (ex.manualCheckRequired()) {
+                markIssueManualCheckRequired(reservation.reservationId(), ex.getMessage());
+                return item.withTaskJiraIssueId(reservation.reservationId().toString())
+                    .withManualCheck(ex.getMessage(), requestPreview);
+            }
+            markIssueFailed(reservation.reservationId(), ex.getMessage());
+            return item.withTaskJiraIssueId(reservation.reservationId().toString())
+                .withFailed(ex.getMessage(), requestPreview);
+        } catch (RuntimeException ex) {
+            String message = "Экспорт Story в Jira не завершен, требуется ручная проверка";
             markIssueManualCheckRequired(reservation.reservationId(), message);
             return item.withTaskJiraIssueId(reservation.reservationId().toString())
                 .withManualCheck(message, requestPreview);
@@ -737,7 +1010,7 @@ public class JiraIssueExportService {
         BigDecimal storyPoints
     ) {
         return transactionTemplate.execute(status -> {
-            TaskJiraIssueEntity existing = loadExistingIssue(batch.getTeamKey(), taskId, participantId, planningSprintId);
+            TaskJiraIssueEntity existing = loadExistingIssue(batch.getTeamKey(), taskId, participantId, planningSprintId, projectKey);
             if (existing != null) {
                 String existingStatus = normalizeOptional(existing.getStatus());
                 if (LINK_STATUS_CREATED.equalsIgnoreCase(existingStatus)) {
@@ -777,6 +1050,7 @@ public class JiraIssueExportService {
             pending.setTeamKey(batch.getTeamKey());
             pending.setTask(entityManager.getReference(TaskEntity.class, taskId));
             pending.setParticipant(entityManager.getReference(ParticipantEntity.class, participantId));
+            pending.setIssueScope(ISSUE_SCOPE_PARTICIPANT);
             pending.setPlanningSprint(entityManager.getReference(SprintEntity.class, planningSprintId));
             pending.setExportBatch(batch);
             pending.setJiraIssueId("PENDING");
@@ -798,13 +1072,84 @@ public class JiraIssueExportService {
                     batch.getTeamKey(),
                     taskId,
                     participantId,
-                    planningSprintId
+                    planningSprintId,
+                    projectKey
                 );
                 if (existingAfterConflict != null) {
                     return SlotReservationResult.existing(existingAfterConflict);
                 }
                 throw ex;
             }
+        });
+    }
+
+    private SlotReservationResult reserveStorySlot(
+        JiraExportBatchEntity batch,
+        UUID taskId,
+        String projectKey,
+        Long jiraSprintId,
+        BigDecimal storyPoints
+    ) {
+        return transactionTemplate.execute(status -> {
+            TaskJiraIssueEntity existing = taskJiraIssueRepository
+                .findFirstByTeamKeyAndTaskIdAndIssueScopeOrderByCreatedAtAsc(
+                    batch.getTeamKey(),
+                    taskId,
+                    ISSUE_SCOPE_STORY
+                )
+                .orElse(null);
+            if (existing != null) {
+                String existingStatus = normalizeOptional(existing.getStatus());
+                if (LINK_STATUS_CREATED.equalsIgnoreCase(existingStatus)
+                    || LINK_STATUS_MANUAL_CHECK_REQUIRED.equalsIgnoreCase(existingStatus)) {
+                    return SlotReservationResult.existing(existing);
+                }
+                if (LINK_STATUS_IN_PROGRESS.equalsIgnoreCase(existingStatus)) {
+                    if (isStaleInProgress(existing)) {
+                        existing.setStatus(LINK_STATUS_MANUAL_CHECK_REQUIRED);
+                        existing.setLastError("Предыдущая попытка зависла: требуется ручная проверка, Story могла быть создана в Jira");
+                        existing.setUpdatedAt(OffsetDateTime.now());
+                        taskJiraIssueRepository.saveAndFlush(existing);
+                    }
+                    return SlotReservationResult.existing(existing);
+                }
+                if (LINK_STATUS_FAILED.equalsIgnoreCase(existingStatus)) {
+                    existing.setExportBatch(batch);
+                    existing.setPlanningSprint(null);
+                    existing.setJiraProjectKey(projectKey);
+                    existing.setJiraSprintId(jiraSprintId);
+                    existing.setStoryPoints(storyPoints);
+                    existing.setJiraIssueId("PENDING");
+                    existing.setJiraIssueKey("PENDING");
+                    existing.setJiraIssueUrl("PENDING");
+                    existing.setStatus(LINK_STATUS_IN_PROGRESS);
+                    existing.setLastError(null);
+                    existing.setUpdatedAt(OffsetDateTime.now());
+                    TaskJiraIssueEntity saved = taskJiraIssueRepository.saveAndFlush(existing);
+                    return SlotReservationResult.created(saved.getId());
+                }
+                return SlotReservationResult.existing(existing);
+            }
+
+            TaskJiraIssueEntity pending = new TaskJiraIssueEntity();
+            pending.setTeamKey(batch.getTeamKey());
+            pending.setTask(entityManager.getReference(TaskEntity.class, taskId));
+            pending.setIssueScope(ISSUE_SCOPE_STORY);
+            pending.setPlanningSprint(null);
+            pending.setExportBatch(batch);
+            pending.setJiraIssueId("PENDING");
+            pending.setJiraIssueKey("PENDING");
+            pending.setJiraIssueUrl("PENDING");
+            pending.setJiraProjectKey(projectKey);
+            pending.setJiraSprintId(jiraSprintId);
+            pending.setStoryPoints(storyPoints);
+            pending.setCreatedAt(OffsetDateTime.now());
+            pending.setUpdatedAt(OffsetDateTime.now());
+            pending.setStatus(LINK_STATUS_IN_PROGRESS);
+            pending.setLastError(null);
+
+            TaskJiraIssueEntity saved = taskJiraIssueRepository.saveAndFlush(pending);
+            return SlotReservationResult.created(saved.getId());
         });
     }
 
@@ -820,6 +1165,89 @@ public class JiraIssueExportService {
             entity.setUpdatedAt(OffsetDateTime.now());
             taskJiraIssueRepository.saveAndFlush(entity);
         });
+    }
+
+    private LinkResult linkParticipantIssueToStoryIfNeeded(
+        JiraExportBatchEntity batch,
+        UUID taskId,
+        String projectKey,
+        UUID participantIssueId,
+        String participantIssueKey,
+        RestClient jiraClient
+    ) {
+        TaskJiraIssueEntity story = taskJiraIssueRepository
+            .findFirstByTeamKeyAndTaskIdAndIssueScopeOrderByCreatedAtAsc(
+                batch.getTeamKey(),
+                taskId,
+                ISSUE_SCOPE_STORY
+            )
+            .orElse(null);
+        if (story == null || !LINK_STATUS_CREATED.equalsIgnoreCase(normalizeOptional(story.getStatus()))) {
+            return new LinkResult(true, "Jira-задача создана");
+        }
+        if (!StringUtils.hasText(story.getJiraIssueKey()) || !StringUtils.hasText(participantIssueKey)) {
+            return new LinkResult(false, "Jira-задача создана, связь со Story требует ручной проверки");
+        }
+
+        try {
+            createIssueLink(jiraClient, participantIssueKey, story.getJiraIssueKey());
+            transactionTemplate.executeWithoutResult(status -> {
+                TaskJiraIssueEntity participantIssue = taskJiraIssueRepository.findById(participantIssueId)
+                    .orElseThrow(() -> new EntityNotFoundException("Task Jira issue not found"));
+                participantIssue.setParentTaskJiraIssue(story);
+                participantIssue.setUpdatedAt(OffsetDateTime.now());
+                taskJiraIssueRepository.saveAndFlush(participantIssue);
+            });
+            return new LinkResult(true, "Jira-задача создана и связана со Story");
+        } catch (JiraIssueProcessingException ex) {
+            return new LinkResult(false, "Jira-задача создана, но связь со Story не создана: " + ex.getMessage());
+        }
+    }
+
+    private void linkExistingParticipantIssuesToStory(
+        String teamKey,
+        UUID taskId,
+        UUID storyIssueId,
+        String storyIssueKey
+    ) {
+        if (!StringUtils.hasText(storyIssueKey)) {
+            return;
+        }
+        List<TaskJiraIssueEntity> participantIssues = taskJiraIssueRepository
+            .findAllByTeamKeyAndTaskIdAndIssueScope(teamKey, taskId, ISSUE_SCOPE_PARTICIPANT)
+            .stream()
+            .filter(issue -> LINK_STATUS_CREATED.equalsIgnoreCase(normalizeOptional(issue.getStatus())))
+            .filter(issue -> StringUtils.hasText(issue.getJiraIssueKey()))
+            .filter(issue -> issue.getParentTaskJiraIssue() == null
+                || !Objects.equals(issue.getParentTaskJiraIssue().getId(), storyIssueId))
+            .toList();
+        if (participantIssues.isEmpty()) {
+            return;
+        }
+
+        RestClient jiraClient = jiraProperties.mockEnabled()
+            ? null
+            : createJiraRestClient(JIRA_API_BASE_URL, normalizedToken());
+        for (TaskJiraIssueEntity participantIssue : participantIssues) {
+            try {
+                createIssueLink(jiraClient, participantIssue.getJiraIssueKey(), storyIssueKey);
+                transactionTemplate.executeWithoutResult(status -> {
+                    TaskJiraIssueEntity managedParticipant = taskJiraIssueRepository.findById(participantIssue.getId())
+                        .orElseThrow(() -> new EntityNotFoundException("Task Jira issue not found"));
+                    managedParticipant.setParentTaskJiraIssue(entityManager.getReference(TaskJiraIssueEntity.class, storyIssueId));
+                    managedParticipant.setLastError(null);
+                    managedParticipant.setUpdatedAt(OffsetDateTime.now());
+                    taskJiraIssueRepository.saveAndFlush(managedParticipant);
+                });
+            } catch (JiraIssueProcessingException ex) {
+                log.warn(
+                    "Failed to link Jira participant issue {} to Story {}",
+                    participantIssue.getJiraIssueKey(),
+                    storyIssueKey,
+                    ex
+                );
+            }
+        }
     }
 
     private void markIssueFailed(UUID reservationId, String message) {
@@ -844,6 +1272,23 @@ public class JiraIssueExportService {
         });
     }
 
+    private TaskJiraIssueEntity loadExistingIssue(
+        String teamKey,
+        UUID taskId,
+        UUID participantId,
+        UUID planningSprintId,
+        String projectKey
+    ) {
+        return taskJiraIssueRepository.findByTeamKeyAndTaskIdAndParticipantIdAndPlanningSprintIdAndJiraProjectKey(
+                teamKey,
+                taskId,
+                participantId,
+                planningSprintId,
+                projectKey
+            )
+            .orElse(null);
+    }
+
     private TaskJiraIssueEntity loadExistingIssue(String teamKey, UUID taskId, UUID participantId, UUID planningSprintId) {
         return taskJiraIssueRepository.findByTeamKeyAndTaskIdAndParticipantIdAndPlanningSprintId(
                 teamKey,
@@ -861,6 +1306,9 @@ public class JiraIssueExportService {
         String planningSprintId
     ) {
         try {
+            if (!StringUtils.hasText(participantId)) {
+                return null;
+            }
             return loadExistingIssue(
                 teamKey,
                 UUID.fromString(taskId),
@@ -972,6 +1420,123 @@ public class JiraIssueExportService {
             .build();
     }
 
+    private List<JiraSprintOptionDto> fetchJiraSprintOptions(String jiraApiBaseUrl, Long boardId, String query) {
+        RestClient jiraClient = createJiraRestClient(jiraApiBaseUrl, normalizedToken());
+        boolean includeClosed = query != null;
+        String state = includeClosed ? "active,future,closed" : "active,future";
+        int maxResults = includeClosed ? 100 : 50;
+        int maxPages = includeClosed ? 5 : 1;
+        List<JiraSprintOptionDto> result = new ArrayList<>();
+        try {
+            for (int page = 0; page < maxPages; page += 1) {
+                int startAt = page * maxResults;
+                JiraSprintSearchResponse response = jiraClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                        .path("/rest/agile/1.0/board/{boardId}/sprint")
+                        .queryParam("state", state)
+                        .queryParam("startAt", startAt)
+                        .queryParam("maxResults", maxResults)
+                        .build(boardId))
+                    .retrieve()
+                    .body(JiraSprintSearchResponse.class);
+                if (response == null || response.values() == null || response.values().isEmpty()) {
+                    break;
+                }
+                result.addAll(response.values().stream()
+                    .filter(sprint -> query == null || sprintMatchesQuery(sprint, query))
+                    .map(this::toSprintOption)
+                    .toList());
+                if (Boolean.TRUE.equals(response.isLast()) || response.values().size() < maxResults) {
+                    break;
+                }
+            }
+            return result;
+        } catch (ResourceAccessException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Jira недоступна или отвечает слишком долго", ex);
+        } catch (RestClientResponseException ex) {
+            String message = StringUtils.hasText(ex.getResponseBodyAsString())
+                ? ex.getResponseBodyAsString()
+                : ex.getMessage();
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Jira вернула ошибку при получении спринтов: " + message, ex);
+        }
+    }
+
+    private JiraSprintOptionDto fetchJiraSprintById(String jiraApiBaseUrl, Long sprintId) {
+        RestClient jiraClient = createJiraRestClient(jiraApiBaseUrl, normalizedToken());
+        try {
+            JiraSprintValue sprint = jiraClient.get()
+                .uri("/rest/agile/1.0/sprint/{sprintId}", sprintId)
+                .retrieve()
+                .body(JiraSprintValue.class);
+            return sprint == null ? null : toSprintOption(sprint);
+        } catch (ResourceAccessException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Jira недоступна или отвечает слишком долго", ex);
+        } catch (RestClientResponseException ex) {
+            if (ex.getStatusCode().value() == 404) {
+                return null;
+            }
+            String message = StringUtils.hasText(ex.getResponseBodyAsString())
+                ? ex.getResponseBodyAsString()
+                : ex.getMessage();
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Jira вернула ошибку при получении спринта: " + message, ex);
+        }
+    }
+
+    private JiraSprintOptionDto toSprintOption(JiraSprintValue sprint) {
+        return new JiraSprintOptionDto(
+            String.valueOf(sprint.id()),
+            sprint.name(),
+            sprint.state(),
+            sprint.startDate(),
+            sprint.endDate(),
+            sprint.originBoardId()
+        );
+    }
+
+    private boolean sprintMatchesQuery(JiraSprintValue sprint, String query) {
+        String normalizedQuery = normalizeOptional(query);
+        if (normalizedQuery == null) {
+            return true;
+        }
+        String queryLower = normalizedQuery.toLowerCase();
+        return String.valueOf(sprint.id()).contains(normalizedQuery)
+            || normalizeOptional(sprint.name()) != null && sprint.name().toLowerCase().contains(queryLower);
+    }
+
+    private List<JiraSprintOptionDto> mockSprintOptions(Long boardId) {
+        return List.of(
+            new JiraSprintOptionDto("245799", "Mock active sprint", "active", null, null, boardId),
+            new JiraSprintOptionDto("245800", "Mock future sprint", "future", null, null, boardId)
+        );
+    }
+
+    private void createIssueLink(RestClient jiraClient, String participantIssueKey, String storyIssueKey) {
+        if (jiraProperties.mockEnabled()) {
+            return;
+        }
+        if (jiraClient == null) {
+            throw new JiraIssueProcessingException(false, "Jira client is not configured");
+        }
+        try {
+            jiraClient.post()
+                .uri("/rest/api/2/issueLink")
+                .body(new JiraIssueLinkRequest(
+                    new JiraIssueLinkType(JIRA_LINK_TYPE_PART_OF),
+                    new JiraIssueLinkIssue(storyIssueKey),
+                    new JiraIssueLinkIssue(participantIssueKey)
+                ))
+                .retrieve()
+                .toBodilessEntity();
+        } catch (ResourceAccessException ex) {
+            throw new JiraIssueProcessingException(true, "Jira недоступна при создании связи Story и задачи", ex);
+        } catch (RestClientResponseException ex) {
+            String message = StringUtils.hasText(ex.getResponseBodyAsString())
+                ? ex.getResponseBodyAsString()
+                : ex.getMessage();
+            throw new JiraIssueProcessingException(false, "Jira вернула ошибку при создании связи Story и задачи: " + message, ex);
+        }
+    }
+
     private JiraCreateIssueResponse mockCreateIssue(JiraCreateIssueRequest body) {
         long sequence = MOCK_ISSUE_SEQUENCE.incrementAndGet();
         String projectKey = body.fields().project().key();
@@ -994,12 +1559,34 @@ public class JiraIssueExportService {
         return new JiraCreateIssueRequest(
             new JiraCreateIssueFields(
                 new JiraProject(projectKey),
-                new JiraIssueType(JIRA_ISSUE_TYPE_ID),
+                new JiraIssueType(DEFAULT_PARTICIPANT_ISSUE_TYPE_ID),
                 normalizedTaskTitle(task),
                 buildDescription(task),
                 new JiraAssignee(participant.getJiraLogin().trim()),
                 labels,
                 storyPoints,
+                jiraSprintId
+            )
+        );
+    }
+
+    private JiraCreateIssueRequest buildStoryIssueRequest(
+        String projectKey,
+        Long jiraSprintId,
+        List<String> labels,
+        TaskEntity task,
+        ParticipantEntity assignee,
+        BigDecimal storyPoints
+    ) {
+        return new JiraCreateIssueRequest(
+            new JiraCreateIssueFields(
+                new JiraProject(projectKey),
+                new JiraIssueType(DEFAULT_STORY_ISSUE_TYPE_ID),
+                normalizedTaskTitle(task),
+                buildDescription(task),
+                new JiraAssignee(assignee.getJiraLogin().trim()),
+                labels,
+                storyPoints == null ? BigDecimal.ZERO : storyPoints,
                 jiraSprintId
             )
         );
@@ -1012,15 +1599,16 @@ public class JiraIssueExportService {
         Map<String, Object> issueType = new LinkedHashMap<>();
         issueType.put("id", request.fields().issuetype().id());
 
-        Map<String, Object> assignee = new LinkedHashMap<>();
-        assignee.put("name", request.fields().assignee().name());
-
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("project", project);
         fields.put("issuetype", issueType);
         fields.put("summary", request.fields().summary());
         fields.put("description", request.fields().description());
-        fields.put("assignee", assignee);
+        if (request.fields().assignee() != null && StringUtils.hasText(request.fields().assignee().name())) {
+            Map<String, Object> assignee = new LinkedHashMap<>();
+            assignee.put("name", request.fields().assignee().name());
+            fields.put("assignee", assignee);
+        }
         fields.put("labels", request.fields().labels());
         fields.put("customfield_10002", request.fields().customfield_10002());
         fields.put("customfield_10005", request.fields().customfield_10005());
@@ -1154,6 +1742,10 @@ public class JiraIssueExportService {
             return null;
         }
         return value.trim();
+    }
+
+    private boolean isNumeric(String value) {
+        return value != null && value.chars().allMatch(Character::isDigit);
     }
 
     private String normalizeUserName(String rawUserName) {
@@ -1416,6 +2008,34 @@ public class JiraIssueExportService {
         }
     }
 
+    private record LinkResult(boolean linked, String message) {
+    }
+
+    private record ManualConfirmContext(
+        UUID linkedBatchId,
+        UUID taskId,
+        boolean storyIssue,
+        UUID storyIssueId,
+        String storyIssueKey
+    ) {
+    }
+
+    private record JiraSprintSearchResponse(
+        List<JiraSprintValue> values,
+        Boolean isLast
+    ) {
+    }
+
+    private record JiraSprintValue(
+        Long id,
+        String name,
+        String state,
+        String startDate,
+        String endDate,
+        Long originBoardId
+    ) {
+    }
+
     private record JiraCreateIssueRequest(JiraCreateIssueFields fields) {
     }
 
@@ -1443,6 +2063,19 @@ public class JiraIssueExportService {
     private record JiraCreateIssueResponse(String id, String key, String self) {
     }
 
+    private record JiraIssueLinkRequest(
+        JiraIssueLinkType type,
+        JiraIssueLinkIssue inwardIssue,
+        JiraIssueLinkIssue outwardIssue
+    ) {
+    }
+
+    private record JiraIssueLinkType(String name) {
+    }
+
+    private record JiraIssueLinkIssue(String key) {
+    }
+
     private static final class JiraIssueProcessingException extends RuntimeException {
         private final boolean manualCheckRequired;
 
@@ -1466,11 +2099,13 @@ public class JiraIssueExportService {
         String taskJiraIssueId,
         String taskId,
         String taskTitle,
+        String issueScope,
         String participantId,
         String participantName,
         String planningSprintId,
         String planningSprintName,
         BigDecimal storyPoints,
+        String projectKey,
         String status,
         boolean manualActionRequired,
         String message,
@@ -1482,11 +2117,13 @@ public class JiraIssueExportService {
         private static BatchItemState pending(
             String taskId,
             String taskTitle,
+            String issueScope,
             String participantId,
             String participantName,
             String planningSprintId,
             String planningSprintName,
             BigDecimal storyPoints,
+            String projectKey,
             JiraIssueRequestPreviewDto jiraRequest
         ) {
             return new BatchItemState(
@@ -1494,11 +2131,13 @@ public class JiraIssueExportService {
                 null,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
                 storyPoints,
+                projectKey,
                 ITEM_STATUS_PENDING,
                 false,
                 "Ожидает обработки",
@@ -1512,6 +2151,7 @@ public class JiraIssueExportService {
         private static BatchItemState skipped(
             String taskId,
             String taskTitle,
+            String issueScope,
             String participantId,
             String participantName,
             String planningSprintId,
@@ -1523,11 +2163,13 @@ public class JiraIssueExportService {
                 null,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
                 BigDecimal.ZERO,
+                null,
                 ITEM_STATUS_SKIPPED,
                 false,
                 message,
@@ -1541,6 +2183,7 @@ public class JiraIssueExportService {
         private static BatchItemState failed(
             String taskId,
             String taskTitle,
+            String issueScope,
             String participantId,
             String participantName,
             String planningSprintId,
@@ -1552,11 +2195,13 @@ public class JiraIssueExportService {
                 null,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
                 BigDecimal.ZERO,
+                null,
                 ITEM_STATUS_FAILED,
                 false,
                 message,
@@ -1573,11 +2218,13 @@ public class JiraIssueExportService {
                 taskJiraIssueId,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
                 storyPoints,
+                projectKey,
                 nextStatus,
                 ITEM_STATUS_MANUAL_CHECK_REQUIRED.equals(nextStatus),
                 nextMessage,
@@ -1594,11 +2241,13 @@ public class JiraIssueExportService {
                 value,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
                 storyPoints,
+                projectKey,
                 status,
                 manualActionRequired,
                 message,
@@ -1621,11 +2270,13 @@ public class JiraIssueExportService {
                 taskJiraIssueId,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
                 storyPoints,
+                projectKey,
                 ITEM_STATUS_CREATED,
                 false,
                 nextMessage,
@@ -1642,11 +2293,13 @@ public class JiraIssueExportService {
                 taskJiraIssueId,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
                 storyPoints,
+                projectKey,
                 ITEM_STATUS_SKIPPED,
                 false,
                 "Jira-задача уже заведена",
@@ -1663,11 +2316,13 @@ public class JiraIssueExportService {
                 taskJiraIssueId,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
                 storyPoints,
+                projectKey,
                 ITEM_STATUS_MANUAL_CHECK_REQUIRED,
                 true,
                 nextMessage,
@@ -1684,11 +2339,13 @@ public class JiraIssueExportService {
                 taskJiraIssueId,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
                 storyPoints,
+                projectKey,
                 ITEM_STATUS_SKIPPED,
                 true,
                 nextMessage,
@@ -1705,11 +2362,13 @@ public class JiraIssueExportService {
                 taskJiraIssueId,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
                 storyPoints,
+                projectKey,
                 ITEM_STATUS_FAILED,
                 false,
                 nextMessage,
@@ -1732,11 +2391,13 @@ public class JiraIssueExportService {
                 taskJiraIssueId,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
                 storyPoints,
+                projectKey,
                 nextStatus,
                 false,
                 nextMessage,
@@ -1753,10 +2414,12 @@ public class JiraIssueExportService {
                 taskJiraIssueId,
                 taskId,
                 taskTitle,
+                issueScope,
                 participantId,
                 participantName,
                 planningSprintId,
                 planningSprintName,
+                projectKey,
                 status,
                 manualActionRequired,
                 message,

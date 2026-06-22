@@ -31,12 +31,14 @@ import PlanningWorkbenchTaskDialog, {
   PlanningWorkbenchTaskSubmitPayload,
 } from "../components/PlanningWorkbenchTaskDialog";
 import PlanningWorkbenchItemCard from "../components/PlanningWorkbenchItemCard";
-import FilterAutocomplete from "../components/filters/FilterAutocomplete";
+import FiltersPanel from "../components/filters/FiltersPanel";
 import SortControls from "../components/SortControls";
 import { setPlanningWorkbenchPreview } from "./planningWorkbenchPreviewStore";
 
 type PlanningSortBy = "manual" | "load" | "releaseDate" | "priority";
 type SortDirection = "asc" | "desc";
+const WITHOUT_STREAM_FILTER_VALUE = "__WITHOUT_STREAM__";
+const WITHOUT_CUSTOMER_FILTER_VALUE = "__WITHOUT_CUSTOMER__";
 
 const formatDate = (value?: string | null) => {
   if (!value) return "";
@@ -51,17 +53,6 @@ const whole = (value: unknown) => {
 };
 
 const getPlanningDemands = (item: PlanningWorkbenchItem): PlanningDemand[] => item.planningDemands || [];
-
-const sumPlanningItemLoad = (item: PlanningWorkbenchItem) => {
-  const total = getPlanningDemands(item).reduce((sum, demand) => sum + whole(demand.days), 0);
-  return total > 0 ? total : whole(item.estimateDays);
-};
-
-const compareValues = <T extends string | number>(left: T, right: T, direction: SortDirection) => {
-  if (left === right) return 0;
-  const result = left < right ? -1 : 1;
-  return direction === "asc" ? result : -result;
-};
 
 const collectItemQuarterIds = (
   item: PlanningWorkbenchItem,
@@ -115,11 +106,6 @@ export default function PlanningWorkbenchPage() {
   const { teamKey = "default" } = useParams<{ teamKey: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { data: backlog = [], isLoading } = useGetPlanningWorkbenchBacklogQuery(undefined, {
-    refetchOnMountOrArgChange: true,
-    refetchOnFocus: true,
-    refetchOnReconnect: true,
-  });
   const { data: participants = [] } = useGetParticipantsQuery();
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: sprints = [] } = useGetSprintsQuery();
@@ -136,9 +122,23 @@ export default function PlanningWorkbenchPage() {
   const [selectAfterSubmit, setSelectAfterSubmit] = React.useState(false);
   const [quarterFilterIds, setQuarterFilterIds] = React.useState<string[]>([]);
   const [priorityFilterValues, setPriorityFilterValues] = React.useState<string[]>([]);
+  const [releaseFilterValue, setReleaseFilterValue] = React.useState("");
+  const [streamFilterValues, setStreamFilterValues] = React.useState<string[]>([]);
+  const [customerFilterValues, setCustomerFilterValues] = React.useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = React.useState("");
   const [sortBy, setSortBy] = React.useState<PlanningSortBy>("manual");
   const [sortDirection, setSortDirection] = React.useState<SortDirection>("asc");
   const [error, setError] = React.useState("");
+
+  const planningBacklogSortArgs = React.useMemo(
+    () => ({ sortBy, sortDirection }),
+    [sortBy, sortDirection]
+  );
+  const { data: backlog = [], isLoading } = useGetPlanningWorkbenchBacklogQuery(planningBacklogSortArgs, {
+    refetchOnMountOrArgChange: true,
+    refetchOnFocus: true,
+    refetchOnReconnect: true,
+  });
 
   React.useEffect(() => {
     const returnedIds = (location.state as { selectedItemIds?: string[] } | null)?.selectedItemIds;
@@ -181,13 +181,33 @@ export default function PlanningWorkbenchPage() {
     ],
     []
   );
-  const releasePromDateById = React.useMemo(
+  const streamFilterOptions = React.useMemo(
+    () => [
+      { value: WITHOUT_STREAM_FILTER_VALUE, label: "Без стрима" },
+      ...(filters?.streams || [])
+        .slice()
+        .sort((a, b) => a.localeCompare(b, "ru"))
+        .map((stream) => ({ value: stream, label: stream })),
+    ],
+    [filters?.streams]
+  );
+  const customerFilterOptions = React.useMemo(
+    () => [
+      { value: WITHOUT_CUSTOMER_FILTER_VALUE, label: "Без заказчика" },
+      ...(filters?.customers || [])
+        .slice()
+        .sort((a, b) => a.localeCompare(b, "ru"))
+        .map((customer) => ({ value: customer, label: customer })),
+    ],
+    [filters?.customers]
+  );
+  const releaseFilterOptions = React.useMemo(
     () =>
-      new Map(
-        releases
-          .map((release) => [release.id, release.promDate] as const)
-          .filter((entry): entry is [string, string] => Boolean(entry[0] && entry[1]))
-      ),
+      releases
+        .filter((release) => release.id && release.promDate)
+        .slice()
+        .sort((a, b) => a.promDate.localeCompare(b.promDate))
+        .map((release) => ({ value: release.id, label: formatDate(release.promDate) })),
     [releases]
   );
   const sortByOptions = React.useMemo(
@@ -206,73 +226,72 @@ export default function PlanningWorkbenchPage() {
         .map((value) => Number(value))
         .filter((value) => Number.isFinite(value))
     );
+    const selectedReleaseId = releaseFilterValue.trim();
+    const selectedStreams = new Set(streamFilterValues.filter((value) => value !== WITHOUT_STREAM_FILTER_VALUE));
+    const includeWithoutStream = streamFilterValues.includes(WITHOUT_STREAM_FILTER_VALUE);
+    const selectedCustomers = new Set(customerFilterValues.filter((value) => value !== WITHOUT_CUSTOMER_FILTER_VALUE));
+    const includeWithoutCustomer = customerFilterValues.includes(WITHOUT_CUSTOMER_FILTER_VALUE);
+    const normalizedSearch = searchQuery.trim().toLocaleLowerCase("ru");
     return backlog.filter((item) => {
       if (selectedPriorities.size > 0 && !selectedPriorities.has(Number(item.priority))) {
         return false;
+      }
+      if (selectedReleaseId && item.releaseDateId !== selectedReleaseId) {
+        return false;
+      }
+      if (selectedStreams.size > 0 || includeWithoutStream) {
+        const itemStreams = item.streams || [];
+        const hasSelectedStream = itemStreams.some((stream) => selectedStreams.has(stream));
+        if (!hasSelectedStream && !(includeWithoutStream && itemStreams.length === 0)) {
+          return false;
+        }
+      }
+      if (selectedCustomers.size > 0 || includeWithoutCustomer) {
+        const itemCustomers = item.customers || [];
+        const hasSelectedCustomer = itemCustomers.some((customer) => selectedCustomers.has(customer));
+        if (!hasSelectedCustomer && !(includeWithoutCustomer && itemCustomers.length === 0)) {
+          return false;
+        }
+      }
+      if (normalizedSearch) {
+        const haystack = `${item.title || ""} ${item.description || ""} ${item.dod || ""}`.toLocaleLowerCase("ru");
+        if (!haystack.includes(normalizedSearch)) {
+          return false;
+        }
       }
       if (selectedQuarterIds.size === 0) {
         return true;
       }
       return collectItemQuarterIds(item, sprintQuarterById).some((quarterId) => selectedQuarterIds.has(quarterId));
     });
-  }, [backlog, priorityFilterValues, quarterFilterIds, sprintQuarterById]);
+  }, [
+    backlog,
+    customerFilterValues,
+    priorityFilterValues,
+    quarterFilterIds,
+    releaseFilterValue,
+    searchQuery,
+    sprintQuarterById,
+    streamFilterValues,
+  ]);
+
+  const selectedItemIdSet = React.useMemo(
+    () => new Set(selectedItemIds),
+    [selectedItemIds]
+  );
 
   const availableItems = React.useMemo(
-    () => filteredBacklog.filter((item) => !selectedItemIds.includes(item.id)),
-    [filteredBacklog, selectedItemIds]
+    () => filteredBacklog.filter((item) => !selectedItemIdSet.has(item.id)),
+    [filteredBacklog, selectedItemIdSet]
   );
 
   const selectedItems = React.useMemo(
-    () =>
-      selectedItemIds
-        .map((itemId) => backlogById.get(itemId))
-        .filter((item): item is PlanningWorkbenchItem => Boolean(item)),
-    [backlogById, selectedItemIds]
+    () => backlog.filter((item) => selectedItemIdSet.has(item.id)),
+    [backlog, selectedItemIdSet]
   );
 
-  const resolvePlanningDateSortKey = React.useCallback(
-    (item: PlanningWorkbenchItem) => {
-      const releaseDate = item.releaseDateId ? releasePromDateById.get(item.releaseDateId) : undefined;
-      if (releaseDate) {
-        return releaseDate;
-      }
-      return collectItemQuarterIds(item, sprintQuarterById)
-        .map((quarterId) => quarters.find((quarter) => quarter.id === quarterId)?.startDate || null)
-        .filter((value): value is string => Boolean(value))
-        .sort()[0] || "9999-12-31";
-    },
-    [quarters, releasePromDateById, sprintQuarterById]
-  );
-
-  const sortItems = React.useCallback(
-    (items: PlanningWorkbenchItem[]) =>
-      items.slice().sort((left, right) => {
-        if (sortBy === "load") {
-          const result = compareValues(sumPlanningItemLoad(left), sumPlanningItemLoad(right), sortDirection);
-          if (result !== 0) return result;
-        } else if (sortBy === "releaseDate") {
-          const result = compareValues(resolvePlanningDateSortKey(left), resolvePlanningDateSortKey(right), sortDirection);
-          if (result !== 0) return result;
-        } else if (sortBy === "priority") {
-          const result = compareValues(Number(left.priority || 0), Number(right.priority || 0), sortDirection);
-          if (result !== 0) return result;
-        }
-        const leftOrder = Number.isFinite(left.order) ? Number(left.order) : Number.MAX_SAFE_INTEGER;
-        const rightOrder = Number.isFinite(right.order) ? Number(right.order) : Number.MAX_SAFE_INTEGER;
-        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-        return (left.createdAt || "").localeCompare(right.createdAt || "");
-      }),
-    [resolvePlanningDateSortKey, sortBy, sortDirection]
-  );
-
-  const sortedAvailableItems = React.useMemo(
-    () => sortItems(availableItems),
-    [availableItems, sortItems]
-  );
-  const sortedSelectedItems = React.useMemo(
-    () => sortItems(selectedItems),
-    [selectedItems, sortItems]
-  );
+  const sortedAvailableItems = availableItems;
+  const sortedSelectedItems = selectedItems;
 
   React.useEffect(() => {
     setSelectedItemIds((prev) => prev.filter((itemId) => backlogById.has(itemId)));
@@ -300,6 +319,15 @@ export default function PlanningWorkbenchPage() {
 
   const handleClearPlan = React.useCallback(() => {
     setSelectedItemIds([]);
+  }, []);
+
+  const handleResetFilters = React.useCallback(() => {
+    setQuarterFilterIds([]);
+    setPriorityFilterValues([]);
+    setReleaseFilterValue("");
+    setStreamFilterValues([]);
+    setCustomerFilterValues([]);
+    setSearchQuery("");
   }, []);
 
   const handleDeleteItem = React.useCallback(async (item: PlanningWorkbenchItem) => {
@@ -416,29 +444,104 @@ export default function PlanningWorkbenchPage() {
             </Button>
           </Stack>
           <Stack spacing={1.5}>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-              <FilterAutocomplete
-                multiple
-                allowCustom={false}
-                label="Фильтр по кварталу"
-                value={quarterFilterIds}
-                onChange={setQuarterFilterIds}
-                options={quarterOptions}
-                placeholder="Все кварталы"
-                sx={{ maxWidth: { xs: "100%", md: 360 } }}
-              />
-              <FilterAutocomplete
-                multiple
-                allowCustom={false}
-                label="Фильтр по приоритету"
-                value={priorityFilterValues}
-                onChange={setPriorityFilterValues}
-                options={priorityOptions}
-                placeholder="Все приоритеты"
-                sortOptions={false}
-                sx={{ maxWidth: { xs: "100%", md: 260 } }}
-              />
-            </Stack>
+            <FiltersPanel
+              layout="wrap"
+              withPaper={false}
+              filters={[
+                {
+                  type: "autocomplete",
+                  key: "quarters",
+                  minWidth: 200,
+                  props: {
+                    multiple: true,
+                    allowCustom: false,
+                    label: "Фильтр по кварталу",
+                    value: quarterFilterIds,
+                    onChange: setQuarterFilterIds,
+                    options: quarterOptions,
+                    placeholder: "Все кварталы",
+                  },
+                },
+                {
+                  type: "autocomplete",
+                  key: "priority",
+                  minWidth: 150,
+                  props: {
+                    multiple: true,
+                    allowCustom: false,
+                    label: "Приоритет",
+                    value: priorityFilterValues,
+                    onChange: setPriorityFilterValues,
+                    options: priorityOptions,
+                    placeholder: "Все приоритеты",
+                    sortOptions: false,
+                  },
+                },
+                {
+                  type: "autocomplete",
+                  key: "release",
+                  minWidth: 180,
+                  props: {
+                    allowCustom: false,
+                    label: "Релиз",
+                    value: releaseFilterValue,
+                    onChange: setReleaseFilterValue,
+                    options: releaseFilterOptions,
+                    placeholder: "Все релизы",
+                    sortOptions: false,
+                  },
+                },
+                {
+                  type: "autocomplete",
+                  key: "stream",
+                  minWidth: 200,
+                  props: {
+                    multiple: true,
+                    allowCustom: false,
+                    label: "Стрим по задаче",
+                    value: streamFilterValues,
+                    onChange: setStreamFilterValues,
+                    options: streamFilterOptions,
+                  },
+                },
+                {
+                  type: "autocomplete",
+                  key: "customer",
+                  minWidth: 200,
+                  props: {
+                    multiple: true,
+                    allowCustom: false,
+                    label: "Заказчик",
+                    value: customerFilterValues,
+                    onChange: setCustomerFilterValues,
+                    options: customerFilterOptions,
+                  },
+                },
+                {
+                  type: "search",
+                  key: "search",
+                  minWidth: 220,
+                  maxWidth: 420,
+                  props: {
+                    label: "Поиск по названию/описанию/DOD",
+                    value: searchQuery,
+                    onChange: setSearchQuery,
+                    placeholder: "Введите текст",
+                  },
+                },
+              ]}
+              actions={
+                <Button
+                  size="small"
+                  variant="text"
+                  color="inherit"
+                  onClick={handleResetFilters}
+                  sx={{ color: "text.secondary" }}
+                >
+                  Очистить
+                </Button>
+              }
+            />
             <SortControls
               value={sortBy}
               onChange={(value) => setSortBy((value || "manual") as PlanningSortBy)}

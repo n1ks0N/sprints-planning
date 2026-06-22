@@ -10,4 +10,13 @@ public interface TaskRepositoryCustom {
     List<TaskEntity> findFilteredWithDetails(String teamKey, TaskFilter filter);
 
     Page<TaskEntity> findFilteredPageWithDetails(String teamKey, TaskFilter filter, int page, int size);
+
+    Page<TaskEntity> findFilteredPageWithDetails(
+        String teamKey,
+        TaskFilter filter,
+        int page,
+        int size,
+        String sortBy,
+        String sortDirection
+    );
 }

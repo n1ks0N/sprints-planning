@@ -18,6 +18,7 @@ import type {
   PlanningWorkbenchPreview,
   PlanningWorkbenchItem,
   PlanningDemand,
+  JiraSprintOption,
 } from "../types";
 import { DEFAULT_TEAM_KEY } from "../teams";
 import { selectCurrentTeamKey } from "./teamSlice";
@@ -954,6 +955,8 @@ export const api = createApi({
           roles?: string[];
           userStreams?: string[];
           pinnedId?: string;
+          sortBy?: string;
+          sortDirection?: string;
           page?: number;
           size?: number;
         }
@@ -1001,6 +1004,12 @@ export const api = createApi({
 
         const pinnedId = (arg?.pinnedId || "").trim();
         if (pinnedId) params.id = pinnedId;
+
+        const sortBy = (arg?.sortBy || "").trim();
+        if (sortBy) params.sortBy = sortBy;
+
+        const sortDirection = (arg?.sortDirection || "").trim();
+        if (sortDirection) params.sortDirection = sortDirection;
 
         if (typeof arg?.page === "number") params.page = String(arg.page);
         if (typeof arg?.size === "number") params.size = String(arg.size);
@@ -1069,8 +1078,23 @@ export const api = createApi({
         { type: "Task" as const, id: "LIST" as const },
       ],
     }),
-    getPlanningWorkbenchBacklog: b.query<PlanningWorkbenchItem[], void>({
-      query: () => ({ url: "/planning-workbench/backlog", method: "GET" }),
+    getPlanningWorkbenchBacklog: b.query<
+      PlanningWorkbenchItem[],
+      void | { sortBy?: string; sortDirection?: string }
+    >({
+      query: (arg) => {
+        const params: Record<string, string> = {};
+        const sortBy = (arg?.sortBy || "").trim();
+        if (sortBy) params.sortBy = sortBy;
+        const sortDirection = (arg?.sortDirection || "").trim();
+        if (sortDirection) params.sortDirection = sortDirection;
+
+        return {
+          url: "/planning-workbench/backlog",
+          method: "GET",
+          params: Object.keys(params).length ? params : undefined,
+        };
+      },
       providesTags: (result) =>
         result
           ? [
@@ -1255,10 +1279,20 @@ export const api = createApi({
         planningSprintId: string;
         jiraSprintId: string;
         projectKey: string;
+        participantIdsByTaskId?: Record<string, string[]>;
+        createStoryByTaskId?: Record<string, boolean>;
         labels: string[];
       }
     >({
       query: (body) => ({ url: "/jira/issues", method: "POST", body }),
+    }),
+    getJiraSprintOptions: b.query<JiraSprintOption[], { query?: string } | void>({
+      query: (arg) => ({
+        url: "/jira/sprints",
+        method: "GET",
+        params: arg?.query ? { query: arg.query } : undefined,
+      }),
+      keepUnusedDataFor: 30,
     }),
     getJiraExportBatch: b.query<JiraExportBatchStatus, string>({
       query: (batchId) => ({ url: `/jira/issues/batches/${batchId}`, method: "GET" }),
@@ -1751,7 +1785,7 @@ export const api = createApi({
       providesTags: [listTag("Team")],
     }),
 
-    addTeam: b.mutation<Team, { key: string; name: string }>({
+    addTeam: b.mutation<Team, { key: string; name: string; jiraBoardId?: number | null }>({
       query: (body) => ({
         url: "/teams",
         method: "POST",
@@ -1763,6 +1797,7 @@ export const api = createApi({
         const optimistic: Team = {
           key: arg.key,
           name: arg.name,
+          jiraBoardId: arg.jiraBoardId ?? null,
         };
 
         const patch = dispatch(
@@ -1789,11 +1824,11 @@ export const api = createApi({
       },
     }),
 
-    updateTeam: b.mutation<Team, { key: string; name: string }>({
-      query: ({ key, name }) => ({
+    updateTeam: b.mutation<Team, { key: string; name: string; jiraBoardId?: number | null }>({
+      query: ({ key, name, jiraBoardId }) => ({
         url: `/teams/${key}`,
         method: "PUT",
-        body: { name },
+        body: { name, jiraBoardId },
         skipTeamPrefix: true,
       }),
       invalidatesTags: (r, e, arg) => [
@@ -1804,7 +1839,7 @@ export const api = createApi({
         const patch = dispatch(
           api.util.updateQueryData("getTeams", undefined, (draft) => {
             const idx = draft.findIndex((t) => t.key === arg.key);
-            if (idx >= 0) draft[idx] = { ...draft[idx], name: arg.name };
+            if (idx >= 0) draft[idx] = { ...draft[idx], name: arg.name, jiraBoardId: arg.jiraBoardId ?? null };
           })
         );
 
@@ -1882,6 +1917,7 @@ export const {
   usePreviewPlanningWorkbenchMutation,
   useApplyPlanningWorkbenchMutation,
   useExportJiraIssuesMutation,
+  useGetJiraSprintOptionsQuery,
   useGetJiraExportBatchQuery,
   useConfirmJiraIssueCreatedMutation,
   useConfirmJiraIssueNotCreatedMutation,

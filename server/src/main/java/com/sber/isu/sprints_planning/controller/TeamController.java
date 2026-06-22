@@ -40,23 +40,25 @@ public class TeamController {
         )
         String key,
 
-        @NotBlank(message = "Название обязательно") String name
+        @NotBlank(message = "Название обязательно") String name,
+
+        Long jiraBoardId
     ) {}
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public TeamEntity createTeam(@RequestBody @Valid CreateTeamRequest request) {
-        return teamService.createTeam(request.key(), request.name());
+        return teamService.createTeam(request.key(), request.name(), request.jiraBoardId());
     }
 
-    public record UpdateTeamRequest(@NotBlank String name) {}
+    public record UpdateTeamRequest(@NotBlank String name, Long jiraBoardId) {}
 
     @PutMapping("/{teamKey}")
     public TeamEntity updateTeam(
         @PathVariable String teamKey,
         @RequestBody @Valid UpdateTeamRequest request
     ) {
-        return teamService.updateTeam(teamKey, request.name());
+        return teamService.updateTeam(teamKey, request.name(), request.jiraBoardId());
     }
 
     @DeleteMapping("/{teamKey}")

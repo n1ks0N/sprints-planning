@@ -168,6 +168,91 @@ class PlanningWorkbenchServiceTest {
     }
 
     @Test
+    void previewOrdersRelevantSprintsFromOldToNewEvenWhenItemStoresThemUnordered() {
+        PlanningBacklogItemEntity item = planningItem("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        item.setPlanningDemands(List.of(new TaskPlanningDemandValue("ROLE", "DEV", null, "Core", new BigDecimal("4"))));
+        SprintEntity oldSprint = sprint("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "Sprint 1");
+        oldSprint.setStartDate(LocalDate.of(2026, 1, 12));
+        oldSprint.setEndDate(LocalDate.of(2026, 1, 23));
+        oldSprint.setOrder(1);
+        SprintEntity newSprint = sprint("cccccccc-cccc-cccc-cccc-cccccccccccc", "Sprint 2");
+        newSprint.setStartDate(LocalDate.of(2026, 1, 26));
+        newSprint.setEndDate(LocalDate.of(2026, 2, 6));
+        newSprint.setOrder(2);
+        item.setPlanningSprintIds(List.of(newSprint.getId(), oldSprint.getId()));
+        items.put(item.getId(), item);
+        participants.add(participant("11111111-1111-1111-1111-111111111111", "Dev 1"));
+        sprints.put(newSprint.getId(), newSprint);
+        sprints.put(oldSprint.getId(), oldSprint);
+
+        var preview = service.preview("team-a", new PlanningWorkbenchPreviewRequest("ALGORITHM", List.of(item.getId().toString())));
+
+        assertThat(preview.sprintIds()).containsExactly(oldSprint.getId().toString(), newSprint.getId().toString());
+        assertThat(preview.participantSummary().get(0).cells())
+            .extracting(cell -> cell.sprintId())
+            .containsExactly(oldSprint.getId().toString(), newSprint.getId().toString());
+    }
+
+    @Test
+    void previewSummaryCountsPlannedUnplannedAndOverloadedCellsFromSolverResult() {
+        PlanningBacklogItemEntity item = planningItem("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        item.setPlanningDemands(List.of(new TaskPlanningDemandValue("ROLE", "DEV", null, "Core", new BigDecimal("6"))));
+        SprintEntity sprint = sprint("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "Sprint 1");
+        sprint.setWorkingDays(3);
+        item.setPlanningSprintIds(List.of(sprint.getId()));
+        items.put(item.getId(), item);
+        ParticipantEntity participant = participant("11111111-1111-1111-1111-111111111111", "Dev 1");
+        participants.add(participant);
+        sprints.put(sprint.getId(), sprint);
+        planner.nextResult = new PlanningSolverResult(
+            PlannerType.ALGORITHM,
+            Map.of(item.getId().toString(), Map.of(
+                participant.getId().toString(), Map.of(sprint.getId().toString(), new BigDecimal("5"))
+            )),
+            List.of(),
+            new BigDecimal("5"),
+            BigDecimal.ONE
+        );
+
+        var preview = service.preview("team-a", new PlanningWorkbenchPreviewRequest("ALGORITHM", List.of(item.getId().toString())));
+
+        assertThat(preview.summary().taskCount()).isEqualTo(1);
+        assertThat(preview.summary().participantCount()).isEqualTo(1);
+        assertThat(preview.summary().plannedDays()).isEqualByComparingTo("5");
+        assertThat(preview.summary().unplannedDays()).isEqualByComparingTo("1");
+        assertThat(preview.summary().overloadedCells()).isEqualTo(1);
+        assertThat(preview.canApply()).isFalse();
+        assertThat(preview.warnings()).contains("Не все дни распределены. Проверьте выбранные задачи и ограничения.");
+    }
+
+    @Test
+    void previewKeepsSolverWarningAndDoesNotAddGenericWarningWhenEverythingPlanned() {
+        PlanningBacklogItemEntity item = planningItem("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        item.setPlanningDemands(List.of(new TaskPlanningDemandValue("ROLE", "DEV", null, "Core", new BigDecimal("2"))));
+        SprintEntity sprint = sprint("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "Sprint 1");
+        item.setPlanningSprintIds(List.of(sprint.getId()));
+        items.put(item.getId(), item);
+        ParticipantEntity participant = participant("11111111-1111-1111-1111-111111111111", "Dev 1");
+        participants.add(participant);
+        sprints.put(sprint.getId(), sprint);
+        planner.nextResult = new PlanningSolverResult(
+            PlannerType.ALGORITHM,
+            Map.of(item.getId().toString(), Map.of(
+                participant.getId().toString(), Map.of(sprint.getId().toString(), new BigDecimal("2"))
+            )),
+            List.of("custom solver warning"),
+            new BigDecimal("2"),
+            BigDecimal.ZERO
+        );
+
+        var preview = service.preview("team-a", new PlanningWorkbenchPreviewRequest("ALGORITHM", List.of(item.getId().toString())));
+
+        assertThat(preview.summary().unplannedDays()).isEqualByComparingTo("0");
+        assertThat(preview.warnings()).containsExactly("custom solver warning");
+        assertThat(preview.canApply()).isFalse();
+    }
+
+    @Test
     void deleteItemRemovesPlanningEntity() {
         PlanningBacklogItemEntity item = planningItem("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
         items.put(item.getId(), item);
@@ -248,6 +333,101 @@ class PlanningWorkbenchServiceTest {
         assertThat(taskService.lastCreateRequest.allocations())
             .containsEntry(participant.getId().toString(), Map.of(sprint.getId().toString(), new BigDecimal("3")));
         assertThat(items).isEmpty();
+    }
+
+    @Test
+    void applyCreatesTaskWithoutLoadsWhenManualReviewClearsAllAllocations() {
+        PlanningBacklogItemEntity item = planningItem("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        item.setPlanningDemands(List.of(new TaskPlanningDemandValue(
+            "PARTICIPANT",
+            null,
+            UUID.fromString("11111111-1111-1111-1111-111111111111"),
+            "Core",
+            new BigDecimal("5")
+        )));
+        items.put(item.getId(), item);
+        ParticipantEntity participant = participant("11111111-1111-1111-1111-111111111111", "Dev 1");
+        participants.add(participant);
+        SprintEntity sprint = sprint("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "Sprint 1");
+        item.setPlanningSprintIds(List.of(sprint.getId()));
+        sprints.put(sprint.getId(), sprint);
+
+        service.apply(
+            "team-a",
+            new PlanningWorkbenchApplyRequest(
+                List.of(item.getId().toString()),
+                Map.of(item.getId().toString(), Map.of()),
+                null
+            ),
+            "session-1",
+            "user"
+        );
+
+        assertThat(taskService.lastCreateRequest).isNotNull();
+        assertThat(taskService.lastCreateRequest.loads()).isEmpty();
+        assertThat(taskService.lastCreateRequest.allocations()).isEmpty();
+        assertThat(items).isEmpty();
+    }
+
+    @Test
+    void applyAllowsPreviewPatchToAddParticipantOutsideOriginalRoleDemand() {
+        PlanningBacklogItemEntity item = planningItem("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        item.setPlanningDemands(List.of(new TaskPlanningDemandValue(
+            "ROLE",
+            "DEV",
+            null,
+            "Core",
+            new BigDecimal("4")
+        )));
+        items.put(item.getId(), item);
+        ParticipantEntity dev = participant("11111111-1111-1111-1111-111111111111", "Dev 1");
+        ParticipantEntity qa = participant("22222222-2222-2222-2222-222222222222", "QA 1");
+        qa.setRole("QA");
+        participants.add(dev);
+        participants.add(qa);
+        SprintEntity sprint = sprint("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "Sprint 1");
+        item.setPlanningSprintIds(List.of(sprint.getId()));
+        sprints.put(sprint.getId(), sprint);
+
+        PlanningWorkbenchApplyItemPatchRequest patch = new PlanningWorkbenchApplyItemPatchRequest(
+            item.getTitle(),
+            item.getDescription(),
+            item.getDod(),
+            item.getPriority(),
+            "inprogress",
+            item.getCustomers(),
+            item.getStreams(),
+            List.of(dev.getId().toString(), qa.getId().toString()),
+            null,
+            item.getReleaseDate() != null ? item.getReleaseDate().getId().toString() : null,
+            item.getInitialQuarter().getId().toString(),
+            List.of(item.getInitialQuarter().getId().toString()),
+            List.of(sprint.getId().toString()),
+            Map.of(),
+            null,
+            item.getDisplayOrder()
+        );
+
+        service.apply(
+            "team-a",
+            new PlanningWorkbenchApplyRequest(
+                List.of(item.getId().toString()),
+                Map.of(item.getId().toString(), Map.of(
+                    dev.getId().toString(), Map.of(sprint.getId().toString(), new BigDecimal("3")),
+                    qa.getId().toString(), Map.of(sprint.getId().toString(), new BigDecimal("1"))
+                )),
+                Map.of(item.getId().toString(), patch)
+            ),
+            "session-1",
+            "user"
+        );
+
+        assertThat(taskService.lastCreateRequest).isNotNull();
+        assertThat(taskService.lastCreateRequest.participantIds())
+            .containsExactly(dev.getId().toString(), qa.getId().toString());
+        assertThat(taskService.lastCreateRequest.allocations())
+            .containsEntry(dev.getId().toString(), Map.of(sprint.getId().toString(), new BigDecimal("3")))
+            .containsEntry(qa.getId().toString(), Map.of(sprint.getId().toString(), new BigDecimal("1")));
     }
 
     @Test
@@ -579,6 +759,7 @@ class PlanningWorkbenchServiceTest {
 
     private static final class CapturingPlanner implements PlanningSolverPort {
         private PlanningSolverInput lastInput;
+        private PlanningSolverResult nextResult;
 
         @Override
         public PlannerType type() {
@@ -588,6 +769,9 @@ class PlanningWorkbenchServiceTest {
         @Override
         public PlanningSolverResult solve(PlanningSolverInput input) {
             this.lastInput = input;
+            if (nextResult != null) {
+                return nextResult;
+            }
             return new PlanningSolverResult(
                 PlannerType.ALGORITHM,
                 Map.of(),
@@ -624,6 +808,7 @@ class PlanningWorkbenchServiceTest {
                 request.allocations() == null ? Map.of() : request.allocations(),
                 Map.of(),
                 Map.of(),
+                null,
                 request.releaseDateId(),
                 request.initialQuarterId(),
                 null,
