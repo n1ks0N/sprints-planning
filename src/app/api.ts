@@ -21,6 +21,7 @@ import type {
 } from "../types";
 import { DEFAULT_TEAM_KEY } from "../teams";
 import { selectCurrentTeamKey } from "./teamSlice";
+import { normalizeDayAmount } from "../utils/dayAmount";
 
 type AnyState = unknown;
 
@@ -422,7 +423,7 @@ const applyAllocation = (
   days: number
 ) => {
   if (!task.allocations) task.allocations = {};
-  const nextDays = Math.max(0, Math.round(Number(days) || 0));
+  const nextDays = normalizeDayAmount(days);
 
   if (nextDays > 0) {
     if (!task.allocations[participantId]) task.allocations[participantId] = {};
@@ -450,7 +451,7 @@ const applyBulkAllocation = (
 
 const applySprintLoad = (task: BacklogItem, sprintId: string, days: number) => {
   if (!task.loads) task.loads = {};
-  const nextDays = Math.max(0, Math.round(Number(days) || 0));
+  const nextDays = normalizeDayAmount(days);
   if (nextDays > 0) {
     task.loads[sprintId] = nextDays;
   } else {

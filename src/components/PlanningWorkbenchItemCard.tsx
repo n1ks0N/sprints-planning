@@ -14,12 +14,7 @@ import {
   Typography,
 } from "@mui/material";
 import type { PlanningDemand, PlanningWorkbenchItem } from "../types";
-
-const whole = (value: unknown) => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 0;
-  return Math.max(0, Math.round(numeric));
-};
+import { formatDayAmount, normalizeDayAmount } from "../utils/dayAmount";
 
 const getPlanningDemands = (item: PlanningWorkbenchItem): PlanningDemand[] =>
   item.planningDemands || [];
@@ -51,7 +46,7 @@ export default function PlanningWorkbenchItemCard({
   const planningDemands = getPlanningDemands(item);
   const totalEstimateDays =
     totalDays
-    ?? planningDemands.reduce((sum, demand) => sum + whole(demand.days), 0);
+    ?? planningDemands.reduce((sum, demand) => sum + normalizeDayAmount(demand.days), 0);
   const customersLabel = item.customers?.filter(Boolean).join(", ");
   const streamsLabel = item.streams?.filter(Boolean).join(", ");
 
@@ -108,7 +103,7 @@ export default function PlanningWorkbenchItemCard({
                 <TableRow>
                   {planningDemands.map((demand, index) => (
                     <TableCell key={`${item.id}-demand-days-${index}`}>
-                      {whole(demand.days)} дн.
+                      {formatDayAmount(demand.days)} дн.                    
                     </TableCell>
                   ))}
                 </TableRow>
@@ -137,7 +132,7 @@ export default function PlanningWorkbenchItemCard({
                   <TableRow>
                     {sprintLoads.map((load) => (
                       <TableCell key={`${item.id}-sprint-days-${load.label}`}>
-                        {whole(load.days)} дн.
+                        {formatDayAmount(load.days)} дн.
                       </TableCell>
                     ))}
                   </TableRow>

@@ -30,6 +30,7 @@ import { setParticipantWorkloadFilters } from "../app/uiSlice";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import { selectCurrentTeamKey } from "../app/teamSlice";
+import { normalizeDayAmount } from "../utils/dayAmount";
 
 type TasksPage = {
   content?: BacklogItem[];
@@ -38,8 +39,6 @@ type TasksPage = {
 function byStart(a: Sprint, b: Sprint) {
   return a.startDate.localeCompare(b.startDate);
 }
-const toInt = (n: any) =>
-  Number.isFinite(Number(n)) ? Math.round(Number(n)) : 0;
 
 const round1 = (v: number) => Math.round(v * 10) / 10;
 
@@ -410,7 +409,7 @@ export default function ParticipantWorkloadPage() {
         taskId,
         participantId,
         sprintId,
-        days: toInt(Number(value) || 0),
+        days: normalizeDayAmount(value),
       })
         .unwrap()
         .catch((error) => {
@@ -431,7 +430,7 @@ export default function ParticipantWorkloadPage() {
       .map((t) => ({
         task: t,
         perSprint: sprintsInScope.map((s) =>
-          toInt(
+          normalizeDayAmount(
             allocations[t.id]?.[pid]?.[s.id] ??
               t.allocations?.[pid]?.[s.id] ??
               0

@@ -34,6 +34,7 @@ import PlanningWorkbenchItemCard from "../components/PlanningWorkbenchItemCard";
 import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 import SortControls from "../components/SortControls";
 import { setPlanningWorkbenchPreview } from "./planningWorkbenchPreviewStore";
+import { normalizeDayAmount } from "../utils/dayAmount";
 
 type PlanningSortBy = "manual" | "load" | "releaseDate" | "priority";
 type SortDirection = "asc" | "desc";
@@ -44,17 +45,11 @@ const formatDate = (value?: string | null) => {
   return year && month && day ? `${day}.${month}.${year}` : value;
 };
 
-const whole = (value: unknown) => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 0;
-  return Math.max(0, Math.round(numeric));
-};
-
 const getPlanningDemands = (item: PlanningWorkbenchItem): PlanningDemand[] => item.planningDemands || [];
 
 const sumPlanningItemLoad = (item: PlanningWorkbenchItem) => {
-  const total = getPlanningDemands(item).reduce((sum, demand) => sum + whole(demand.days), 0);
-  return total > 0 ? total : whole(item.estimateDays);
+  const total = getPlanningDemands(item).reduce((sum, demand) => sum + normalizeDayAmount(demand.days), 0);
+  return total > 0 ? total : normalizeDayAmount(item.estimateDays);
 };
 
 const compareValues = <T extends string | number>(left: T, right: T, direction: SortDirection) => {
@@ -94,7 +89,7 @@ const getItemIssues = (item: PlanningWorkbenchItem) => {
   if (
     planningDemands.some(
       (demand) =>
-        whole(demand.days) <= 0 ||
+        normalizeDayAmount(demand.days) <= 0 ||
         (demand.kind === "ROLE" && !demand.role) ||
         (demand.kind === "PARTICIPANT" && !demand.participantId)
     )

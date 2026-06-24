@@ -56,6 +56,9 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
+import java.math.RoundingMode;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class TaskService {
@@ -326,7 +329,7 @@ public class TaskService {
         TaskAllocationId id = new TaskAllocationId(task.getId(), participant.getId(), sprint.getId());
         TaskAllocationEntity allocation = taskAllocationRepository.findById(id).orElse(null);
         BigDecimal beforeDays = allocation != null ? maxOrZero(allocation.getDays()) : BigDecimal.ZERO;
-        BigDecimal afterDays = maxOrZero(request.days());
+        BigDecimal afterDays = normalizeHalfDays(request.days());
 
         if (beforeDays.compareTo(afterDays) == 0) {
             return toDto(teamKey, task);
@@ -408,7 +411,7 @@ public class TaskService {
             TaskAllocationId id = new TaskAllocationId(task.getId(), participant.getId(), sprint.getId());
             TaskAllocationEntity allocation = taskAllocationRepository.findById(id).orElse(null);
             BigDecimal beforeDays = allocation != null ? maxOrZero(allocation.getDays()) : BigDecimal.ZERO;
-            BigDecimal afterDays = maxOrZero(allocationEntry.getValue());
+            BigDecimal afterDays = normalizeHalfDays(allocationEntry.getValue());
             if (beforeDays.compareTo(afterDays) == 0) {
                 continue;
             }
@@ -470,7 +473,7 @@ public class TaskService {
                 TaskAllocationId id = new TaskAllocationId(task.getId(), participant.getId(), sprint.getId());
                 TaskAllocationEntity allocation = taskAllocationRepository.findById(id).orElse(null);
                 BigDecimal beforeDays = allocation != null ? maxOrZero(allocation.getDays()) : BigDecimal.ZERO;
-                BigDecimal afterDays = maxOrZero(allocationEntry.getValue());
+                BigDecimal afterDays = normalizeHalfDays(allocationEntry.getValue());
                 if (beforeDays.compareTo(afterDays) == 0) {
                     continue;
                 }
@@ -519,7 +522,7 @@ public class TaskService {
         }
         SprintEntity sprint = fetchSprint(teamKey, request.sprintId());
         TaskLoadId id = new TaskLoadId(task.getId(), sprint.getId());
-        BigDecimal nextDays = maxOrZero(request.days());
+        BigDecimal nextDays = normalizeHalfDays(request.days());
         TaskLoadEntity load = taskLoadRepository.findById(id).orElse(null);
         if (nextDays.compareTo(BigDecimal.ZERO) == 0) {
             if (load != null) {
@@ -675,7 +678,7 @@ public class TaskService {
         for (Map.Entry<String, BigDecimal> entry : loads.entrySet()) {
             SprintEntity sprint = resolveSprint(entity.getTeamKey(), sprints, entry.getKey());
             TaskLoadId id = new TaskLoadId(entity.getId(), sprint.getId());
-            BigDecimal nextDays = maxOrZero(entry.getValue());
+            BigDecimal nextDays = normalizeHalfDays(entry.getValue());
             TaskLoadEntity load = taskLoadRepository.findById(id).orElse(null);
             if (nextDays.compareTo(BigDecimal.ZERO) == 0) {
                 if (load != null) {
@@ -705,7 +708,7 @@ public class TaskService {
             for (Map.Entry<String, BigDecimal> sprintEntry : participantEntry.getValue().entrySet()) {
                 SprintEntity sprint = resolveSprint(entity.getTeamKey(), sprints, sprintEntry.getKey());
                 TaskAllocationId id = new TaskAllocationId(entity.getId(), participant.getId(), sprint.getId());
-                BigDecimal nextDays = maxOrZero(sprintEntry.getValue());
+                BigDecimal nextDays = normalizeHalfDays(sprintEntry.getValue());
                 TaskAllocationEntity allocation = taskAllocationRepository.findById(id).orElse(null);
                 if (nextDays.compareTo(BigDecimal.ZERO) == 0) {
                     if (allocation != null) {
@@ -890,6 +893,24 @@ public class TaskService {
 
     private BigDecimal maxOrZero(BigDecimal value) {
         return value != null ? value.max(BigDecimal.ZERO) : BigDecimal.ZERO;
+    }
+
+    private static final BigDecimal HALF_DAY_UNITS = BigDecimal.valueOf(2);
+
+    private BigDecimal normalizeHalfDays(BigDecimal value) {
+        BigDecimal nonNegative = maxOrZero(value);
+        BigDecimal doubled = nonNegative.multiply(HALF_DAY_UNITS);
+
+        if (doubled.stripTrailingZeros().scale() > 0) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Нагрузка должна быть кратна 0.5 дня"
+            );
+        }
+
+        return doubled
+            .setScale(0, RoundingMode.UNNECESSARY)
+            .divide(HALF_DAY_UNITS, 1, RoundingMode.UNNECESSARY);
     }
 
     private SprintEntity fetchSprint(String teamKey, String sprintId) {

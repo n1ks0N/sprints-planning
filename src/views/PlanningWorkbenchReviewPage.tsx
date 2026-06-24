@@ -30,18 +30,13 @@ import {
   savePlanningWorkbenchReviewState,
   setPlanningWorkbenchPreview,
 } from "./planningWorkbenchPreviewStore";
-
-const toWhole = (value: unknown) => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 0;
-  return Math.max(0, Math.round(numeric));
-};
+import { formatDayAmount, normalizeDayAmount } from "../utils/dayAmount";
 
 const sumLoads = (allocations: Record<string, Record<string, number>> = {}) => {
   const next: Record<string, number> = {};
   Object.values(allocations).forEach((row) => {
     Object.entries(row || {}).forEach(([sprintId, days]) => {
-      const wholeDays = toWhole(days);
+      const wholeDays = normalizeDayAmount(days);
       if (wholeDays <= 0) return;
       next[sprintId] = (next[sprintId] || 0) + wholeDays;
     });
@@ -61,7 +56,7 @@ const buildDraftAllocations = (
     Object.entries(item.allocations || {}).forEach(([participantId, sprintRow]) => {
       participantRows[participantId] = {};
       Object.entries(sprintRow || {}).forEach(([sprintId, days]) => {
-        participantRows[participantId][sprintId] = toWhole(days);
+        participantRows[participantId][sprintId] = normalizeDayAmount(days);
       });
     });
     next[item.id] = participantRows;
@@ -105,7 +100,7 @@ const buildDraftTasks = (preview: PlanningWorkbenchPreview): BacklogItem[] =>
 
 const getAllocatedDays = (allocations: Record<string, Record<string, number>> = {}) =>
   Object.values(allocations).reduce(
-    (total, row) => total + Object.values(row || {}).reduce((rowTotal, days) => rowTotal + toWhole(days), 0),
+    (total, row) => total + Object.values(row || {}).reduce((rowTotal, days) => rowTotal + normalizeDayAmount(days), 0),
     0
   );
 
@@ -145,7 +140,7 @@ const deriveTaskQuarters = (
   const fromAllocations = new Set<string>();
   Object.values(allocationsByParticipant || {}).forEach((row) => {
     Object.entries(row || {}).forEach(([sprintId, days]) => {
-      if (toWhole(days) <= 0) return;
+      if (normalizeDayAmount(days) <= 0) return;
       const sprint = sprintById.get(sprintId);
       if (sprint) {
         fromAllocations.add(sprint.quarterId);
@@ -286,7 +281,7 @@ export default function PlanningWorkbenchReviewPage() {
       const cells = row.cells.map((cell) => {
         let draft = 0;
         Object.values(draftAllocations).forEach((taskRows) => {
-          draft += toWhole(taskRows?.[cell.participantId]?.[cell.sprintId] ?? 0);
+          draft += normalizeDayAmount(taskRows?.[cell.participantId]?.[cell.sprintId] ?? 0);
         });
         const total = Number(cell.committed) + draft;
         const overload = Math.max(0, total - Number(cell.capacity));
@@ -308,7 +303,7 @@ export default function PlanningWorkbenchReviewPage() {
         if (participantId) ids.add(participantId);
       });
       Object.entries(draftAllocations[task.id] || {}).forEach(([participantId, sprintRow]) => {
-        if (participantId && Object.values(sprintRow || {}).some((days) => toWhole(days) > 0)) {
+        if (participantId && Object.values(sprintRow || {}).some((days) => normalizeDayAmount(days) > 0)) {
           ids.add(participantId);
         }
       });
@@ -354,8 +349,8 @@ export default function PlanningWorkbenchReviewPage() {
   const plannedDaysByTaskId = React.useMemo(() => {
     const next: Record<string, number> = {};
     (preview?.items || []).forEach((item) => {
-      const demandDays = (item.planningDemands || []).reduce((sum, demand) => sum + toWhole(demand.days), 0);
-      next[item.id] = demandDays > 0 ? demandDays : toWhole(item.estimateDays);
+      const demandDays = (item.planningDemands || []).reduce((sum, demand) => sum + normalizeDayAmount(demand.days), 0);
+      next[item.id] = demandDays > 0 ? demandDays : normalizeDayAmount(item.estimateDays);
     });
     return next;
   }, [preview]);
@@ -408,7 +403,7 @@ export default function PlanningWorkbenchReviewPage() {
   }, []);
 
   const handleCellChange = React.useCallback((taskId: string, participantId: string, sprintId: string, value: number | string) => {
-    const days = toWhole(value);
+    const days = normalizeDayAmount(value);
     setDraftAllocations((prev) => {
       const next = structuredClone(prev);
       next[taskId] ??= {};
@@ -510,7 +505,7 @@ export default function PlanningWorkbenchReviewPage() {
         const targetIndex = dir === "left" ? index - 1 : index + 1;
         const targetSprintId =
           targetIndex >= 0 && targetIndex < ids.length ? ids[targetIndex] : fromSprintId;
-        shifted[targetSprintId] = (shifted[targetSprintId] || 0) + toWhole(row[fromSprintId] || 0);
+        shifted[targetSprintId] = (shifted[targetSprintId] || 0) + normalizeDayAmount(row[fromSprintId] || 0);
       }
 
       setDraftAllocations((prev) => {
@@ -542,7 +537,7 @@ export default function PlanningWorkbenchReviewPage() {
           const targetIndex = dir === "left" ? index - 1 : index + 1;
           const targetSprintId =
             targetIndex >= 0 && targetIndex < ids.length ? ids[targetIndex] : fromSprintId;
-          nextRow[targetSprintId] = (nextRow[targetSprintId] || 0) + toWhole(row[fromSprintId] || 0);
+          nextRow[targetSprintId] = (nextRow[targetSprintId] || 0) + normalizeDayAmount(row[fromSprintId] || 0);
         }
 
         nextTaskAllocations[participantId] = nextRow;
@@ -563,7 +558,7 @@ export default function PlanningWorkbenchReviewPage() {
 
       const quartersWithLoad = new Set<string>();
       Object.entries(row).forEach(([sprintId, days]) => {
-        if (toWhole(days) <= 0) return;
+        if (normalizeDayAmount(days) <= 0) return;
         const sprint = sprintById.get(sprintId);
         if (sprint) {
           quartersWithLoad.add(sprint.quarterId);
@@ -592,7 +587,7 @@ export default function PlanningWorkbenchReviewPage() {
       for (let index = 0; index < maxLength; index += 1) {
         const sourceSprintId = sourceSprints[index].id;
         const targetSprintId = targetSprints[index].id;
-        const value = toWhole(row[sourceSprintId] || 0);
+        const value = normalizeDayAmount(row[sourceSprintId] || 0);
         if (value > 0) {
           nextRow[targetSprintId] = (nextRow[targetSprintId] || 0) + value;
         }

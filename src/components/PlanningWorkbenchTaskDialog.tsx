@@ -25,6 +25,12 @@ import type {
   Sprint,
   TaskPriority,
 } from "../types";
+import {
+  DAY_AMOUNT_STEP,
+  formatDayAmount,
+  normalizeDayAmount,
+  sanitizeDayAmountInput,
+} from "../utils/dayAmount";
 
 type DemandRow = {
   id: string;
@@ -63,7 +69,9 @@ type Props = {
   participantStreamOptions: string[];
   submitting?: boolean;
   onClose: () => void;
-  onSubmit: (payload: PlanningWorkbenchTaskSubmitPayload) => Promise<void> | void;
+  onSubmit: (
+    payload: PlanningWorkbenchTaskSubmitPayload,
+  ) => Promise<void> | void;
 };
 
 type FormState = {
@@ -83,13 +91,8 @@ type FormState = {
 const makeDemandId = () => `demand-${Math.random().toString(36).slice(2, 10)}`;
 const STORAGE_KEY_PREFIX = "planning-workbench-initial-quarter";
 
-const whole = (value: unknown) => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 0;
-  return Math.max(0, Math.round(numeric));
-};
-
-const storageKey = (teamKey: string) => `${STORAGE_KEY_PREFIX}:${teamKey.toLowerCase()}`;
+const storageKey = (teamKey: string) =>
+  `${STORAGE_KEY_PREFIX}:${teamKey.toLowerCase()}`;
 const formatDate = (value?: string | null) => {
   if (!value) return "";
   const [year, month, day] = value.split("-");
@@ -106,10 +109,12 @@ const readStoredQuarterId = (teamKey: string, quarters: Quarter[]) => {
 const resolveCurrentQuarterId = (quarters: Quarter[]) => {
   const today = new Date().toISOString().slice(0, 10);
   const current = quarters.find(
-    (quarter) => quarter.startDate <= today && quarter.endDate >= today
+    (quarter) => quarter.startDate <= today && quarter.endDate >= today,
   );
   if (current) return current.id;
-  const future = [...quarters].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const future = [...quarters].sort((a, b) =>
+    a.startDate.localeCompare(b.startDate),
+  );
   return future[0]?.id ?? "";
 };
 
@@ -122,7 +127,9 @@ const createDemandRow = (seed?: Partial<DemandRow>): DemandRow => ({
   days: seed?.days != null ? String(seed.days) : "",
 });
 
-const fallbackDemands = (task?: PlanningWorkbenchItem | null): PlanningDemand[] => {
+const fallbackDemands = (
+  task?: PlanningWorkbenchItem | null,
+): PlanningDemand[] => {
   if (!task) {
     return [];
   }
@@ -134,7 +141,7 @@ const fallbackDemands = (task?: PlanningWorkbenchItem | null): PlanningDemand[] 
 
 const normalizeTask = (
   task: PlanningWorkbenchItem | null | undefined,
-  defaultQuarterId: string
+  defaultQuarterId: string,
 ): FormState => {
   const demands = fallbackDemands(task).map((demand) =>
     createDemandRow({
@@ -142,16 +149,17 @@ const normalizeTask = (
       role: demand.role ?? "",
       participantId: demand.participantId ?? "",
       stream: demand.stream ?? "",
-      days: String(whole(demand.days)),
-    })
+      days: formatDayAmount(demand.days),
+    }),
   );
-  const initialQuarterId = task ? task.initialQuarterId ?? "" : defaultQuarterId;
-  const planningQuarterIds =
-    task?.planningQuarterIds?.length
-      ? task.planningQuarterIds
-      : initialQuarterId
-        ? [initialQuarterId]
-        : [];
+  const initialQuarterId = task
+    ? (task.initialQuarterId ?? "")
+    : defaultQuarterId;
+  const planningQuarterIds = task?.planningQuarterIds?.length
+    ? task.planningQuarterIds
+    : initialQuarterId
+      ? [initialQuarterId]
+      : [];
   return {
     title: task?.title ?? "",
     description: task?.description ?? "",
@@ -167,7 +175,9 @@ const normalizeTask = (
   };
 };
 
-const demandSubjectValue = (demand: Pick<DemandRow, "kind" | "role" | "participantId">) =>
+const demandSubjectValue = (
+  demand: Pick<DemandRow, "kind" | "role" | "participantId">,
+) =>
   demand.kind === "ROLE"
     ? demand.role
       ? `role:${demand.role}`
@@ -194,7 +204,9 @@ const parseDemandSubjectValue = (value: string): Partial<DemandRow> => {
   }
   return {
     kind: "ROLE",
-    role: normalized.startsWith("role:") ? normalized.slice("role:".length) : normalized,
+    role: normalized.startsWith("role:")
+      ? normalized.slice("role:".length)
+      : normalized,
     participantId: "",
   };
 };
@@ -216,13 +228,14 @@ export default function PlanningWorkbenchTaskDialog({
   onSubmit,
 }: Props) {
   const [form, setForm] = React.useState<FormState>(
-    normalizeTask(undefined, resolveCurrentQuarterId(quarters))
+    normalizeTask(undefined, resolveCurrentQuarterId(quarters)),
   );
   const [error, setError] = React.useState("");
 
   const participantById = React.useMemo(
-    () => new Map(participants.map((participant) => [participant.id, participant])),
-    [participants]
+    () =>
+      new Map(participants.map((participant) => [participant.id, participant])),
+    [participants],
   );
 
   const demandSubjectOptions = React.useMemo<FilterOption[]>(
@@ -238,12 +251,12 @@ export default function PlanningWorkbenchTaskDialog({
           : `Участник: ${participant.fullName}`,
       })),
     ],
-    [participantRoleOptions, participants]
+    [participantRoleOptions, participants],
   );
 
   const priorityOptions = React.useMemo<FilterOption[]>(
     () => ["1", "2", "3"].map((value) => ({ value, label: value })),
-    []
+    [],
   );
 
   const releaseOptions = React.useMemo<FilterOption[]>(
@@ -252,17 +265,18 @@ export default function PlanningWorkbenchTaskDialog({
         value: release.id,
         label: formatDate(release.promDate),
       })),
-    [releases]
+    [releases],
   );
 
   const quarterOptions = React.useMemo<FilterOption[]>(
-    () => quarters.map((quarter) => ({ value: quarter.id, label: quarter.name })),
-    [quarters]
+    () =>
+      quarters.map((quarter) => ({ value: quarter.id, label: quarter.name })),
+    [quarters],
   );
 
   const sprintOptions = React.useMemo<FilterOption[]>(
     () => sprints.map((sprint) => ({ value: sprint.id, label: sprint.name })),
-    [sprints]
+    [sprints],
   );
 
   const resolveDefaultQuarterId = React.useCallback(() => {
@@ -278,43 +292,48 @@ export default function PlanningWorkbenchTaskDialog({
   }, [open, resolveDefaultQuarterId, task]);
 
   const totalEstimateDays = React.useMemo(
-    () => form.planningDemands.reduce((sum, demand) => sum + whole(demand.days), 0),
-    [form.planningDemands]
+    () =>
+      form.planningDemands.reduce(
+        (sum, demand) => sum + normalizeDayAmount(demand.days),
+        0,
+      ),
+    [form.planningDemands],
   );
 
-  const setInitialQuarter = React.useCallback((nextQuarterId: string) => {
-    if (typeof window !== "undefined") {
-      if (nextQuarterId) {
-        localStorage.setItem(storageKey(teamKey), nextQuarterId);
-      } else {
-        localStorage.removeItem(storageKey(teamKey));
+  const setInitialQuarter = React.useCallback(
+    (nextQuarterId: string) => {
+      if (typeof window !== "undefined") {
+        if (nextQuarterId) {
+          localStorage.setItem(storageKey(teamKey), nextQuarterId);
+        } else {
+          localStorage.removeItem(storageKey(teamKey));
+        }
       }
-    }
-    setForm((prev) => {
-      const syncQuarterIds =
-        prev.planningSprintIds.length === 0
-        && (
-          prev.planningQuarterIds.length === 0
-          || (
-            prev.planningQuarterIds.length === 1
-            && prev.planningQuarterIds[0] === prev.initialQuarterId
-          )
-        );
-      return {
-        ...prev,
-        initialQuarterId: nextQuarterId,
-        planningQuarterIds: syncQuarterIds
-          ? (nextQuarterId ? [nextQuarterId] : [])
-          : prev.planningQuarterIds,
-      };
-    });
-  }, [teamKey]);
+      setForm((prev) => {
+        const syncQuarterIds =
+          prev.planningSprintIds.length === 0 &&
+          (prev.planningQuarterIds.length === 0 ||
+            (prev.planningQuarterIds.length === 1 &&
+              prev.planningQuarterIds[0] === prev.initialQuarterId));
+        return {
+          ...prev,
+          initialQuarterId: nextQuarterId,
+          planningQuarterIds: syncQuarterIds
+            ? nextQuarterId
+              ? [nextQuarterId]
+              : []
+            : prev.planningQuarterIds,
+        };
+      });
+    },
+    [teamKey],
+  );
 
   const updateDemand = (demandId: string, patch: Partial<DemandRow>) => {
     setForm((prev) => ({
       ...prev,
       planningDemands: prev.planningDemands.map((demand) =>
-        demand.id === demandId ? { ...demand, ...patch } : demand
+        demand.id === demandId ? { ...demand, ...patch } : demand,
       ),
     }));
   };
@@ -322,7 +341,9 @@ export default function PlanningWorkbenchTaskDialog({
   const removeDemand = (demandId: string) => {
     setForm((prev) => ({
       ...prev,
-      planningDemands: prev.planningDemands.filter((demand) => demand.id !== demandId),
+      planningDemands: prev.planningDemands.filter(
+        (demand) => demand.id !== demandId,
+      ),
     }));
   };
 
@@ -355,40 +376,41 @@ export default function PlanningWorkbenchTaskDialog({
     const normalizedDemands = form.planningDemands.map((demand) => ({
       kind: demand.kind,
       role: demand.kind === "ROLE" ? demand.role.trim() || null : null,
-      participantId: demand.kind === "PARTICIPANT" ? demand.participantId || null : null,
+      participantId:
+        demand.kind === "PARTICIPANT" ? demand.participantId || null : null,
       stream: demand.stream.trim() || null,
-      days: whole(demand.days),
+      days: normalizeDayAmount(demand.days),
     }));
 
     const hasInvalidDemand = normalizedDemands.some(
       (demand) =>
-        demand.days > 0
-        && (
-          (demand.kind === "ROLE" && !demand.role)
-          || (demand.kind === "PARTICIPANT" && !demand.participantId)
-        )
+        demand.days > 0 &&
+        ((demand.kind === "ROLE" && !demand.role) ||
+          (demand.kind === "PARTICIPANT" && !demand.participantId)),
     );
     if (hasInvalidDemand) {
-      setError("Для строк с положительной нагрузкой нужно выбрать роль или участника.");
+      setError(
+        "Для строк с положительной нагрузкой нужно выбрать роль или участника.",
+      );
       return;
     }
 
     if (
-      !form.initialQuarterId
-      && form.planningQuarterIds.length === 0
-      && form.planningSprintIds.length === 0
+      !form.initialQuarterId &&
+      form.planningQuarterIds.length === 0 &&
+      form.planningSprintIds.length === 0
     ) {
-      setError("Нужно указать стартовый квартал, кварталы планирования или конкретные спринты.");
+      setError(
+        "Нужно указать стартовый квартал, кварталы планирования или конкретные спринты.",
+      );
       return;
     }
 
     const planningDemands = normalizedDemands.filter(
       (demand) =>
-        demand.days > 0
-        && (
-          (demand.kind === "ROLE" && demand.role)
-          || (demand.kind === "PARTICIPANT" && demand.participantId)
-        )
+        demand.days > 0 &&
+        ((demand.kind === "ROLE" && demand.role) ||
+          (demand.kind === "PARTICIPANT" && demand.participantId)),
     );
 
     setError("");
@@ -409,14 +431,18 @@ export default function PlanningWorkbenchTaskDialog({
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
-      <DialogTitle>{task ? "Редактировать задачу" : "Новая задача для планирования"}</DialogTitle>
+      <DialogTitle>
+        {task ? "Редактировать задачу" : "Новая задача для планирования"}
+      </DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2.5} sx={{ pt: 1 }}>
           <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
             <TextField
               label="Название"
               value={form.title}
-              onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, title: event.target.value }))
+              }
               fullWidth
               required
             />
@@ -438,7 +464,9 @@ export default function PlanningWorkbenchTaskDialog({
           <TextField
             label="Описание"
             value={form.description}
-            onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
+            onChange={(event) =>
+              setForm((prev) => ({ ...prev, description: event.target.value }))
+            }
             fullWidth
             multiline
             minRows={2}
@@ -447,7 +475,9 @@ export default function PlanningWorkbenchTaskDialog({
           <TextField
             label="DoD"
             value={form.dod}
-            onChange={(event) => setForm((prev) => ({ ...prev, dod: event.target.value }))}
+            onChange={(event) =>
+              setForm((prev) => ({ ...prev, dod: event.target.value }))
+            }
             fullWidth
             multiline
             minRows={2}
@@ -476,17 +506,22 @@ export default function PlanningWorkbenchTaskDialog({
 
               {form.planningDemands.length === 0 ? (
                 <Typography variant="body2">
-                  Здесь можно оставить задачу без роли и участника. Для автораспределения потом добавьте строки нагрузки.
+                  Здесь можно оставить задачу без роли и участника. Для
+                  автораспределения потом добавьте строки нагрузки.
                 </Typography>
               ) : (
                 <Stack spacing={1.25}>
                   {form.planningDemands.map((demand) => {
                     const baseStreamOptions =
                       demand.kind === "PARTICIPANT" && demand.participantId
-                        ? participantById.get(demand.participantId)?.userStreams ?? participantStreamOptions
+                        ? (participantById.get(demand.participantId)
+                            ?.userStreams ?? participantStreamOptions)
                         : participantStreamOptions;
                     const streamOptionsForDemand = Array.from(
-                      new Set([...(baseStreamOptions || []), ...(demand.stream ? [demand.stream] : [])])
+                      new Set([
+                        ...(baseStreamOptions || []),
+                        ...(demand.stream ? [demand.stream] : []),
+                      ]),
                     );
                     return (
                       <Stack
@@ -502,10 +537,15 @@ export default function PlanningWorkbenchTaskDialog({
                           onChange={(value) => {
                             const nextSubject = parseDemandSubjectValue(value);
                             const nextParticipantId =
-                              nextSubject.kind === "PARTICIPANT" ? nextSubject.participantId || "" : "";
+                              nextSubject.kind === "PARTICIPANT"
+                                ? nextSubject.participantId || ""
+                                : "";
                             const nextStream =
                               nextSubject.kind === "PARTICIPANT"
-                                ? demand.stream || participantById.get(nextParticipantId)?.userStreams?.[0] || ""
+                                ? demand.stream ||
+                                  participantById.get(nextParticipantId)
+                                    ?.userStreams?.[0] ||
+                                  ""
                                 : demand.stream;
                             updateDemand(demand.id, {
                               ...nextSubject,
@@ -520,7 +560,9 @@ export default function PlanningWorkbenchTaskDialog({
                         <FilterAutocomplete
                           label="Стрим по участнику"
                           value={demand.stream || ""}
-                          onChange={(value) => updateDemand(demand.id, { stream: value })}
+                          onChange={(value) =>
+                            updateDemand(demand.id, { stream: value })
+                          }
                           options={streamOptionsForDemand}
                           sx={{ flex: 1 }}
                         />
@@ -530,14 +572,24 @@ export default function PlanningWorkbenchTaskDialog({
                           type="text"
                           value={demand.days}
                           onChange={(event) => {
-                            const normalized = event.target.value.replace(/[^\d]/g, "");
+                            const normalized = sanitizeDayAmountInput(
+                              event.target.value,
+                            );
                             updateDemand(demand.id, { days: normalized });
                           }}
-                          inputProps={{ inputMode: "numeric", pattern: "[0-9]*" }}
+                          inputProps={{
+                            min: 0,
+                            step: DAY_AMOUNT_STEP,
+                            inputMode: "decimal",
+                            pattern: "[0-9]*[.,]?[0-9]?",
+                          }}
                           sx={{ width: { xs: "100%", md: 120 } }}
                         />
 
-                        <IconButton onClick={() => removeDemand(demand.id)} aria-label="Удалить строку">
+                        <IconButton
+                          onClick={() => removeDemand(demand.id)}
+                          aria-label="Удалить строку"
+                        >
                           <Close />
                         </IconButton>
                       </Stack>
@@ -629,7 +681,11 @@ export default function PlanningWorkbenchTaskDialog({
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Отмена</Button>
-        <Button onClick={handleSubmit} variant="contained" disabled={submitting}>
+        <Button
+          onClick={handleSubmit}
+          variant="contained"
+          disabled={submitting}
+        >
           {submitting ? "Сохраняем..." : "Сохранить"}
         </Button>
       </DialogActions>

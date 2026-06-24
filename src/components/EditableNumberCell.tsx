@@ -1,5 +1,10 @@
 import * as React from "react";
 import { Box, InputBase, Typography } from "@mui/material";
+import {
+  DAY_AMOUNT_STEP,
+  formatDayAmount,
+  normalizeDayAmount,
+} from "../utils/dayAmount";
 
 export type EditableNumberCellProps = {
   value: number;
@@ -8,9 +13,6 @@ export type EditableNumberCellProps = {
   title?: string;
   dataTestId?: string;
 };
-
-const toInt = (value: number) =>
-  Number.isFinite(value) ? Math.round(value) : 0;
 
 export default function EditableNumberCell({
   value,
@@ -46,7 +48,7 @@ export default function EditableNumberCell({
   const handleClose = React.useCallback(() => {
     if (!editing) return;
     setEditing(false);
-    const next = Number.isFinite(draft) ? draft : 0;
+    const next = normalizeDayAmount(draft);
     if (next !== value) {
       onChange(next);
       onCommit?.(next);
@@ -68,7 +70,7 @@ export default function EditableNumberCell({
         onClick={handleStart}
         data-testid={dataTestId}
       >
-        <Typography component="span">{toInt(value)}</Typography>
+        <Typography component="span">{formatDayAmount(value)}</Typography>
       </Box>
     );
   }
@@ -117,6 +119,9 @@ export default function EditableNumberCell({
           name: title || "allocation-value",
           "aria-label": title || "Значение нагрузки",
           "data-testid": dataTestId,
+          min: 0,
+          step: DAY_AMOUNT_STEP,
+          inputMode: "decimal",
         }}
       />
     </Box>

@@ -69,10 +69,9 @@ import type {
   TaskPriority,
   TaskStatus,
 } from "../types";
+import { formatDayAmount, normalizeDayAmount } from "../utils/dayAmount";
 
 moment.locale("ru");
-
-const toInt = (n: number) => (Number.isFinite(n) ? Math.round(n) : 0);
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   inprogress: "В работе",
@@ -472,7 +471,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
   for (const s of effectiveSprints) {
     sumBySprint[s.id] = participantRows.reduce((a, p) => {
       const v = Number(rows[p.id]?.[s.id] || 0);
-      return a + toInt(v);
+      return a + normalizeDayAmount(v);
     }, 0);
   }
 
@@ -1079,7 +1078,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                   {participantRows.map((p) => {
                     const row = rows[p.id] || {};
                     const rowSum = effectiveSprints.reduce(
-                      (acc, s) => acc + toInt(Number(row[s.id] || 0)),
+                      (acc, s) => acc + normalizeDayAmount(Number(row[s.id] || 0)),
                       0
                     );
                     const isLeader = leaderPid === p.id;
@@ -1188,7 +1187,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                             ))}
 
                             <TableCell align="center" sx={{ fontWeight: 700 }}>
-                              {toInt(rowSum)}
+                              {formatDayAmount(rowSum)}
                             </TableCell>
 
                             <TableCell
@@ -1342,11 +1341,11 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                   </TableCell>
                   {effectiveSprints.map((s) => (
                     <TableCell key={s.id} align="center" sx={{ fontWeight: 700 }}>
-                      {toInt(sumBySprint[s.id])}
+                      {formatDayAmount(sumBySprint[s.id])}
                     </TableCell>
                   ))}
                   <TableCell align="center" sx={{ fontWeight: 700 }}>
-                    {toInt(Object.values(sumBySprint).reduce((a, b) => a + b, 0))}
+                    {formatDayAmount(Object.values(sumBySprint).reduce((a, b) => a + b, 0))}
                   </TableCell>
                   <TableCell />
                 </TableRow>

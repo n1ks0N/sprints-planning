@@ -106,6 +106,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { normalizeDayAmount } from "../utils/dayAmount";
 
 moment.locale("ru");
 
@@ -122,10 +123,6 @@ type SortDirection = "asc" | "desc";
 
 function byEnd(a: Sprint, b: Sprint) {
   return a.endDate.localeCompare(b.endDate);
-}
-
-function toInt(n: number) {
-  return Number.isFinite(n) ? Math.round(n) : 0;
 }
 
 function isISOWithin(iso: string, startISO: string, endISO: string) {
@@ -153,7 +150,7 @@ function compareValues<T extends string | number>(left: T, right: T, direction: 
 function normalizeSparseRow(row?: Record<string, number>) {
   if (!row) return undefined;
   const filtered = Object.entries(row).reduce<Record<string, number>>((acc, [sprintId, days]) => {
-    const value = toInt(Number(days) || 0);
+    const value = normalizeDayAmount(Number(days) || 0);
     if (value > 0) {
       acc[sprintId] = value;
     }
@@ -163,13 +160,13 @@ function normalizeSparseRow(row?: Record<string, number>) {
 }
 
 function sumTaskLoad(task: BacklogItem) {
-  const fromLoads = Object.values(task.loads || {}).reduce((sum, days) => sum + toInt(Number(days) || 0), 0);
+  const fromLoads = Object.values(task.loads || {}).reduce((sum, days) => sum + normalizeDayAmount(Number(days) || 0), 0);
   if (fromLoads > 0) {
     return fromLoads;
   }
   return Object.values(task.allocations || {}).reduce(
     (taskSum, row) =>
-      taskSum + Object.values(row || {}).reduce((rowSum, days) => rowSum + toInt(Number(days) || 0), 0),
+      taskSum + Object.values(row || {}).reduce((rowSum, days) => rowSum + normalizeDayAmount(Number(days) || 0), 0),
     0
   );
 }
@@ -2198,7 +2195,7 @@ export default function BacklogPage() {
         Record<string, Record<string, number>>
       >((acc, [pid, row]) => {
         const positive = Object.entries(row)
-          .map(([sid, value]) => [sid, toInt(Number(value) || 0)] as const)
+          .map(([sid, value]) => [sid, normalizeDayAmount(Number(value) || 0)] as const)
           .filter(([, days]) => days > 0);
         if (positive.length) {
           acc[pid] = Object.fromEntries(positive);
@@ -2209,7 +2206,7 @@ export default function BacklogPage() {
       const loadsPayload = task.loads
         ? Object.fromEntries(
             Object.entries(task.loads)
-              .map(([sid, days]) => [sid, toInt(Number(days) || 0)] as const)
+              .map(([sid, days]) => [sid, normalizeDayAmount(Number(days) || 0)] as const)
               .filter(([, days]) => days > 0)
           )
         : undefined;
@@ -2267,7 +2264,7 @@ export default function BacklogPage() {
           taskId,
           participantId,
           sprintId,
-          days: toInt(Number(value) || 0),
+          days: normalizeDayAmount(Number(value) || 0),
         })
           .unwrap()
           .catch((e) => {
@@ -2288,7 +2285,7 @@ export default function BacklogPage() {
       setAllocations((prev) => {
         const prevTask = prev[taskId] || {};
         const prevRow = prevTask[participantId] || {};
-        const nextValue = toInt(Number(value) || 0);
+        const nextValue = normalizeDayAmount(Number(value) || 0);
         const current = prevRow[sprintId] ?? 0;
         if (current === nextValue) return prev;
         const nextRow = { ...prevRow };
@@ -2458,7 +2455,7 @@ export default function BacklogPage() {
       (async () => {
         try {
           const bulkAllocations = Object.entries(next).reduce<Record<string, number>>((acc, [sid, days]) => {
-            acc[sid] = toInt(Number(days) || 0);
+            acc[sid] = normalizeDayAmount(Number(days) || 0);
             return acc;
           }, {});
           await upsertTaskAllocationMulti({
@@ -2520,7 +2517,7 @@ export default function BacklogPage() {
           >((acc, [participantId, row]) => {
             acc[participantId] = ids.reduce<Record<string, number>>(
               (inner, sid) => {
-                inner[sid] = toInt(Number(row[sid] || 0));
+                inner[sid] = normalizeDayAmount(Number(row[sid] || 0));
                 return inner;
               },
               {}
@@ -2595,7 +2592,7 @@ export default function BacklogPage() {
           const bulkAllocations = Object.entries(nextRow).reduce<
             Record<string, number>
           >((acc, [sid, days]) => {
-            acc[sid] = toInt(Number(days) || 0);
+            acc[sid] = normalizeDayAmount(Number(days) || 0);
             return acc;
           }, {});
           await upsertTaskAllocationBulk({
