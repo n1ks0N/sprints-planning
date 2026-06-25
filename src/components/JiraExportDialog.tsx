@@ -3,6 +3,8 @@ import {
   Alert,
   Autocomplete,
   Button,
+  Checkbox,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -20,6 +22,7 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { Delete, DeleteSweep, OpenInNew } from "@mui/icons-material";
@@ -32,10 +35,12 @@ import {
   useConfirmJiraIssueNotCreatedMutation,
   useExportJiraIssuesMutation,
   useGetJiraExportBatchQuery,
+  useGetJiraSprintOptionsQuery,
 } from "../app/api";
 import type {
   BacklogItem,
   JiraExportBatchItem,
+  JiraSprintOption,
   Participant,
   Sprint,
 } from "../types";
@@ -52,11 +57,6 @@ type JiraExportDialogProps = {
 };
 
 const JIRA_EXPORT_FORM_STORAGE_KEY = "jiraExportForm_v1";
-const JIRA_SPRINT_OPTIONS = [
-  { value: "236205", hint: "Classic ИСУ" },
-  { value: "236508", hint: "SM&Аналитика" },
-  { value: "239460", hint: "GenAI сценарии" },
-];
 const JIRA_PROJECT_OPTIONS = ["ISUWEBNAPP", "CUSTOMLAB"];
 const JIRA_LABEL_OPTIONS = ["ai-core", "an&sm", "isugenai"];
 
@@ -78,22 +78,34 @@ function isISOWithin(iso: string, startISO: string, endISO: string) {
   return iso >= startISO && iso <= endISO;
 }
 
-function formatStoryPoints(value: number) {
+function formatLoad(value: number) {
   if (!Number.isFinite(value)) return "0";
   return Number.isInteger(value) ? String(value) : String(value);
 }
 
 function readStoredForm() {
   try {
-    const raw = localStorage.getItem(JIRA_EXPORT_FORM_STORAGE_KEY);
+    const raw = sessionStorage.getItem(JIRA_EXPORT_FORM_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
+    const createStoryByTaskId =
+      parsed?.createStoryByTaskId &&
+      typeof parsed.createStoryByTaskId === "object" &&
+      !Array.isArray(parsed.createStoryByTaskId)
+        ? Object.fromEntries(
+            Object.entries(parsed.createStoryByTaskId).filter(
+              ([taskId, selected]) => typeof taskId === "string" && typeof selected === "boolean"
+            )
+          )
+        : {};
     return {
       planningSprintId:
         typeof parsed?.planningSprintId === "string" ? parsed.planningSprintId : "",
       jiraSprintId:
         typeof parsed?.jiraSprintId === "string" ? parsed.jiraSprintId : "",
-      projectKey: typeof parsed?.projectKey === "string" ? parsed.projectKey : "",
+      projectKey:
+        typeof parsed?.projectKey === "string" ? parsed.projectKey : "",
+      createStoryByTaskId,
       labels: Array.isArray(parsed?.labels)
         ? parsed.labels.filter((value: unknown): value is string => typeof value === "string")
         : [],
@@ -107,30 +119,52 @@ function writeStoredForm(value: {
   planningSprintId: string;
   jiraSprintId: string;
   projectKey: string;
+  createStoryByTaskId: Record<string, boolean>;
   labels: string[];
 }) {
   try {
-    localStorage.setItem(JIRA_EXPORT_FORM_STORAGE_KEY, JSON.stringify(value));
+    sessionStorage.setItem(JIRA_EXPORT_FORM_STORAGE_KEY, JSON.stringify(value));
   } catch {
     // ignore
   }
 }
 
-function buildParticipantsPreview(
+function participantOptionLabel(participantId: string, participantMap: Map<string, Participant>) {
+  const participant = participantMap.get(participantId);
+  if (!participant) return participantId;
+  const login = participant.jiraLogin?.trim();
+  return login ? `${participant.fullName} (${login})` : participant.fullName;
+}
+
+function buildDefaultParticipantIds(
   task: BacklogItem,
-  planningSprintId: string,
-  participantMap: Map<string, Participant>
+  planningSprintId: string
 ) {
   const participantIds = Array.isArray(task.participantIds) ? task.participantIds : [];
-  if (!participantIds.length) return "—";
+  const withLoad = participantIds.filter((participantId) => {
+    const storyPoints = Number(task.allocations?.[participantId]?.[planningSprintId] ?? 0);
+    return storyPoints > 0;
+  });
+  return withLoad.length ? withLoad : participantIds;
+}
 
-  return participantIds
-    .map((participantId) => {
-      const participantName = participantMap.get(participantId)?.fullName?.trim() || participantId;
-      const storyPoints = Number(task.allocations?.[participantId]?.[planningSprintId] ?? 0);
-      return `${participantName} - ${formatStoryPoints(storyPoints)} SP`;
-    })
-    .join(", ");
+function selectedStoryPoints(task: BacklogItem, planningSprintId: string, participantIds: string[]) {
+  return participantIds.reduce(
+    (sum, participantId) => sum + Number(task.allocations?.[participantId]?.[planningSprintId] ?? 0),
+    0
+  );
+}
+
+function participantLoad(task: BacklogItem, planningSprintId: string, participantId: string) {
+  return Number(task.allocations?.[participantId]?.[planningSprintId] ?? 0);
+}
+
+function sprintOptionLabel(option: JiraSprintOption | string) {
+  if (typeof option === "string") return option;
+  const dates = option.startDate || option.endDate
+    ? ` · ${option.startDate ? moment(option.startDate).format("DD.MM") : "?"}-${option.endDate ? moment(option.endDate).format("DD.MM") : "?"}`
+    : "";
+  return `${option.name} · ${option.id}${dates}`;
 }
 
 function isTerminalBatchStatus(status?: string | null) {
@@ -202,8 +236,13 @@ export default function JiraExportDialog({
   const dispatch = useAppDispatch();
   const [planningSprintId, setPlanningSprintId] = React.useState("");
   const [jiraSprintId, setJiraSprintId] = React.useState("");
+  const [jiraSprintInputValue, setJiraSprintInputValue] = React.useState("");
+  const [jiraSprintSearch, setJiraSprintSearch] = React.useState("");
+  const [jiraSprintQuery, setJiraSprintQuery] = React.useState("");
   const [projectKey, setProjectKey] = React.useState("");
   const [labels, setLabels] = React.useState<string[]>([]);
+  const [participantIdsByTaskId, setParticipantIdsByTaskId] = React.useState<Record<string, string[]>>({});
+  const [createStoryByTaskId, setCreateStoryByTaskId] = React.useState<Record<string, boolean>>({});
   const [submitAttempted, setSubmitAttempted] = React.useState(false);
   const [requestError, setRequestError] = React.useState("");
   const [activeBatchId, setActiveBatchId] = React.useState<string | null>(null);
@@ -211,6 +250,11 @@ export default function JiraExportDialog({
   const [exportJiraIssues, { isLoading: isStarting }] = useExportJiraIssuesMutation();
   const [confirmCreated, { isLoading: isConfirmingCreated }] = useConfirmJiraIssueCreatedMutation();
   const [confirmNotCreated, { isLoading: isConfirmingNotCreated }] = useConfirmJiraIssueNotCreatedMutation();
+  const sprintOptionsQuery = useGetJiraSprintOptionsQuery(
+    jiraSprintQuery ? { query: jiraSprintQuery } : undefined,
+    { skip: !open }
+  );
+  const jiraSprintOptions = sprintOptionsQuery.data || [];
 
   const batchQuery = useGetJiraExportBatchQuery(activeBatchId || "", {
     skip: !open || !activeBatchId,
@@ -238,14 +282,21 @@ export default function JiraExportDialog({
   }, [sprints]);
 
   const selectedJiraSprintOption = React.useMemo(
-    () => JIRA_SPRINT_OPTIONS.find((option) => option.value === jiraSprintId) ?? null,
-    [jiraSprintId]
+    () => jiraSprintOptions.find((option) => option.id === jiraSprintId) ?? null,
+    [jiraSprintId, jiraSprintOptions]
   );
-
   const selectedProjectOption = React.useMemo(
     () => JIRA_PROJECT_OPTIONS.find((option) => option === projectKey) ?? null,
     [projectKey]
   );
+
+  React.useEffect(() => {
+    if (!open) return;
+    const handle = window.setTimeout(() => {
+      setJiraSprintQuery(jiraSprintSearch.trim());
+    }, 400);
+    return () => window.clearTimeout(handle);
+  }, [jiraSprintSearch, open]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -256,26 +307,65 @@ export default function JiraExportDialog({
     const nextPlanningSprintId = sprints.some((sprint) => sprint.id === storedPlanningSprintId)
       ? storedPlanningSprintId
       : currentPlanningSprintId;
-    const nextJiraSprintId =
-      (storedForm?.jiraSprintId || "").trim() || JIRA_SPRINT_OPTIONS[0]?.value || "";
-    const nextProjectKey =
-      (storedForm?.projectKey || "").trim() || JIRA_PROJECT_OPTIONS[0] || "";
+    const nextJiraSprintId = (storedForm?.jiraSprintId || "").trim();
+    const nextProjectKey = (storedForm?.projectKey || "").trim().toUpperCase() || JIRA_PROJECT_OPTIONS[0] || "";
+    const nextCreateStoryByTaskId = tasks.reduce<Record<string, boolean>>((acc, task) => {
+      acc[task.id] = Boolean(storedForm?.createStoryByTaskId?.[task.id]);
+      return acc;
+    }, {});
     const nextLabels = normalizeStringArray(storedForm?.labels || []);
 
     setPlanningSprintId(nextPlanningSprintId);
     setJiraSprintId(nextJiraSprintId);
+    setJiraSprintInputValue(nextJiraSprintId);
+    setJiraSprintSearch("");
+    setJiraSprintQuery("");
     setProjectKey(nextProjectKey);
     setLabels(nextLabels);
+    setCreateStoryByTaskId(nextCreateStoryByTaskId);
 
     if (storedPlanningSprintId && storedPlanningSprintId !== nextPlanningSprintId) {
       writeStoredForm({
         planningSprintId: nextPlanningSprintId,
         jiraSprintId: nextJiraSprintId,
         projectKey: nextProjectKey,
+        createStoryByTaskId: nextCreateStoryByTaskId,
         labels: nextLabels,
       });
     }
-  }, [open, sprints, currentPlanningSprintId]);
+  }, [open, sprints, currentPlanningSprintId, tasks]);
+
+  React.useEffect(() => {
+    if (!open || jiraSprintId || jiraSprintOptions.length === 0) return;
+    const firstOption = jiraSprintOptions[0];
+    setJiraSprintId(firstOption.id);
+    setJiraSprintInputValue(sprintOptionLabel(firstOption));
+  }, [jiraSprintId, jiraSprintOptions, open]);
+
+  React.useEffect(() => {
+    if (!open || !selectedJiraSprintOption) return;
+    setJiraSprintInputValue(sprintOptionLabel(selectedJiraSprintOption));
+  }, [open, selectedJiraSprintOption]);
+
+  React.useEffect(() => {
+    if (!open || !planningSprintId) return;
+    setParticipantIdsByTaskId((prev) => {
+      const next: Record<string, string[]> = {};
+      for (const task of tasks) {
+        const validTaskParticipantIds = new Set(Array.isArray(task.participantIds) ? task.participantIds : []);
+        const previous = (prev[task.id] || []).filter((participantId) => validTaskParticipantIds.has(participantId));
+        next[task.id] = previous.length ? previous : buildDefaultParticipantIds(task, planningSprintId);
+      }
+      return next;
+    });
+    setCreateStoryByTaskId((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const task of tasks) {
+        next[task.id] = Boolean(prev[task.id]);
+      }
+      return next;
+    });
+  }, [open, planningSprintId, tasks]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -283,9 +373,10 @@ export default function JiraExportDialog({
       planningSprintId,
       jiraSprintId,
       projectKey,
+      createStoryByTaskId,
       labels,
     });
-  }, [open, planningSprintId, jiraSprintId, projectKey, labels]);
+  }, [open, planningSprintId, jiraSprintId, projectKey, createStoryByTaskId, labels]);
 
   const selectedPlanningSprint = React.useMemo(
     () => sprints.find((sprint) => sprint.id === planningSprintId) ?? null,
@@ -320,8 +411,8 @@ export default function JiraExportDialog({
 
   const handleSubmit = React.useCallback(async () => {
     setSubmitAttempted(true);
-    const normalizedProjectKey = projectKey.trim();
     const normalizedJiraSprintId = jiraSprintId.trim();
+    const normalizedProjectKey = projectKey.trim().toUpperCase();
 
     if (!planningSprintId || !normalizedJiraSprintId || !normalizedProjectKey) {
       return;
@@ -343,6 +434,8 @@ export default function JiraExportDialog({
         planningSprintId,
         jiraSprintId: normalizedJiraSprintId,
         projectKey: normalizedProjectKey,
+        participantIdsByTaskId,
+        createStoryByTaskId,
         labels,
       }).unwrap();
       setActiveBatchId(response.batchId);
@@ -352,7 +445,7 @@ export default function JiraExportDialog({
         error?.data?.error || error?.data?.message || "Не удалось запустить экспорт в Jira";
       setRequestError(String(message));
     }
-  }, [exportJiraIssues, jiraSprintId, labels, planningSprintId, projectKey, selectedPlanningSprint, tasks]);
+  }, [createStoryByTaskId, exportJiraIssues, jiraSprintId, labels, participantIdsByTaskId, planningSprintId, projectKey, selectedPlanningSprint, tasks]);
 
   const handleConfirmCreated = React.useCallback(
     async (item: JiraExportBatchItem) => {
@@ -402,6 +495,14 @@ export default function JiraExportDialog({
   const jiraSprintError =
     submitAttempted && (!jiraSprintId.trim() || !/^\d+$/.test(jiraSprintId.trim()));
   const projectKeyError = submitAttempted && !projectKey.trim();
+  const taskIds = React.useMemo(() => tasks.map((task) => task.id), [tasks]);
+  const selectedStoryTaskCount = React.useMemo(
+    () => taskIds.filter((taskId) => Boolean(createStoryByTaskId[taskId])).length,
+    [createStoryByTaskId, taskIds]
+  );
+  const allStoryTasksSelected = taskIds.length > 0 && selectedStoryTaskCount === taskIds.length;
+  const someStoryTasksSelected =
+    selectedStoryTaskCount > 0 && selectedStoryTaskCount < taskIds.length;
 
   const batchItems = batchData?.items || [];
   const isBusy = isStarting || isConfirmingCreated || isConfirmingNotCreated || batchQuery.isFetching;
@@ -432,32 +533,58 @@ export default function JiraExportDialog({
 
               <Autocomplete
                 freeSolo
-                options={JIRA_SPRINT_OPTIONS}
+                options={jiraSprintOptions}
                 value={selectedJiraSprintOption}
-                inputValue={jiraSprintId}
-                onChange={(_e, value) =>
-                  setJiraSprintId(typeof value === "string" ? value : value?.value || "")
-                }
-                onInputChange={(_e, value, reason) => {
-                  if (reason === "reset" && selectedJiraSprintOption) return;
-                  setJiraSprintId(value);
+                inputValue={jiraSprintInputValue}
+                onChange={(_e, value) => {
+                  if (typeof value === "string") {
+                    const normalized = value.trim();
+                    setJiraSprintId(/^\d+$/.test(normalized) ? normalized : "");
+                    setJiraSprintInputValue(value);
+                    setJiraSprintSearch(value);
+                    return;
+                  }
+                  setJiraSprintId(value?.id || "");
+                  setJiraSprintInputValue(value ? sprintOptionLabel(value) : "");
+                  setJiraSprintSearch(value?.name || "");
                 }}
-                getOptionLabel={(option) => (typeof option === "string" ? option : option.value)}
+                onInputChange={(_e, value, reason) => {
+                  if (reason === "reset") return;
+                  const normalized = value.trim();
+                  const selectedLabel = selectedJiraSprintOption
+                    ? sprintOptionLabel(selectedJiraSprintOption)
+                    : "";
+                  setJiraSprintInputValue(value);
+                  if (normalized !== selectedLabel) {
+                    setJiraSprintId(/^\d+$/.test(normalized) ? normalized : "");
+                  }
+                  setJiraSprintSearch(value);
+                }}
+                getOptionLabel={sprintOptionLabel}
+                loading={sprintOptionsQuery.isFetching}
                 renderOption={(props, option) => {
                   const { key, ...optionProps } = props;
                   return (
                     <li key={key} {...optionProps}>
                       <Stack spacing={0}>
-                        <Typography variant="body2">{option.value}</Typography>
+                        <Typography variant="body2">{option.name}</Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {option.hint}
+                          {option.id} · {option.state}
+                          {option.startDate || option.endDate
+                            ? ` · ${option.startDate ? moment(option.startDate).format("DD.MM.YYYY") : "?"} - ${option.endDate ? moment(option.endDate).format("DD.MM.YYYY") : "?"}`
+                            : ""}
                         </Typography>
                       </Stack>
                     </li>
                   );
                 }}
                 renderInput={(params) => (
-                  <TextField {...params} label="Jira sprint id" error={jiraSprintError} />
+                  <TextField
+                    {...params}
+                    label="Jira sprint"
+                    error={jiraSprintError}
+                    helperText={sprintOptionsQuery.error ? "Не удалось загрузить спринты Jira" : "Поиск по названию или id; в Jira будет передан id выбранного спринта"}
+                  />
                 )}
                 fullWidth
               />
@@ -467,16 +594,19 @@ export default function JiraExportDialog({
                 options={JIRA_PROJECT_OPTIONS}
                 value={selectedProjectOption}
                 inputValue={projectKey}
-                onChange={(_e, value) => setProjectKey(typeof value === "string" ? value : value || "")}
+                onChange={(_e, value) => {
+                  setProjectKey((typeof value === "string" ? value : value || "").toUpperCase());
+                }}
                 onInputChange={(_e, value, reason) => {
                   if (reason === "reset" && selectedProjectOption) return;
-                  setProjectKey(value);
+                  setProjectKey(value.toUpperCase());
                 }}
                 renderInput={(params) => (
-                  <TextField {...params} label="Jira project.key" error={projectKeyError} />
+                  <TextField {...params} label="ProjectKey" error={projectKeyError} />
                 )}
                 fullWidth
               />
+
             </Stack>
 
             <Autocomplete
@@ -507,23 +637,58 @@ export default function JiraExportDialog({
               </Typography>
             ) : (
               <Stack spacing={1}>
-                <Stack direction="row" justifyContent="flex-end">
-                  <Button
-                    color="error"
-                    startIcon={<DeleteSweep />}
-                    onClick={onClearTasks}
-                    disabled={tasks.length === 0 || isBusy}
-                  >
-                    Удалить все
-                  </Button>
-                </Stack>
-
                 <TableContainer component={Paper} variant="outlined">
                   <Table size="small">
                     <TableHead>
                       <TableRow>
+                        <TableCell width={88} align="center">
+                          <Tooltip title={`Story для всех: выбрано ${selectedStoryTaskCount} из ${tasks.length}`}>
+                            <span>
+                              <Checkbox
+                                size="small"
+                                checked={allStoryTasksSelected}
+                                indeterminate={someStoryTasksSelected}
+                                disabled={tasks.length === 0}
+                                onChange={(event) => {
+                                  const checked = event.target.checked;
+                                  setCreateStoryByTaskId(
+                                    taskIds.reduce<Record<string, boolean>>((acc, taskId) => {
+                                      acc[taskId] = checked;
+                                      return acc;
+                                    }, {})
+                                  );
+                                }}
+                                inputProps={{ "aria-label": "Выбрать Story для всех задач" }}
+                                sx={{ p: 0.5 }}
+                              />
+                            </span>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell />
+                        <TableCell />
+                        <TableCell width={72} align="right">
+                          <Tooltip title="Удалить все задачи из списка">
+                            <span>
+                              <IconButton
+                                color="default"
+                                size="small"
+                                onClick={onClearTasks}
+                                disabled={tasks.length === 0 || isBusy}
+                                aria-label="Удалить все задачи из списка"
+                                sx={{ color: "text.secondary" }}
+                              >
+                                <DeleteSweep fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                        </TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell width={88} align="center">
+                          Story
+                        </TableCell>
                         <TableCell>Название задачи</TableCell>
-                        <TableCell>Участники</TableCell>
+                        <TableCell>Участники для Jira</TableCell>
                         <TableCell width={72} align="right">
                           Действия
                         </TableCell>
@@ -532,9 +697,80 @@ export default function JiraExportDialog({
                     <TableBody>
                       {tasks.map((task) => (
                         <TableRow key={task.id} hover>
-                          <TableCell>{task.title || "Без названия"}</TableCell>
+                          <TableCell align="center">
+                            <Checkbox
+                              size="small"
+                              checked={Boolean(createStoryByTaskId[task.id])}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setCreateStoryByTaskId((prev) => ({
+                                  ...prev,
+                                  [task.id]: checked,
+                                }));
+                              }}
+                              sx={{ p: 0.5 }}
+                            />
+                          </TableCell>
                           <TableCell>
-                            {buildParticipantsPreview(task, planningSprintId, participantMap)}
+                            {task.title || "Без названия"}
+                          </TableCell>
+                          <TableCell>
+                            <Autocomplete
+                              multiple
+                              size="small"
+                              disableCloseOnSelect
+                              limitTags={2}
+                              options={Array.isArray(task.participantIds) ? task.participantIds : []}
+                              value={participantIdsByTaskId[task.id] || []}
+                              onChange={(_event, value) => {
+                                setParticipantIdsByTaskId((prev) => ({
+                                  ...prev,
+                                  [task.id]: value,
+                                }));
+                              }}
+                              getOptionLabel={(participantId) => participantOptionLabel(participantId, participantMap)}
+                              renderOption={(props, participantId) => {
+                                const { key, ...optionProps } = props;
+                                const load = participantLoad(task, planningSprintId, participantId);
+                                return (
+                                  <li key={key} {...optionProps}>
+                                    <Stack direction="row" spacing={1} alignItems="center" sx={{ width: "100%" }}>
+                                      <Typography variant="body2" sx={{ flex: 1 }}>
+                                        {participantOptionLabel(participantId, participantMap)}
+                                      </Typography>
+                                      <Typography variant="caption" color={load > 0 ? "text.primary" : "text.secondary"}>
+                                        {formatLoad(load)} SP
+                                      </Typography>
+                                    </Stack>
+                                  </li>
+                                );
+                              }}
+                              renderTags={(value, getTagProps) =>
+                                value.map((participantId, index) => {
+                                  const { key, ...tagProps } = getTagProps({ index });
+                                  const load = participantLoad(task, planningSprintId, participantId);
+                                  return (
+                                    <Chip
+                                      key={key}
+                                      size="small"
+                                      label={`${participantOptionLabel(participantId, participantMap)} · ${formatLoad(load)} SP`}
+                                      {...tagProps}
+                                    />
+                                  );
+                                })
+                              }
+                              renderInput={(params) => {
+                                const selectedIds = participantIdsByTaskId[task.id] || [];
+                                const total = selectedStoryPoints(task, planningSprintId, selectedIds);
+                                return (
+                                  <TextField
+                                    {...params}
+                                    placeholder="Выбрать участников"
+                                    helperText={`${selectedIds.length} выбрано, суммарно ${formatLoad(total)} SP`}
+                                  />
+                                );
+                              }}
+                            />
                           </TableCell>
                           <TableCell align="right">
                             <IconButton size="small" onClick={() => onRemoveTask(task.id)}>
@@ -577,6 +813,8 @@ export default function JiraExportDialog({
                 <TableHead>
                   <TableRow>
                     <TableCell>Задача</TableCell>
+                    <TableCell>Тип</TableCell>
+                    <TableCell>Project</TableCell>
                     <TableCell>Участник</TableCell>
                     <TableCell>Спринт</TableCell>
                     <TableCell>Статус</TableCell>
@@ -589,6 +827,8 @@ export default function JiraExportDialog({
                   {batchItems.map((item) => (
                     <TableRow key={item.itemId} hover>
                       <TableCell>{item.taskTitle || item.taskId}</TableCell>
+                      <TableCell>{item.issueScope === "STORY" ? "Story" : "Участник"}</TableCell>
+                      <TableCell>{item.projectKey || "—"}</TableCell>
                       <TableCell>{item.participantName || "—"}</TableCell>
                       <TableCell>{item.planningSprintName || "—"}</TableCell>
                       <TableCell>{statusLabel(item)}</TableCell>

@@ -48,6 +48,8 @@ public class TaskController {
         @RequestParam(value = "userStream", required = false) String userStream,
         @RequestParam(value = "withoutQuarter", required = false) String withoutQuarter,
         @RequestParam(value = "id", required = false) String pinnedTaskId,
+        @RequestParam(value = "sortBy", required = false) String sortBy,
+        @RequestParam(value = "sortDirection", required = false) String sortDirection,
         @RequestParam(value = "page", defaultValue = "0") Integer page,
         @RequestParam(value = "size", defaultValue = "50") Integer size) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
@@ -67,7 +69,7 @@ public class TaskController {
             withoutQuarter,
             pinnedTaskId
         );
-        return taskService.findPage(normalizedTeamKey, filter, page, size);
+        return taskService.findPage(normalizedTeamKey, filter, page, size, sortBy, sortDirection);
     }
 
     @GetMapping("/tasks/{id}")

@@ -32,7 +32,7 @@ public class TaskJiraIssueEntity {
     private TaskEntity task;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "participant_id", nullable = false)
+    @JoinColumn(name = "participant_id")
     private ParticipantEntity participant;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -42,6 +42,13 @@ public class TaskJiraIssueEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "export_batch_id")
     private JiraExportBatchEntity exportBatch;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_task_jira_issue_id")
+    private TaskJiraIssueEntity parentTaskJiraIssue;
+
+    @Column(name = "issue_scope", nullable = false)
+    private String issueScope;
 
     @Column(name = "jira_issue_id", nullable = false)
     private String jiraIssueId;
@@ -83,6 +90,9 @@ public class TaskJiraIssueEntity {
         }
         if (status == null || status.isBlank()) {
             status = "CREATED";
+        }
+        if (issueScope == null || issueScope.isBlank()) {
+            issueScope = "PARTICIPANT";
         }
     }
 
@@ -132,6 +142,22 @@ public class TaskJiraIssueEntity {
 
     public void setExportBatch(JiraExportBatchEntity exportBatch) {
         this.exportBatch = exportBatch;
+    }
+
+    public TaskJiraIssueEntity getParentTaskJiraIssue() {
+        return parentTaskJiraIssue;
+    }
+
+    public void setParentTaskJiraIssue(TaskJiraIssueEntity parentTaskJiraIssue) {
+        this.parentTaskJiraIssue = parentTaskJiraIssue;
+    }
+
+    public String getIssueScope() {
+        return issueScope;
+    }
+
+    public void setIssueScope(String issueScope) {
+        this.issueScope = issueScope;
     }
 
     public String getJiraIssueId() {

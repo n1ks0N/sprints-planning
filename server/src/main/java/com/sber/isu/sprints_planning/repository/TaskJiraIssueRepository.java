@@ -22,6 +22,46 @@ public interface TaskJiraIssueRepository extends JpaRepository<TaskJiraIssueEnti
     );
 
     @EntityGraph(attributePaths = {"task", "participant", "planningSprint", "exportBatch"})
+    Optional<TaskJiraIssueEntity> findByTeamKeyAndTaskIdAndParticipantIdAndPlanningSprintIdAndJiraProjectKey(
+        String teamKey,
+        UUID taskId,
+        UUID participantId,
+        UUID planningSprintId,
+        String jiraProjectKey
+    );
+
+    @EntityGraph(attributePaths = {"task", "planningSprint", "exportBatch"})
+    Optional<TaskJiraIssueEntity> findByTeamKeyAndTaskIdAndIssueScopeAndPlanningSprintIdAndJiraProjectKey(
+        String teamKey,
+        UUID taskId,
+        String issueScope,
+        UUID planningSprintId,
+        String jiraProjectKey
+    );
+
+    @EntityGraph(attributePaths = {"task", "exportBatch"})
+    Optional<TaskJiraIssueEntity> findFirstByTeamKeyAndTaskIdAndIssueScopeAndJiraProjectKeyOrderByCreatedAtAsc(
+        String teamKey,
+        UUID taskId,
+        String issueScope,
+        String jiraProjectKey
+    );
+
+    @EntityGraph(attributePaths = {"task", "exportBatch"})
+    Optional<TaskJiraIssueEntity> findFirstByTeamKeyAndTaskIdAndIssueScopeOrderByCreatedAtAsc(
+        String teamKey,
+        UUID taskId,
+        String issueScope
+    );
+
+    @EntityGraph(attributePaths = {"task", "participant", "planningSprint", "parentTaskJiraIssue"})
+    List<TaskJiraIssueEntity> findAllByTeamKeyAndTaskIdAndIssueScope(
+        String teamKey,
+        UUID taskId,
+        String issueScope
+    );
+
+    @EntityGraph(attributePaths = {"task", "participant", "planningSprint", "exportBatch"})
     List<TaskJiraIssueEntity> findAllByExportBatchIdOrderByCreatedAtAsc(UUID exportBatchId);
 
     Optional<TaskJiraIssueEntity> findByIdAndTeamKey(UUID id, String teamKey);

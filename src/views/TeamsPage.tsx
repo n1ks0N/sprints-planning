@@ -2,6 +2,7 @@ import React from "react";
 import {
   Box,
   Button,
+  Chip,
   Checkbox,
   Dialog,
   DialogActions,
@@ -49,8 +50,10 @@ export default function TeamsPage() {
 
   const [newKey, setNewKey] = React.useState("");
   const [newName, setNewName] = React.useState("");
+  const [newJiraBoardId, setNewJiraBoardId] = React.useState("");
   const [editKey, setEditKey] = React.useState<string | null>(null);
   const [editName, setEditName] = React.useState("");
+  const [editJiraBoardId, setEditJiraBoardId] = React.useState("");
   const [confirmKey, setConfirmKey] = React.useState<string | null>(null);
   const [deleteData, setDeleteData] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -59,11 +62,13 @@ export default function TeamsPage() {
   const helpContent: PageHelpContent = {
     title: "Справка: Управление командами",
     description:
-      "Страница предназначена для создания, переименования и удаления команд.",
+      "Страница предназначена для создания, настройки, переименования и удаления команд.",
     bullets: [
       "Блок «Добавить команду» создает новую команду по ключу и названию.",
+      "Ключ команды используется в URL и должен содержать только латинские буквы, цифры, дефис или подчеркивание.",
+      "Поле Jira boardId связывает команду с board в Jira для загрузки активных, будущих и найденных по поиску спринтов.",
       "Кнопка «Открыть» переходит в выбранную команду.",
-      "Кнопка «Редактировать» включает изменение названия, «Сохранить» фиксирует изменения.",
+      "Кнопка «Редактировать» включает изменение названия и Jira boardId, «Сохранить» фиксирует изменения.",
       "Кнопка «Удалить» открывает подтверждение удаления команды.",
       "Чекбокс в диалоге удаления позволяет удалить команду вместе со всеми данными.",
     ],
@@ -79,6 +84,20 @@ export default function TeamsPage() {
   const resetForm = () => {
     setNewKey("");
     setNewName("");
+    setNewJiraBoardId("");
+  };
+
+  const parseBoardId = (value: string) => {
+    const normalized = value.trim();
+    if (!normalized) return null;
+    if (!/^\d+$/.test(normalized)) {
+      throw new Error("Jira boardId должен быть положительным числом");
+    }
+    const parsed = Number(normalized);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+      throw new Error("Jira boardId должен быть положительным числом");
+    }
+    return parsed;
   };
 
   const handleAdd = async () => {
@@ -93,17 +112,20 @@ export default function TeamsPage() {
       return;
     }
     try {
-      await addTeam({ key, name }).unwrap();
+      await addTeam({ key, name, jiraBoardId: parseBoardId(newJiraBoardId) }).unwrap();
       resetForm();
       setError(null);
     } catch (error) {
-      setError(`Не удалось добавить команду: ${String((error as any)?.data || error)}`);
+      setError(error instanceof Error
+        ? error.message
+        : `Не удалось добавить команду: ${String((error as any)?.data || error)}`);
     }
   };
 
-  const startEdit = (key: string, name: string) => {
+  const startEdit = (key: string, name: string, jiraBoardId?: number | null) => {
     setEditKey(key);
     setEditName(name);
+    setEditJiraBoardId(jiraBoardId ? String(jiraBoardId) : "");
   };
 
   const handleSaveEdit = async () => {
@@ -114,12 +136,15 @@ export default function TeamsPage() {
       return;
     }
     try {
-      await updateTeam({ key: editKey, name }).unwrap();
+      await updateTeam({ key: editKey, name, jiraBoardId: parseBoardId(editJiraBoardId) }).unwrap();
       setEditKey(null);
       setEditName("");
+      setEditJiraBoardId("");
       setError(null);
     } catch (error) {
-      setError(`Не удалось обновить команду: ${String((error as any)?.data || error)}`);
+      setError(error instanceof Error
+        ? error.message
+        : `Не удалось обновить команду: ${String((error as any)?.data || error)}`);
     }
   };
 
@@ -161,6 +186,24 @@ export default function TeamsPage() {
             team.name
           )}
         </TableCell>
+        <TableCell width="18%">
+          {editKey === team.key ? (
+            <TextField
+              size="small"
+              label="Jira boardId"
+              value={editJiraBoardId}
+              onChange={(e) => setEditJiraBoardId(e.target.value)}
+              inputProps={{ inputMode: "numeric", pattern: "[0-9]*" }}
+              fullWidth
+            />
+          ) : (
+            team.jiraBoardId ? (
+              <Chip size="small" label={team.jiraBoardId} variant="outlined" />
+            ) : (
+              <Typography variant="body2" color="text.secondary">Не задан</Typography>
+            )
+          )}
+        </TableCell>
         <TableCell align="right">
           <Stack direction="row" spacing={1} justifyContent="flex-end">
             <Button component={Link} to={`/${team.key}/`} variant="outlined">
@@ -175,7 +218,7 @@ export default function TeamsPage() {
                 Сохранить
               </Button>
             ) : (
-              <Button variant="text" onClick={() => startEdit(team.key, team.name)}>
+              <Button variant="text" onClick={() => startEdit(team.key, team.name, team.jiraBoardId)}>
                 Редактировать
               </Button>
             )}
@@ -229,6 +272,14 @@ export default function TeamsPage() {
             onChange={(e) => setNewName(e.target.value)}
             sx={{ flex: 1 }}
           />
+          <TextField
+            label="Jira boardId"
+            placeholder="236205"
+            value={newJiraBoardId}
+            onChange={(e) => setNewJiraBoardId(e.target.value)}
+            inputProps={{ inputMode: "numeric", pattern: "[0-9]*" }}
+            sx={{ width: { xs: "100%", sm: 180 } }}
+          />
           <Button
             variant="contained"
             onClick={handleAdd}
@@ -250,6 +301,7 @@ export default function TeamsPage() {
             <TableRow>
               <TableCell>Ключ</TableCell>
               <TableCell>Название</TableCell>
+              <TableCell>Jira boardId</TableCell>
               <TableCell align="right">Действия</TableCell>
             </TableRow>
           </TableHead>

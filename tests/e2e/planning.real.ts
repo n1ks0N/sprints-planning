@@ -258,6 +258,20 @@ const openPreview = async (page: Page, teamKey: string, selectedCount: string) =
   await expect(page.getByTestId("planning-preview-page")).toBeVisible();
 };
 
+const editPreviewAllocation = async (
+  page: Page,
+  itemId: string,
+  participantId: string,
+  sprintId: string,
+  value: string
+) => {
+  const input = page.getByTestId(`planning-preview-allocation-${itemId}-${participantId}-${sprintId}`);
+  await input.click();
+  await input.fill(value);
+  await input.blur();
+  await expect(input).toHaveText(value);
+};
+
 test.describe("Planning Workbench Real Backend", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -351,23 +365,23 @@ test.describe("Planning Workbench Real Backend", () => {
 
       await expect(
         page.getByTestId(`planning-preview-allocation-${criticalItem.id}-${seed.dev.id}-${seed.sprint1.id}`)
-      ).toHaveValue("2");
+      ).toHaveText("2");
       await expect(
         page.getByTestId(`planning-preview-allocation-${criticalItem.id}-${seed.dev.id}-${seed.sprint2.id}`)
-      ).toHaveValue("4");
+      ).toHaveText("4");
       await expect(
         page.getByTestId(`planning-preview-allocation-${qaItem.id}-${seed.qa.id}-${seed.sprint2.id}`)
-      ).toHaveValue("2");
+      ).toHaveText("2");
       await expect(page.getByTestId("planning-preview-apply")).toBeEnabled();
 
       await page.reload();
       await expect(page.getByTestId("planning-preview-page")).toBeVisible();
       await expect(
         page.getByTestId(`planning-preview-allocation-${criticalItem.id}-${seed.dev.id}-${seed.sprint1.id}`)
-      ).toHaveValue("2");
+      ).toHaveText("2");
       await expect(
         page.getByTestId(`planning-preview-allocation-${criticalItem.id}-${seed.dev.id}-${seed.sprint2.id}`)
-      ).toHaveValue("4");
+      ).toHaveText("4");
 
       await page.getByTestId("planning-preview-apply").click();
       await expect(page).toHaveURL(new RegExp(`#/${escapeRegExp(teamKey)}/$`));
@@ -384,15 +398,6 @@ test.describe("Planning Workbench Real Backend", () => {
 
       expect(criticalTask).toBeTruthy();
       expect(criticalTask?.participantIds).toEqual([seed.dev.id]);
-      expect(criticalTask?.planningDemands).toEqual([
-        {
-          kind: "PARTICIPANT",
-          role: null,
-          participantId: seed.dev.id,
-          stream: "Core",
-          days: 6,
-        },
-      ]);
       expect(criticalTask?.loads[seed.sprint1.id]).toBe(2);
       expect(criticalTask?.loads[seed.sprint2.id]).toBe(4);
       expect(criticalTask?.allocations?.[seed.dev.id]?.[seed.sprint1.id]).toBe(2);
@@ -465,10 +470,10 @@ test.describe("Planning Workbench Real Backend", () => {
       await expect(
         page.getByText("Задача 'Missing QA' не имеет доступных участников по роли/стриму")
       ).toBeVisible();
-      await expect(page.getByTestId("planning-preview-apply")).toBeDisabled();
+      await expect(page.getByTestId("planning-preview-apply")).toBeEnabled();
       await expect(
         page.getByTestId(`planning-preview-allocation-${plannedItem.id}-${seed.dev.id}-${seed.sprint.id}`)
-      ).toHaveValue("3");
+      ).toHaveText("3");
 
       await page.getByTestId(`planning-preview-remove-task-${missingItem.id}`).click();
       await expect(page.getByTestId(`planning-preview-task-${missingItem.id}`)).toHaveCount(0);
@@ -544,13 +549,109 @@ test.describe("Planning Workbench Real Backend", () => {
 
       await expect(
         page.getByTestId(`planning-preview-allocation-${highItem.id}-${seed.dev.id}-${seed.sprint.id}`)
-      ).toHaveValue("6");
+      ).toHaveText("6");
       await expect(page.getByText("Задача 'Can Wait' не распределена полностью: 6 дн.")).toBeVisible();
-      await expect(page.getByText("Не распределено 6 дн.")).toBeVisible();
-      await expect(page.getByTestId("planning-preview-apply")).toBeDisabled();
-      await expect(page.getByTestId(`planning-preview-matrix-${lowItem.id}`)).toContainText(
-        "Алгоритм не смог назначить исполнителей для этой задачи."
+      await expect(page.getByText("Нагрузка 0/6 дн. (-6 дн.)")).toBeVisible();
+      await expect(page.getByTestId("planning-preview-apply")).toBeEnabled();
+    } finally {
+      await cleanupTeam(request, teamKey);
+    }
+  });
+
+  test("allows editing task metadata participants and allocations on preview before apply", async ({
+    page,
+    request,
+  }) => {
+    const teamKey = uniqueTeamKey("manual-preview");
+
+    try {
+      await createTeam(request, teamKey);
+      const seed = await seedBasePlanningTeam(request, teamKey);
+
+      const item = await createPlanningItem(request, teamKey, {
+        title: "Manual Preview Source",
+        description: "Original description",
+        dod: "Original DoD",
+        priority: 2,
+        customers: ["Core Bank"],
+        streams: ["Core"],
+        planningDemands: [
+          {
+            kind: "ROLE",
+            role: "DEV",
+            stream: "Core",
+            days: 4,
+          } satisfies PlanningDemandRequest,
+        ],
+        releaseDateId: seed.release.id,
+        initialQuarterId: seed.quarter.id,
+        planningQuarterIds: [seed.quarter.id],
+        planningSprintIds: [seed.sprint1.id, seed.sprint2.id],
+      });
+
+      await prepareBrowser(page);
+      await openPreview(page, teamKey, "1");
+
+      await page.getByTestId(`planning-preview-title-${item.id}`).click();
+      await page.getByTestId(`planning-preview-title-${item.id}-input`).fill("Manual Preview Final");
+      await page.getByTestId(`planning-preview-title-${item.id}-input`).press("Tab");
+      await expect(page.getByTestId(`planning-preview-title-${item.id}`)).toContainText("Manual Preview Final");
+
+      await page.getByTestId(`planning-preview-priority-${item.id}`).click();
+      await page.getByRole("option", { name: "1" }).click();
+      await page.getByTestId(`planning-preview-status-${item.id}`).click();
+      await page.getByRole("option", { name: "Выполнена" }).click();
+
+      const taskCard = page.getByTestId(`planning-preview-task-${item.id}`);
+      await taskCard.getByLabel("Добавить участника").click();
+      await page.getByRole("option", { name: /QA Core \(QA\)/ }).click();
+
+      await editPreviewAllocation(page, item.id, seed.dev.id, seed.sprint1.id, "1");
+      await editPreviewAllocation(page, item.id, seed.dev.id, seed.sprint2.id, "2");
+      await editPreviewAllocation(page, item.id, seed.qa.id, seed.sprint1.id, "0");
+      await editPreviewAllocation(page, item.id, seed.qa.id, seed.sprint2.id, "1");
+
+      await expect(page.getByText("Нагрузка 4/4 дн.")).toHaveCount(0);
+
+      await page.reload();
+      await expect(page.getByTestId("planning-preview-page")).toBeVisible();
+      await expect(page.getByTestId(`planning-preview-title-${item.id}`)).toContainText("Manual Preview Final");
+      await expect(
+        page.getByTestId(`planning-preview-allocation-${item.id}-${seed.dev.id}-${seed.sprint1.id}`)
+      ).toHaveText("1");
+      await expect(
+        page.getByTestId(`planning-preview-allocation-${item.id}-${seed.dev.id}-${seed.sprint2.id}`)
+      ).toHaveText("2");
+      await expect(
+        page.getByTestId(`planning-preview-allocation-${item.id}-${seed.qa.id}-${seed.sprint2.id}`)
+      ).toHaveText("1");
+
+      await page.getByTestId("planning-preview-apply").click();
+      await expect(page).toHaveURL(new RegExp(`#/${escapeRegExp(teamKey)}/$`));
+
+      const planningBacklog = await apiGet<PlanningWorkbenchItemDto[]>(
+        request,
+        `/${teamKey}/planning-workbench/backlog`
       );
+      expect(planningBacklog).toHaveLength(0);
+
+      const tasks = await apiGet<TaskPageDto>(request, `/${teamKey}/tasks?page=0&size=50`);
+      const created = tasks.content.find((task) => task.title === "Manual Preview Final");
+      expect(created).toBeTruthy();
+      expect(created?.priority).toBe(1);
+      expect(created?.status).toBe("done");
+      expect(created?.participantIds).toEqual([seed.dev.id, seed.qa.id]);
+      expect(created?.loads).toEqual({
+        [seed.sprint1.id]: 1,
+        [seed.sprint2.id]: 3,
+      });
+      expect(created?.allocations?.[seed.dev.id]).toEqual({
+        [seed.sprint1.id]: 1,
+        [seed.sprint2.id]: 2,
+      });
+      expect(created?.allocations?.[seed.qa.id]).toEqual({
+        [seed.sprint2.id]: 1,
+      });
     } finally {
       await cleanupTeam(request, teamKey);
     }

@@ -39,25 +39,29 @@ public class TeamService {
         return teamRepository.findAll(Sort.by("key"));
     }
 
-    public TeamEntity createTeam(String key, String name) {
+    public TeamEntity createTeam(String key, String name, Long jiraBoardId) {
         String normalizedKey = normalizeKey(key);
         validateKey(normalizedKey);
         validateName(name);
+        validateJiraBoardId(jiraBoardId);
         if (teamRepository.existsById(normalizedKey)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Команда уже существует");
         }
         TeamEntity entity = new TeamEntity();
         entity.setKey(normalizedKey);
         entity.setName(name.trim());
+        entity.setJiraBoardId(jiraBoardId);
         return teamRepository.save(entity);
     }
 
-    public TeamEntity updateTeam(String key, String name) {
+    public TeamEntity updateTeam(String key, String name, Long jiraBoardId) {
         String normalizedKey = normalizeKey(key);
         validateKey(normalizedKey);
         validateName(name);
+        validateJiraBoardId(jiraBoardId);
         TeamEntity entity = getTeamOrThrow(normalizedKey);
         entity.setName(name.trim());
+        entity.setJiraBoardId(jiraBoardId);
         return teamRepository.save(entity);
     }
 
@@ -116,6 +120,12 @@ public class TeamService {
     private void validateName(String name) {
         if (name == null || name.trim().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Название команды обязательно");
+        }
+    }
+
+    private void validateJiraBoardId(Long jiraBoardId) {
+        if (jiraBoardId != null && jiraBoardId <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Jira boardId должен быть положительным числом");
         }
     }
 }

@@ -73,6 +73,11 @@ import { formatDayAmount, normalizeDayAmount } from "../utils/dayAmount";
 
 moment.locale("ru");
 
+const PARTICIPANT_HANDLE_COL_WIDTH = 52;
+const PARTICIPANT_COL_WIDTH = 260;
+const TASK_TOTAL_COL_WIDTH = 100;
+const TASK_ACTIONS_COL_WIDTH = 220;
+
 const STATUS_LABEL: Record<TaskStatus, string> = {
   inprogress: "В работе",
   done: "Выполнена",
@@ -547,6 +552,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
     () => (jiraMenuParticipantId ? task.jiraIssues?.[jiraMenuParticipantId] || {} : {}),
     [jiraMenuParticipantId, task.jiraIssues]
   );
+  const storyJiraIssue = task.jiraStoryIssue || null;
 
   const tooltipContent = (
     <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
@@ -946,6 +952,29 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
 
             {!isPreview && (
               <>
+                {storyJiraIssue?.jiraIssueUrl ? (
+                  <Tooltip title={`Story в Jira: ${storyJiraIssue.jiraIssueKey}`}>
+                    <IconButton
+                      size="small"
+                      color="info"
+                      component="a"
+                      href={storyJiraIssue.jiraIssueUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <OpenInNew fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                ) : (
+                  <Tooltip title="Story в Jira не заведена">
+                    <span>
+                      <IconButton size="small" disabled>
+                        <OpenInNew fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                )}
+
                 <Tooltip title="Дублировать">
                   <IconButton size="small" onClick={() => onDuplicateTask(task)}>
                     <CopyAll fontSize="small" />
@@ -1020,14 +1049,14 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
           <TableContainer
             component={Paper}
             variant="outlined"
-            sx={{ mt: 1, position: "relative" }}
+            sx={{ mt: 1, position: "relative", overflowX: "auto", maxWidth: "100%" }}
           >
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
                   <TableCell
                     sx={{
-                      width: 52,
+                      width: PARTICIPANT_HANDLE_COL_WIDTH,
                       position: "sticky",
                       left: 0,
                       zIndex: 3,
@@ -1036,9 +1065,9 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                   />
                   <TableCell
                     sx={{
-                      minWidth: 260,
+                      minWidth: PARTICIPANT_COL_WIDTH,
                       position: "sticky",
-                      left: 52,
+                      left: PARTICIPANT_HANDLE_COL_WIDTH,
                       zIndex: 3,
                       bgcolor: "background.paper",
                     }}
@@ -1052,13 +1081,24 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                       highlight={Boolean(relSprintId && relSprintId === s.id)}
                     />
                   ))}
-                  <TableCell align="center" sx={{ minWidth: 100 }}>
+                  <TableCell
+                    align="center"
+                    sx={{
+                      width: TASK_TOTAL_COL_WIDTH,
+                      minWidth: TASK_TOTAL_COL_WIDTH,
+                      position: "sticky",
+                      right: TASK_ACTIONS_COL_WIDTH,
+                      zIndex: 3,
+                      bgcolor: "background.paper",
+                    }}
+                  >
                     Итого
                   </TableCell>
                   <TableCell
                     align="right"
                     sx={{
-                      width: 220,
+                      width: TASK_ACTIONS_COL_WIDTH,
+                      minWidth: TASK_ACTIONS_COL_WIDTH,
                       position: "sticky",
                       right: 0,
                       zIndex: 3,
@@ -1104,7 +1144,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                             sx={{ opacity: isDragging ? 0.95 : 1 }}
                           >
                             <TableCell
-                              width={52}
+                              width={PARTICIPANT_HANDLE_COL_WIDTH}
                               align="center"
                               sx={{
                                 position: "sticky",
@@ -1133,8 +1173,9 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                                   ? "warning.light"
                                   : "background.paper",
                                 position: "sticky",
-                                left: 52,
+                                left: PARTICIPANT_HANDLE_COL_WIDTH,
                                 zIndex: 2,
+                                minWidth: PARTICIPANT_COL_WIDTH,
                               }}
                             >
                               <Stack
@@ -1186,7 +1227,18 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                               </TableCell>
                             ))}
 
-                            <TableCell align="center" sx={{ fontWeight: 700 }}>
+                            <TableCell
+                              align="center"
+                              sx={{
+                                fontWeight: 700,
+                                position: "sticky",
+                                right: TASK_ACTIONS_COL_WIDTH,
+                                bgcolor: "background.paper",
+                                zIndex: 2,
+                                width: TASK_TOTAL_COL_WIDTH,
+                                minWidth: TASK_TOTAL_COL_WIDTH,
+                              }}
+                            >
                               {formatDayAmount(rowSum)}
                             </TableCell>
 
@@ -1197,6 +1249,8 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                                 right: 0,
                                 bgcolor: "background.paper",
                                 zIndex: 2,
+                                width: TASK_ACTIONS_COL_WIDTH,
+                                minWidth: TASK_ACTIONS_COL_WIDTH,
                               }}
                             >
                               <Stack

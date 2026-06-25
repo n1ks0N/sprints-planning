@@ -21,6 +21,7 @@ import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.SetJoin;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +59,18 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
 
     @Override
     public Page<TaskEntity> findFilteredPageWithDetails(String teamKey, TaskFilter filter, int page, int size) {
+        return findFilteredPageWithDetails(teamKey, filter, page, size, null, null);
+    }
+
+    @Override
+    public Page<TaskEntity> findFilteredPageWithDetails(
+        String teamKey,
+        TaskFilter filter,
+        int page,
+        int size,
+        String sortBy,
+        String sortDirection
+    ) {
         TaskFilter effectiveFilter = Objects.requireNonNullElseGet(filter, TaskFilter::empty);
         Pageable pageable = Pageable.ofSize(size).withPage(page);
 
@@ -66,7 +79,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             return new PageImpl<>(List.of(), pageable, total);
         }
 
-        List<UUID> ids = findTaskIds(teamKey, effectiveFilter, page, size);
+        List<UUID> ids = findTaskIds(teamKey, effectiveFilter, page, size, sortBy, sortDirection);
         if (ids.isEmpty()) {
             return new PageImpl<>(List.of(), pageable, total);
         }
@@ -92,21 +105,23 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
     }
 
     private List<UUID> findTaskIds(String teamKey, TaskFilter filter, Integer page, Integer size) {
+        return findTaskIds(teamKey, filter, page, size, null, null);
+    }
+
+    private List<UUID> findTaskIds(
+        String teamKey,
+        TaskFilter filter,
+        Integer page,
+        Integer size,
+        String sortBy,
+        String sortDirection
+    ) {
         CriteriaBuilder cb = entityManager.getCriteriaBuilder();
         CriteriaQuery<UUID> idQuery = cb.createQuery(UUID.class);
         Root<TaskEntity> task = idQuery.from(TaskEntity.class);
         Predicate predicate = buildPredicate(teamKey, filter, cb, idQuery, task);
 
-        Expression<?> orderValue = cb.coalesce(task.get("displayOrder"), cb.literal(Integer.MAX_VALUE));
-        List<Order> ordering = new ArrayList<>();
-        if (filter.pinnedTaskId() != null) {
-            Expression<Integer> pinnedOrder = cb.<Integer>selectCase()
-                .when(cb.equal(task.get("id"), filter.pinnedTaskId()), 0)
-                .otherwise(1);
-            ordering.add(cb.asc(pinnedOrder));
-        }
-        ordering.add(cb.asc(orderValue));
-        ordering.add(cb.asc(task.get("createdAt")));
+        List<Order> ordering = buildOrdering(cb, idQuery, task, filter, sortBy, sortDirection);
 
         idQuery.select(task.get("id"))
             .where(predicate)
@@ -120,6 +135,137 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             query.setMaxResults(safeSize);
         }
         return query.getResultList();
+    }
+
+    private List<Order> buildOrdering(
+        CriteriaBuilder cb,
+        CriteriaQuery<?> query,
+        Root<TaskEntity> task,
+        TaskFilter filter,
+        String sortBy,
+        String sortDirection
+    ) {
+        List<Order> ordering = new ArrayList<>();
+        if (filter.pinnedTaskId() != null) {
+            Expression<Integer> pinnedOrder = cb.<Integer>selectCase()
+                .when(cb.equal(task.get("id"), filter.pinnedTaskId()), 0)
+                .otherwise(1);
+            ordering.add(cb.asc(pinnedOrder));
+        }
+
+        String normalizedSortBy = normalizeSortBy(sortBy);
+        boolean desc = "desc".equalsIgnoreCase(normalize(sortDirection));
+        Expression<? extends Comparable<?>> primary = switch (normalizedSortBy) {
+            case "load" -> taskLoadSortExpression(cb, query, task);
+            case "releaseDate" -> taskDateSortExpression(cb, query, task);
+            case "priority" -> task.get("priority");
+            default -> null;
+        };
+        if (primary != null) {
+            ordering.add(desc ? cb.desc(primary) : cb.asc(primary));
+        }
+
+        Expression<Integer> orderValue = cb.coalesce(task.get("displayOrder"), cb.literal(Integer.MAX_VALUE));
+        ordering.add(cb.asc(orderValue));
+        ordering.add(cb.asc(task.get("createdAt")));
+        ordering.add(cb.asc(task.get("id")));
+        return ordering;
+    }
+
+    private String normalizeSortBy(String sortBy) {
+        String normalized = normalize(sortBy);
+        return switch (normalized) {
+            case "load", "releaseDate", "priority" -> normalized;
+            default -> "manual";
+        };
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private Expression<BigDecimal> taskLoadSortExpression(
+        CriteriaBuilder cb,
+        CriteriaQuery<?> query,
+        Root<TaskEntity> task
+    ) {
+        Expression<BigDecimal> loadSum = positiveLoadSum(cb, query, task);
+        Expression<BigDecimal> allocationSum = positiveAllocationSum(cb, query, task);
+        return cb.<BigDecimal>selectCase()
+            .when(cb.greaterThan(loadSum, BigDecimal.ZERO), loadSum)
+            .otherwise(allocationSum);
+    }
+
+    private Expression<BigDecimal> positiveLoadSum(CriteriaBuilder cb, CriteriaQuery<?> query, Root<TaskEntity> task) {
+        var sub = query.subquery(BigDecimal.class);
+        Root<TaskLoadEntity> load = sub.from(TaskLoadEntity.class);
+        sub.select(cb.coalesce(cb.sum(load.get("days")), BigDecimal.ZERO))
+            .where(
+                cb.equal(load.get("task").get("id"), task.get("id")),
+                cb.greaterThan(cb.coalesce(load.get("days"), BigDecimal.ZERO), BigDecimal.ZERO)
+            );
+        return sub;
+    }
+
+    private Expression<BigDecimal> positiveAllocationSum(
+        CriteriaBuilder cb,
+        CriteriaQuery<?> query,
+        Root<TaskEntity> task
+    ) {
+        var sub = query.subquery(BigDecimal.class);
+        Root<TaskAllocationEntity> allocation = sub.from(TaskAllocationEntity.class);
+        sub.select(cb.coalesce(cb.sum(allocation.get("days")), BigDecimal.ZERO))
+            .where(
+                cb.equal(allocation.get("task").get("id"), task.get("id")),
+                cb.greaterThan(cb.coalesce(allocation.get("days"), BigDecimal.ZERO), BigDecimal.ZERO)
+            );
+        return sub;
+    }
+
+    private Expression<LocalDate> taskDateSortExpression(
+        CriteriaBuilder cb,
+        CriteriaQuery<?> query,
+        Root<TaskEntity> task
+    ) {
+        Join<TaskEntity, ?> releaseDate = task.join("releaseDate", JoinType.LEFT);
+        Join<TaskEntity, ?> initialQuarter = task.join("initialQuarter", JoinType.LEFT);
+        CriteriaBuilder.Coalesce<LocalDate> coalesce = cb.coalesce();
+        coalesce.value(releaseDate.get("promDate"));
+        coalesce.value(positiveAllocationQuarterStart(cb, query, task));
+        coalesce.value(positiveLoadQuarterStart(cb, query, task));
+        coalesce.value(initialQuarter.get("startDate"));
+        coalesce.value(LocalDate.MAX);
+        return coalesce;
+    }
+
+    private Expression<LocalDate> positiveAllocationQuarterStart(
+        CriteriaBuilder cb,
+        CriteriaQuery<?> query,
+        Root<TaskEntity> task
+    ) {
+        var sub = query.subquery(LocalDate.class);
+        Root<TaskAllocationEntity> allocation = sub.from(TaskAllocationEntity.class);
+        sub.select(cb.least(allocation.get("sprint").get("quarter").<LocalDate>get("startDate")))
+            .where(
+                cb.equal(allocation.get("task").get("id"), task.get("id")),
+                cb.greaterThan(cb.coalesce(allocation.get("days"), BigDecimal.ZERO), BigDecimal.ZERO)
+            );
+        return sub;
+    }
+
+    private Expression<LocalDate> positiveLoadQuarterStart(
+        CriteriaBuilder cb,
+        CriteriaQuery<?> query,
+        Root<TaskEntity> task
+    ) {
+        var sub = query.subquery(LocalDate.class);
+        Root<TaskLoadEntity> load = sub.from(TaskLoadEntity.class);
+        sub.select(cb.least(load.get("sprint").get("quarter").<LocalDate>get("startDate")))
+            .where(
+                cb.equal(load.get("task").get("id"), task.get("id")),
+                cb.greaterThan(cb.coalesce(load.get("days"), BigDecimal.ZERO), BigDecimal.ZERO)
+            );
+        return sub;
     }
 
     private List<TaskEntity> loadDetails(List<UUID> ids) {
@@ -170,6 +316,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
                     select distinct t from TaskEntity t
                     left join fetch t.allocations a
                     left join fetch a.sprint s
+                    left join fetch s.quarter q
                     where t.id in :ids
                 """,
                 TaskEntity.class
@@ -184,6 +331,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
                     select distinct t from TaskEntity t
                     left join fetch t.loads l
                     left join fetch l.sprint s
+                    left join fetch s.quarter q
                     where t.id in :ids
                 """,
                 TaskEntity.class

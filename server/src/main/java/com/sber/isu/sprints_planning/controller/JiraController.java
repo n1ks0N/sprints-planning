@@ -2,12 +2,14 @@ package com.sber.isu.sprints_planning.controller;
 
 import com.sber.isu.sprints_planning.dto.JiraExportBatchStartDto;
 import com.sber.isu.sprints_planning.dto.JiraExportBatchStatusDto;
+import com.sber.isu.sprints_planning.dto.JiraSprintOptionDto;
 import com.sber.isu.sprints_planning.dto.request.JiraIssueExportRequest;
 import com.sber.isu.sprints_planning.dto.request.JiraIssueManualConfirmRequest;
 import com.sber.isu.sprints_planning.service.JiraIssueExportService;
 import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -26,6 +28,14 @@ public class JiraController {
 
     public JiraController(JiraIssueExportService jiraIssueExportService) {
         this.jiraIssueExportService = jiraIssueExportService;
+    }
+
+    @GetMapping("/sprints")
+    public List<JiraSprintOptionDto> getSprints(
+        @PathVariable String teamKey,
+        @RequestParam(required = false) String query
+    ) {
+        return jiraIssueExportService.getSprintOptions(TeamKeyNormalizer.normalize(teamKey), query);
     }
 
     @PostMapping("/issues")

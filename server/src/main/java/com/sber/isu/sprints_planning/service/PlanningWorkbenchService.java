@@ -91,9 +91,117 @@ public class PlanningWorkbenchService {
 
     @Transactional(readOnly = true)
     public List<PlanningWorkbenchItemDto> getBacklogCandidates(String teamKey) {
+        return getBacklogCandidates(teamKey, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PlanningWorkbenchItemDto> getBacklogCandidates(String teamKey, String sortBy, String sortDirection) {
         return planningBacklogItemRepository.findAllByTeamKeyOrderByDisplayOrderAscCreatedAtAsc(teamKey).stream()
+            .sorted(planningItemComparator(teamKey, sortBy, sortDirection))
             .map(item -> toPlanningItemDto(item, Map.of()))
             .toList();
+    }
+
+    private Comparator<PlanningBacklogItemEntity> planningItemComparator(
+        String teamKey,
+        String sortBy,
+        String sortDirection
+    ) {
+        Comparator<PlanningBacklogItemEntity> comparator = planningPrimaryComparator(teamKey, sortBy, sortDirection);
+        return comparator
+            .thenComparingInt(PlanningBacklogItemEntity::getDisplayOrder)
+            .thenComparing(item -> item.getCreatedAt() == null ? LocalDate.MAX : item.getCreatedAt())
+            .thenComparing(item -> item.getId() == null ? "" : item.getId().toString());
+    }
+
+    private Comparator<PlanningBacklogItemEntity> planningPrimaryComparator(
+        String teamKey,
+        String sortBy,
+        String sortDirection
+    ) {
+        String normalizedSortBy = normalizeSortBy(sortBy);
+        boolean desc = isDescending(sortDirection);
+        Comparator<PlanningBacklogItemEntity> comparator;
+        if ("load".equals(normalizedSortBy)) {
+            comparator = Comparator.comparing(this::sumPlanningItemLoad);
+        } else if ("releaseDate".equals(normalizedSortBy)) {
+            List<SprintEntity> sprints = sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey);
+            Map<UUID, SprintEntity> sprintById = sprints.stream()
+                .collect(Collectors.toMap(SprintEntity::getId, Function.identity(), (left, right) -> left));
+            Map<UUID, QuarterEntity> quarterById = quarterRepository.findByTeamKeyOrderByStartDateAsc(teamKey).stream()
+                .collect(Collectors.toMap(QuarterEntity::getId, Function.identity(), (left, right) -> left));
+            comparator = Comparator.comparing(item -> planningItemDateSortKey(item, sprintById, quarterById));
+        } else if ("priority".equals(normalizedSortBy)) {
+            comparator = Comparator.comparingInt(item -> item.getPriority());
+        } else {
+            return (left, right) -> 0;
+        }
+        return desc ? comparator.reversed() : comparator;
+    }
+
+    private BigDecimal sumPlanningItemLoad(PlanningBacklogItemEntity item) {
+        if (item.getPlanningDemands() == null || item.getPlanningDemands().isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+        return item.getPlanningDemands().stream()
+            .map(TaskPlanningDemandValue::getDays)
+            .filter(Objects::nonNull)
+            .filter(days -> days.signum() > 0)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private LocalDate planningItemDateSortKey(
+        PlanningBacklogItemEntity item,
+        Map<UUID, SprintEntity> sprintById,
+        Map<UUID, QuarterEntity> quarterById
+    ) {
+        if (item.getReleaseDate() != null && item.getReleaseDate().getPromDate() != null) {
+            return item.getReleaseDate().getPromDate();
+        }
+        LocalDate sprintQuarterStart = item.getPlanningSprintIds() == null
+            ? null
+            : item.getPlanningSprintIds().stream()
+                .map(sprintById::get)
+                .filter(Objects::nonNull)
+                .map(SprintEntity::getQuarter)
+                .filter(Objects::nonNull)
+                .map(QuarterEntity::getStartDate)
+                .filter(Objects::nonNull)
+                .min(LocalDate::compareTo)
+                .orElse(null);
+        if (sprintQuarterStart != null) {
+            return sprintQuarterStart;
+        }
+        LocalDate planningQuarterStart = item.getPlanningQuarterIds() == null
+            ? null
+            : item.getPlanningQuarterIds().stream()
+                .map(quarterById::get)
+                .filter(Objects::nonNull)
+                .map(QuarterEntity::getStartDate)
+                .filter(Objects::nonNull)
+                .min(LocalDate::compareTo)
+                .orElse(null);
+        if (planningQuarterStart != null) {
+            return planningQuarterStart;
+        }
+        if (item.getInitialQuarter() != null && item.getInitialQuarter().getStartDate() != null) {
+            return item.getInitialQuarter().getStartDate();
+        }
+        return LocalDate.MAX;
+    }
+
+    private String normalizeSortBy(String sortBy) {
+        if (sortBy == null) {
+            return "manual";
+        }
+        return switch (sortBy.trim()) {
+            case "load", "releaseDate", "priority" -> sortBy.trim();
+            default -> "manual";
+        };
+    }
+
+    private boolean isDescending(String sortDirection) {
+        return sortDirection != null && "desc".equalsIgnoreCase(sortDirection.trim());
     }
 
     @Transactional
@@ -150,159 +258,21 @@ public class PlanningWorkbenchService {
         Map<String, Map<String, BigDecimal>> committed = aggregateCommittedLoad(teamKey, relevantSprints);
         List<PlanningDraftTask> draftTasks = toDraftTasks(items, teamKey);
 
-        PlanningSolverResult result = draftTasks.isEmpty()
+        PlanningSolverResult solverResult = draftTasks.isEmpty()
             ? new PlanningSolverResult(plannerType, Map.of(), List.of(), BigDecimal.ZERO, BigDecimal.ZERO)
             : planner.solve(new PlanningSolverInput(
                 plannerType,
                 teamKey,
                 draftTasks,
                 participants,
-                relevantSprints,
-                committed,
+                scaleSprintsToHalfDayUnits(relevantSprints),
+                scaleLoadMatrix(committed, HALF_DAY_UNITS),
                 capacityProperties.normFactor()
             ));
+        PlanningSolverResult result = scaleSolverResultFromHalfDayUnits(solverResult);
 
-        PlanningSolverResult adjustedResult = addFractionalRemainders(items, result);
-
-        return buildPreview(items, participants, relevantSprints, committed, adjustedResult);
+        return buildPreview(items, participants, relevantSprints, committed, result);
     }
-
-    private PlanningSolverResult addFractionalRemainders(
-    List<PlanningBacklogItemEntity> items,
-    PlanningSolverResult result
-) {
-    Map<String, BigDecimal> remainderByItem = items.stream()
-        .collect(Collectors.toMap(
-            item -> item.getId().toString(),
-            this::sumDemandFractionalRemainders,
-            (left, right) -> left,
-            LinkedHashMap::new
-        ));
-
-    Map<String, Map<String, Map<String, BigDecimal>>> adjusted = deepCopyAllocations(result.taskAllocations());
-
-    BigDecimal addedDays = BigDecimal.ZERO;
-    List<String> warnings = new ArrayList<>(result.warnings());
-
-    for (Map.Entry<String, BigDecimal> entry : remainderByItem.entrySet()) {
-        String itemId = entry.getKey();
-        BigDecimal remainder = normalizeHalfDays(entry.getValue());
-
-        if (remainder.compareTo(BigDecimal.ZERO) <= 0) {
-            continue;
-        }
-
-        boolean added = addToLastAllocationCell(adjusted.get(itemId), remainder);
-
-        if (added) {
-            addedDays = addedDays.add(remainder);
-        } else {
-            warnings.add("Для задачи " + itemId + " не удалось добавить дробную нагрузку " + remainder + " дн.: нет запланированной ячейки.");
-        }
-    }
-
-    return new PlanningSolverResult(
-        result.plannerType(),
-        adjusted,
-        warnings,
-        result.plannedDays().add(addedDays),
-        result.unplannedDays().subtract(addedDays).max(BigDecimal.ZERO)
-    );
-}
-
-private BigDecimal sumDemandFractionalRemainders(PlanningBacklogItemEntity item) {
-    return resolvePlanningDemands(item).stream()
-        .map(TaskPlanningDemandValue::getDays)
-        .map(this::fractionalRemainder)
-        .reduce(BigDecimal.ZERO, BigDecimal::add);
-}
-
-private BigDecimal fractionalRemainder(BigDecimal value) {
-    BigDecimal normalized = normalizeHalfDays(value);
-    BigDecimal whole = normalized.setScale(0, RoundingMode.DOWN);
-
-    return normalizeHalfDays(normalized.subtract(whole));
-}
-
-private boolean addToLastAllocationCell(
-    Map<String, Map<String, BigDecimal>> taskAllocation,
-    BigDecimal amount
-) {
-    if (taskAllocation == null || taskAllocation.isEmpty()) {
-        return false;
-    }
-
-    List<Map.Entry<String, Map<String, BigDecimal>>> participantEntries = new ArrayList<>(taskAllocation.entrySet());
-
-    for (int participantIndex = participantEntries.size() - 1; participantIndex >= 0; participantIndex--) {
-        Map.Entry<String, Map<String, BigDecimal>> participantEntry = participantEntries.get(participantIndex);
-        Map<String, BigDecimal> sprintRow = participantEntry.getValue();
-
-        if (sprintRow == null || sprintRow.isEmpty()) {
-            continue;
-        }
-
-        List<Map.Entry<String, BigDecimal>> sprintEntries = new ArrayList<>(sprintRow.entrySet());
-
-        for (int sprintIndex = sprintEntries.size() - 1; sprintIndex >= 0; sprintIndex--) {
-            Map.Entry<String, BigDecimal> sprintEntry = sprintEntries.get(sprintIndex);
-            BigDecimal current = sprintEntry.getValue() == null ? BigDecimal.ZERO : normalizeHalfDays(sprintEntry.getValue());
-
-            if (current.compareTo(BigDecimal.ZERO) <= 0) {
-                continue;
-            }
-
-            sprintRow.put(
-                sprintEntry.getKey(),
-                normalizeHalfDays(current.add(amount))
-            );
-
-            return true;
-        }
-    }
-
-    return false;
-}
-
-private Map<String, Map<String, Map<String, BigDecimal>>> deepCopyAllocations(
-    Map<String, Map<String, Map<String, BigDecimal>>> source
-) {
-    Map<String, Map<String, Map<String, BigDecimal>>> copy = new LinkedHashMap<>();
-
-    if (source == null) {
-        return copy;
-    }
-
-    source.forEach((taskId, participantRows) -> {
-        Map<String, Map<String, BigDecimal>> participantCopy = new LinkedHashMap<>();
-
-        if (participantRows != null) {
-            participantRows.forEach((participantId, sprintRows) ->
-                participantCopy.put(
-                    participantId,
-                    sprintRows == null ? new LinkedHashMap<>() : new LinkedHashMap<>(sprintRows)
-                )
-            );
-        }
-
-        copy.put(taskId, participantCopy);
-    });
-
-    return copy;
-}
-
-private BigDecimal sumTaskAllocation(Map<String, Map<String, BigDecimal>> taskAllocation) {
-    if (taskAllocation == null) {
-        return BigDecimal.ZERO;
-    }
-
-    return taskAllocation.values().stream()
-        .filter(Objects::nonNull)
-        .flatMap(row -> row.values().stream())
-        .filter(Objects::nonNull)
-        .map(this::normalizeHalfDays)
-        .reduce(BigDecimal.ZERO, BigDecimal::add);
-}
 
     @Transactional
     public List<TaskDto> apply(
@@ -538,8 +508,8 @@ private BigDecimal sumTaskAllocation(Map<String, Map<String, BigDecimal>> taskAl
                 .toList();
             int demandOrder = 0;
             for (TaskPlanningDemandValue demand : resolvePlanningDemands(item)) {
-                int days = ceilWholeDays(demand.getDays());
-                if (days <= 0) {
+                int halfDayUnits = halfDayUnits(demand.getDays());
+                if (halfDayUnits <= 0) {
                     continue;
                 }
                 boolean roleDemand = "ROLE".equalsIgnoreCase(demand.getKind());
@@ -548,7 +518,7 @@ private BigDecimal sumTaskAllocation(Map<String, Map<String, BigDecimal>> taskAl
                     item.getId().toString(),
                     item.getTitle(),
                     item.getPriority(),
-                    days,
+                    halfDayUnits,
                     roleDemand ? "ROLE_STREAM" : "SPECIFIC_PARTICIPANTS",
                     roleDemand ? demand.getRole() : null,
                     demandStream,
@@ -565,6 +535,82 @@ private BigDecimal sumTaskAllocation(Map<String, Map<String, BigDecimal>> taskAl
             }
         }
         return draftTasks;
+    }
+
+    private List<SprintEntity> scaleSprintsToHalfDayUnits(List<SprintEntity> sprints) {
+        return sprints.stream()
+            .map(sprint -> {
+                SprintEntity copy = new SprintEntity();
+                copy.setId(sprint.getId());
+                copy.setQuarter(sprint.getQuarter());
+                copy.setName(sprint.getName());
+                copy.setStartDate(sprint.getStartDate());
+                copy.setEndDate(sprint.getEndDate());
+                copy.setWorkingDays(sprint.getWorkingDays() * HALF_DAY_UNITS.intValueExact());
+                copy.setOrder(sprint.getOrder());
+                copy.setTeamKey(sprint.getTeamKey());
+                return copy;
+            })
+            .toList();
+    }
+
+    private Map<String, Map<String, BigDecimal>> scaleLoadMatrix(
+        Map<String, Map<String, BigDecimal>> source,
+        BigDecimal multiplier
+    ) {
+        Map<String, Map<String, BigDecimal>> scaled = new LinkedHashMap<>();
+        if (source == null) {
+            return scaled;
+        }
+        source.forEach((participantId, sprintRows) -> {
+            Map<String, BigDecimal> nextRow = new LinkedHashMap<>();
+            if (sprintRows != null) {
+                sprintRows.forEach((sprintId, days) -> {
+                    BigDecimal units = normalizeHalfDays(days).multiply(multiplier);
+                    if (units.signum() > 0) {
+                        nextRow.put(sprintId, units);
+                    }
+                });
+            }
+            if (!nextRow.isEmpty()) {
+                scaled.put(participantId, nextRow);
+            }
+        });
+        return scaled;
+    }
+
+    private PlanningSolverResult scaleSolverResultFromHalfDayUnits(PlanningSolverResult result) {
+        Map<String, Map<String, Map<String, BigDecimal>>> allocations = new LinkedHashMap<>();
+        if (result.taskAllocations() != null) {
+            result.taskAllocations().forEach((taskId, participantRows) -> {
+                Map<String, Map<String, BigDecimal>> nextParticipants = new LinkedHashMap<>();
+                if (participantRows != null) {
+                    participantRows.forEach((participantId, sprintRows) -> {
+                        Map<String, BigDecimal> nextSprints = new LinkedHashMap<>();
+                        if (sprintRows != null) {
+                            sprintRows.forEach((sprintId, units) -> {
+                                BigDecimal days = unitsToHalfDays(units);
+                                if (days.signum() > 0) {
+                                    nextSprints.put(sprintId, days);
+                                }
+                            });
+                        }
+                        if (!nextSprints.isEmpty()) {
+                            nextParticipants.put(participantId, nextSprints);
+                        }
+                    });
+                }
+                allocations.put(taskId, nextParticipants);
+            });
+        }
+
+        return new PlanningSolverResult(
+            result.plannerType(),
+            allocations,
+            result.warnings(),
+            unitsToHalfDays(result.plannedDays()),
+            unitsToHalfDays(result.unplannedDays())
+        );
     }
 
     private List<SprintEntity> resolveRelevantSprints(String teamKey, List<PlanningBacklogItemEntity> items) {
@@ -923,21 +969,14 @@ private BigDecimal sumTaskAllocation(Map<String, Map<String, BigDecimal>> taskAl
             .divide(HALF_DAY_UNITS, 1, RoundingMode.UNNECESSARY);
     }
 
-    private int ceilWholeDays(BigDecimal value) {
-    return normalizeHalfDays(value)
-        .setScale(0, RoundingMode.DOWN)
-        .intValue();
-}
-
-    private BigDecimal floorToHalfDays(BigDecimal value) {
+    private BigDecimal unitsToHalfDays(BigDecimal value) {
         if (value == null) {
             return BigDecimal.ZERO.setScale(1);
         }
 
         return value
             .max(BigDecimal.ZERO)
-            .multiply(HALF_DAY_UNITS)
-            .setScale(0, RoundingMode.DOWN)
+            .setScale(0, RoundingMode.UNNECESSARY)
             .divide(HALF_DAY_UNITS, 1, RoundingMode.UNNECESSARY);
     }
 

@@ -27,7 +27,7 @@ export type Participant = {
 };
 
 export type JiraIssueLink = {
-  participantId: string;
+  participantId?: string | null;
   planningSprintId?: string | null;
   jiraIssueId: string;
   jiraIssueKey: string;
@@ -121,6 +121,7 @@ export type BacklogItem = {
   allocations?: Record<string, Record<string, number>>;
   notes?: Record<string, string>;
   jiraIssues?: Record<string, Record<string, JiraIssueLink>>;
+  jiraStoryIssue?: JiraIssueLink | null;
   quarterIds?: string[];
   releaseDateId?: string | null;
   initialQuarterId?: string | null;
@@ -245,8 +246,10 @@ export type JiraExportBatchItem = {
   taskJiraIssueId?: string | null;
   taskId: string;
   taskTitle?: string | null;
+  issueScope?: "STORY" | "PARTICIPANT" | string | null;
   planningSprintId?: string | null;
   planningSprintName?: string | null;
+  projectKey?: string | null;
   participantId?: string | null;
   participantName?: string | null;
   status:
@@ -325,6 +328,16 @@ export type PlanningWorkbenchPreview = {
 export type Team = {
   key: string;
   name: string;
+  jiraBoardId?: number | null;
+};
+
+export type JiraSprintOption = {
+  id: string;
+  name: string;
+  state: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  boardId?: number | null;
 };
 
 export type FiltersData = {

@@ -16,6 +16,9 @@ public class TeamEntity {
     @Column(nullable = false)
     private String name;
 
+    @Column(name = "jira_board_id")
+    private Long jiraBoardId;
+
     public String getKey() {
         return key;
     }
@@ -30,5 +33,13 @@ public class TeamEntity {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public Long getJiraBoardId() {
+        return jiraBoardId;
+    }
+
+    public void setJiraBoardId(Long jiraBoardId) {
+        this.jiraBoardId = jiraBoardId;
     }
 }

@@ -88,6 +88,7 @@ const buildDraftTasks = (preview: PlanningWorkbenchPreview): BacklogItem[] =>
       allocations: item.allocations || {},
       notes: {},
       jiraIssues: {},
+      jiraStoryIssue: null,
       quarterIds: item.planningQuarterIds || [],
       releaseDateId: item.releaseDateId ?? null,
       initialQuarterId: item.initialQuarterId ?? null,

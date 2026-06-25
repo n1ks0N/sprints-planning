@@ -119,8 +119,8 @@ class TaskServiceAllocationTest {
 
         assertThat(result.allocations()).containsKey(participant.getId().toString());
         assertThat(result.allocations().get(participant.getId().toString()))
-            .containsEntry(sprint.getId().toString(), new BigDecimal("5"));
-        assertThat(result.loads()).containsEntry(sprint.getId().toString(), new BigDecimal("5"));
+            .containsEntry(sprint.getId().toString(), new BigDecimal("5.0"));
+        assertThat(result.loads()).containsEntry(sprint.getId().toString(), new BigDecimal("5.0"));
         assertThat(task.getAllocations()).hasSize(1);
         assertThat(task.getLoads()).hasSize(1);
     }
