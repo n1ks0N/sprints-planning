@@ -7,7 +7,9 @@ import com.sber.isu.sprints_planning.dto.request.TaskAllocationBulkRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationMultiRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskJiraLinksUpdateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskLoadRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskParticipantJiraLinkUpdateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
 import com.sber.isu.sprints_planning.mapper.DtoMapper;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
@@ -42,6 +44,7 @@ import java.util.ArrayList;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -53,6 +56,8 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import java.math.RoundingMode;
@@ -63,6 +68,12 @@ import org.springframework.web.server.ResponseStatusException;
 public class TaskService {
 
     private static final String DEFAULT_STATUS = "inprogress";
+    private static final String ISSUE_SCOPE_STORY = "STORY";
+    private static final String ISSUE_SCOPE_PARTICIPANT = "PARTICIPANT";
+    private static final String JIRA_LINK_STATUS_CREATED = "CREATED";
+    private static final String UNKNOWN_JIRA_ISSUE_ID = "UNKNOWN";
+    private static final String JIRA_PUBLIC_BASE_URL = "https://jira.sberbank.ru";
+    private static final Pattern JIRA_KEY_PATTERN = Pattern.compile("([A-Za-z][A-Za-z0-9]+-\\d+)");
     private static final Set<String> ALLOWED_STATUSES = Set.of(
         "inprogress",
         "done",
@@ -335,6 +346,145 @@ public class TaskService {
             );
         }
         return toDto(teamKey, entity);
+    }
+
+    @Transactional
+    public TaskDto updateJiraLinks(String teamKey, UUID taskId, TaskJiraLinksUpdateRequest request) {
+        TaskEntity task = taskRepository.findWithDetailsById(taskId, teamKey);
+        if (task == null) {
+            throw new EntityNotFoundException("Task not found");
+        }
+
+        TaskJiraIssueEntity story = upsertStoryJiraLink(teamKey, task, request.storyUrl());
+        if (story != null) {
+            attachParticipantJiraIssuesToStory(teamKey, task.getId(), story);
+        }
+
+        for (TaskParticipantJiraLinkUpdateRequest participantLink : request.participantLinks() == null
+            ? List.<TaskParticipantJiraLinkUpdateRequest>of()
+            : request.participantLinks()) {
+            upsertParticipantJiraLink(teamKey, task, participantLink, story);
+        }
+
+        task.setUpdatedAt(LocalDate.now());
+        taskRepository.flush();
+        return findById(teamKey, taskId);
+    }
+
+    private void attachParticipantJiraIssuesToStory(String teamKey, UUID taskId, TaskJiraIssueEntity story) {
+        List<TaskJiraIssueEntity> participantIssues = taskJiraIssueRepository
+            .findAllByTeamKeyAndTaskIdAndIssueScope(teamKey, taskId, ISSUE_SCOPE_PARTICIPANT);
+        for (TaskJiraIssueEntity participantIssue : participantIssues) {
+            if (!JIRA_LINK_STATUS_CREATED.equalsIgnoreCase(participantIssue.getStatus())) {
+                continue;
+            }
+            participantIssue.setParentTaskJiraIssue(story);
+            participantIssue.setUpdatedAt(OffsetDateTime.now());
+        }
+    }
+
+    private TaskJiraIssueEntity upsertStoryJiraLink(String teamKey, TaskEntity task, String rawUrl) {
+        TaskJiraIssueEntity existing = taskJiraIssueRepository
+            .findFirstByTeamKeyAndTaskIdAndIssueScopeOrderByCreatedAtAsc(teamKey, task.getId(), ISSUE_SCOPE_STORY)
+            .orElse(null);
+        JiraIssueLinkValue link = parseJiraIssueLink(rawUrl);
+        if (link == null) {
+            if (existing != null) {
+                taskJiraIssueRepository.delete(existing);
+            }
+            return null;
+        }
+
+        TaskJiraIssueEntity entity = existing != null ? existing : new TaskJiraIssueEntity();
+        entity.setTeamKey(teamKey);
+        entity.setTask(task);
+        entity.setParticipant(null);
+        entity.setPlanningSprint(null);
+        entity.setIssueScope(ISSUE_SCOPE_STORY);
+        applyManualJiraLink(entity, link);
+        return taskJiraIssueRepository.saveAndFlush(entity);
+    }
+
+    private void upsertParticipantJiraLink(
+        String teamKey,
+        TaskEntity task,
+        TaskParticipantJiraLinkUpdateRequest request,
+        TaskJiraIssueEntity story
+    ) {
+        UUID participantId = UUID.fromString(request.participantId());
+        UUID planningSprintId = UUID.fromString(request.planningSprintId());
+        ParticipantEntity participant = fetchParticipant(teamKey, request.participantId());
+        if (!task.getParticipants().stream().anyMatch(row ->
+            row.getParticipant() != null && participantId.equals(row.getParticipant().getId()))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Participant is not assigned to task");
+        }
+        SprintEntity planningSprint = fetchSprint(teamKey, request.planningSprintId());
+
+        List<TaskJiraIssueEntity> existing = taskJiraIssueRepository
+            .findAllByTeamKeyAndTaskIdAndParticipantIdAndPlanningSprintId(
+                teamKey,
+                task.getId(),
+                participantId,
+                planningSprintId
+            );
+        JiraIssueLinkValue link = parseJiraIssueLink(request.jiraIssueUrl());
+        if (link == null) {
+            if (!existing.isEmpty()) {
+                taskJiraIssueRepository.deleteAll(existing);
+            }
+            return;
+        }
+
+        TaskJiraIssueEntity entity = existing.stream()
+            .filter(issue -> link.projectKey().equalsIgnoreCase(issue.getJiraProjectKey()))
+            .findFirst()
+            .orElse(existing.isEmpty() ? new TaskJiraIssueEntity() : existing.get(0));
+        List<TaskJiraIssueEntity> extras = existing.stream()
+            .filter(issue -> !Objects.equals(issue.getId(), entity.getId()))
+            .toList();
+        if (!extras.isEmpty()) {
+            taskJiraIssueRepository.deleteAll(extras);
+            taskJiraIssueRepository.flush();
+        }
+        entity.setTeamKey(teamKey);
+        entity.setTask(task);
+        entity.setParticipant(participant);
+        entity.setPlanningSprint(planningSprint);
+        entity.setIssueScope(ISSUE_SCOPE_PARTICIPANT);
+        entity.setParentTaskJiraIssue(story);
+        applyManualJiraLink(entity, link);
+        taskJiraIssueRepository.saveAndFlush(entity);
+    }
+
+    private void applyManualJiraLink(TaskJiraIssueEntity entity, JiraIssueLinkValue link) {
+        entity.setJiraIssueId(UNKNOWN_JIRA_ISSUE_ID);
+        entity.setJiraIssueKey(link.issueKey());
+        entity.setJiraIssueUrl(link.issueUrl());
+        entity.setJiraProjectKey(link.projectKey());
+        entity.setStatus(JIRA_LINK_STATUS_CREATED);
+        entity.setLastError(null);
+        entity.setUpdatedAt(OffsetDateTime.now());
+    }
+
+    private JiraIssueLinkValue parseJiraIssueLink(String rawValue) {
+        String value = rawValue == null ? "" : rawValue.trim();
+        if (value.isBlank()) {
+            return null;
+        }
+        Matcher matcher = JIRA_KEY_PATTERN.matcher(value);
+        if (!matcher.find()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Не удалось распознать ключ Jira");
+        }
+        String issueKey = matcher.group(1).toUpperCase();
+        int separatorIndex = issueKey.indexOf('-');
+        String projectKey = separatorIndex > 0 ? issueKey.substring(0, separatorIndex) : issueKey;
+        String issueUrl = value.startsWith("http://") || value.startsWith("https://")
+            ? value
+            : JIRA_PUBLIC_BASE_URL + "/browse/" + issueKey;
+        return new JiraIssueLinkValue(projectKey, issueKey, issueUrl);
+    }
+
+    private record JiraIssueLinkValue(String projectKey, String issueKey, String issueUrl) {
     }
 
     @Transactional

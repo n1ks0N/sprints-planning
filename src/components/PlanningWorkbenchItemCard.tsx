@@ -34,6 +34,13 @@ type Props = {
   sprintLoads?: SprintLoadSummary[];
 };
 
+const formatAutoDistributionIssues = (issues: string[]) => {
+  if (issues.length === 1 && issues[0] === "оценка") {
+    return "Для автораспределения нужна оценка.";
+  }
+  return `Для автораспределения необходимо заполнить: ${issues.join(", ")}.`;
+};
+
 export default function PlanningWorkbenchItemCard({
   item,
   releaseLabel,
@@ -144,7 +151,7 @@ export default function PlanningWorkbenchItemCard({
 
         {issues.length > 0 && (
           <Alert severity="warning" sx={{ py: 0 }}>
-            Для автораспределения нужно добить: {issues.join(", ")}.
+            {formatAutoDistributionIssues(issues)}
           </Alert>
         )}
       </Stack>

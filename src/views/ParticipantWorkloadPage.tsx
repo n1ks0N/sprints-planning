@@ -22,6 +22,7 @@ import {
 import EditableNumberCell from "../components/EditableNumberCell";
 import type {
   Sprint,
+  Quarter,
   BacklogItem,
   Allocations,
   CapacityCell,
@@ -63,6 +64,11 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
     if (a[i] !== b[i]) return false;
   }
   return true;
+}
+
+function getCurrentQuarterId(quarters: Quarter[]) {
+  const today = new Date().toISOString().slice(0, 10);
+  return quarters.find((quarter) => quarter.startDate <= today && today <= quarter.endDate)?.id || "";
 }
 
 function buildTasksSearchParams(arg: {
@@ -115,6 +121,16 @@ export default function ParticipantWorkloadPage() {
   const { data: participants = [] } = useGetParticipantsQuery();
   const { data: sprintsData = [] } = useGetSprintsQuery(undefined);
   const allSprints = sprintsData;
+
+  React.useEffect(() => {
+    if (!quarters.length) return;
+    const actualIds = new Set(quarters.map((quarter) => quarter.id));
+    const filtered = ui.selectedQuarterIds.filter((id) => actualIds.has(id));
+    const nextQuarterIds = filtered.length ? filtered : [getCurrentQuarterId(quarters)].filter(Boolean);
+    if (!shallowArrayEqual(nextQuarterIds, ui.selectedQuarterIds)) {
+      dispatch(setParticipantWorkloadFilters({ selectedQuarterIds: nextQuarterIds }));
+    }
+  }, [dispatch, quarters, ui.selectedQuarterIds]);
 
   React.useEffect(() => {
     let cancelled = false;

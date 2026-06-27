@@ -12,6 +12,7 @@ public record JiraIssueExportRequest(
     @NotBlank String projectKey,
     Map<String, List<String>> participantIdsByTaskId,
     Map<String, Boolean> createStoryByTaskId,
-    List<String> labels
+    List<String> labels,
+    Map<String, List<String>> taskLabelsByTaskId
 ) {
 }

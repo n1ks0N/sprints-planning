@@ -711,20 +711,27 @@ export const installPlanningApiMocks = async (
       };
     };
 
-    const buildPage = (content: any[]) => ({
-      content,
-      page: {
-        size: content.length || 1,
-        number: 0,
-        totalElements: content.length,
-        totalPages: 1,
-      },
-      numberOfElements: content.length,
-      first: true,
-      last: true,
-      empty: content.length === 0,
-      _links: {},
-    });
+    const buildPage = (content: any[], page = 0, size = content.length || 1) => {
+      const safePage = Math.max(0, page);
+      const safeSize = Math.max(1, size);
+      const start = safePage * safeSize;
+      const pageContent = content.slice(start, start + safeSize);
+      const totalPages = Math.max(1, Math.ceil(content.length / safeSize));
+      return {
+        content: pageContent,
+        page: {
+          size: safeSize,
+          number: safePage,
+          totalElements: content.length,
+          totalPages,
+        },
+        numberOfElements: pageContent.length,
+        first: safePage === 0,
+        last: safePage + 1 >= totalPages,
+        empty: pageContent.length === 0,
+        _links: {},
+      };
+    };
 
     const parseBody = async (input: RequestInfo | URL, init?: RequestInit) => {
       const raw = init?.body;
@@ -787,8 +794,80 @@ export const installPlanningApiMocks = async (
       }
       if (pathname === `/${mockScenario.teamKey}/planning-workbench/backlog` && method === "GET") {
         state.handledBacklogRequests += 1;
-        const ordered = [...state.planningItems].sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
-        return respond(ordered);
+        const splitParam = (name: string) =>
+          (url.searchParams.get(name) || "")
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
+        const selectedQuarterIds = new Set(splitParam("quarterIds"));
+        const selectedPriorities = new Set(splitParam("priority"));
+        const selectedStreams = new Set(splitParam("streams"));
+        const selectedCustomers = new Set(splitParam("customers"));
+        const releaseDateId = (url.searchParams.get("releaseDateId") || "").trim();
+        const search = (url.searchParams.get("search") || "").trim().toLowerCase();
+        const includeWithoutStream = url.searchParams.get("withoutStream") === "true";
+        const includeWithoutCustomer = url.searchParams.get("withoutCustomer") === "true";
+        const releasePromDateById = new Map(mockScenario.releases.map((release: any) => [release.id, release.promDate || ""]));
+        const quarterBySprintId = new Map(mockScenario.sprints.map((sprint: any) => [sprint.id, sprint.quarterId]));
+        const itemQuarterIds = (item: any) => {
+          const ids = new Set<string>();
+          (item.planningQuarterIds || []).forEach((id: string) => id && ids.add(id));
+          (item.planningSprintIds || []).forEach((id: string) => {
+            const quarterId = quarterBySprintId.get(id);
+            if (quarterId) ids.add(String(quarterId));
+          });
+          if (ids.size === 0 && item.initialQuarterId) ids.add(item.initialQuarterId);
+          return ids;
+        };
+        const itemLoad = (item: any) =>
+          (item.planningDemands || []).reduce((sum: number, demand: any) => sum + Number(demand.days || 0), 0);
+        const matchesCollection = (itemValues: string[] = [], selectedValues: Set<string>, includeEmpty: boolean) => {
+          if (itemValues.length === 0) return includeEmpty;
+          if (selectedValues.size === 0) return false;
+          return itemValues.some((value) => selectedValues.has(value));
+        };
+        const sortBy = (url.searchParams.get("sortBy") || "manual").trim();
+        const sortDirection = (url.searchParams.get("sortDirection") || "asc").trim() === "desc" ? -1 : 1;
+        const ordered = [...state.planningItems]
+          .filter((item: any) => {
+            if (selectedQuarterIds.size > 0 && !Array.from(itemQuarterIds(item)).some((id) => selectedQuarterIds.has(id))) {
+              return false;
+            }
+            if (selectedPriorities.size > 0 && !selectedPriorities.has(String(item.priority))) {
+              return false;
+            }
+            if (releaseDateId && item.releaseDateId !== releaseDateId) {
+              return false;
+            }
+            if ((selectedStreams.size > 0 || includeWithoutStream) && !matchesCollection(item.streams || [], selectedStreams, includeWithoutStream)) {
+              return false;
+            }
+            if ((selectedCustomers.size > 0 || includeWithoutCustomer) && !matchesCollection(item.customers || [], selectedCustomers, includeWithoutCustomer)) {
+              return false;
+            }
+            if (search) {
+              const haystack = `${item.title || ""} ${item.description || ""} ${item.dod || ""}`.toLowerCase();
+              if (!haystack.includes(search)) return false;
+            }
+            return true;
+          })
+          .sort((a: any, b: any) => {
+            let result = 0;
+            if (sortBy === "load") {
+              result = itemLoad(a) - itemLoad(b);
+            } else if (sortBy === "releaseDate") {
+              result = String(releasePromDateById.get(a.releaseDateId) || "").localeCompare(String(releasePromDateById.get(b.releaseDateId) || ""));
+            } else if (sortBy === "priority") {
+              result = Number(a.priority || 0) - Number(b.priority || 0);
+            } else {
+              result = Number(a.order || 0) - Number(b.order || 0);
+            }
+            if (result !== 0) return result * sortDirection;
+            return Number(a.order || 0) - Number(b.order || 0);
+          });
+        const page = Number(url.searchParams.get("page") || 0);
+        const size = Number(url.searchParams.get("size") || ordered.length || 1);
+        return respond(buildPage(ordered, page, size));
       }
       if (pathname === `/${mockScenario.teamKey}/planning-workbench/items` && method === "POST") {
         const body = (await parseBody(input, init)) || {};
@@ -835,7 +914,7 @@ export const installPlanningApiMocks = async (
       if (itemMatch && method === "DELETE") {
         const itemId = itemMatch[1];
         state.planningItems = state.planningItems.filter((item: any) => item.id !== itemId);
-        return new Response("", { status: 204 });
+        return respond(null);
       }
       if (pathname === `/${mockScenario.teamKey}/planning-workbench/preview` && method === "POST") {
         const body = (await parseBody(input, init)) || {};

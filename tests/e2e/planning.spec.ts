@@ -15,7 +15,7 @@ const setPlanningSort = async (
   fieldName: string,
   direction: "asc" | "desc"
 ) => {
-  await page.getByLabel("Сортировка").click();
+  await page.getByLabel("Поле").click();
   await page.getByRole("option", { name: fieldName }).click();
   const directionButton = page.getByRole("button", {
     name: direction === "asc" ? "По убыванию" : "По возрастанию",

@@ -40,6 +40,100 @@ type PlanningSortBy = "manual" | "load" | "releaseDate" | "priority";
 type SortDirection = "asc" | "desc";
 const WITHOUT_STREAM_FILTER_VALUE = "__WITHOUT_STREAM__";
 const WITHOUT_CUSTOMER_FILTER_VALUE = "__WITHOUT_CUSTOMER__";
+const DEFAULT_PLANNING_PAGE_SIZE = "20";
+const PLANNING_FILTERS_STORAGE_KEY_PREFIX = "planning-workbench.filters.v1";
+
+type StoredPlanningFilters = {
+  quarterFilterIds: string[];
+  priorityFilterValues: string[];
+  releaseFilterValue: string;
+  streamFilterValues: string[];
+  customerFilterValues: string[];
+  searchQuery: string;
+  planningPageSize: string;
+  sortBy: PlanningSortBy;
+  sortDirection: SortDirection;
+};
+
+const defaultPlanningFilters = (): StoredPlanningFilters => ({
+  quarterFilterIds: [],
+  priorityFilterValues: [],
+  releaseFilterValue: "",
+  streamFilterValues: [],
+  customerFilterValues: [],
+  searchQuery: "",
+  planningPageSize: DEFAULT_PLANNING_PAGE_SIZE,
+  sortBy: "manual",
+  sortDirection: "asc",
+});
+
+const planningFiltersStorageKey = (teamKey: string) =>
+  `${PLANNING_FILTERS_STORAGE_KEY_PREFIX}:${teamKey || "default"}`;
+
+const readStringArray = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+
+const readPlanningFilters = (teamKey: string): StoredPlanningFilters | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(planningFiltersStorageKey(teamKey));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const defaults = defaultPlanningFilters();
+    return {
+      quarterFilterIds: readStringArray(parsed?.quarterFilterIds),
+      priorityFilterValues: readStringArray(parsed?.priorityFilterValues).filter((value) =>
+        ["1", "2", "3"].includes(value)
+      ),
+      releaseFilterValue:
+        typeof parsed?.releaseFilterValue === "string" ? parsed.releaseFilterValue : "",
+      streamFilterValues: readStringArray(parsed?.streamFilterValues),
+      customerFilterValues: readStringArray(parsed?.customerFilterValues),
+      searchQuery: typeof parsed?.searchQuery === "string" ? parsed.searchQuery : "",
+      planningPageSize:
+        typeof parsed?.planningPageSize === "string"
+          ? parsed.planningPageSize
+          : defaults.planningPageSize,
+      sortBy:
+        parsed?.sortBy === "load" ||
+        parsed?.sortBy === "releaseDate" ||
+        parsed?.sortBy === "priority" ||
+        parsed?.sortBy === "manual"
+          ? parsed.sortBy
+          : defaults.sortBy,
+      sortDirection:
+        parsed?.sortDirection === "desc" || parsed?.sortDirection === "asc"
+          ? parsed.sortDirection
+          : defaults.sortDirection,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writePlanningFilters = (teamKey: string, filters: StoredPlanningFilters) => {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(planningFiltersStorageKey(teamKey), JSON.stringify(filters));
+  } catch {
+    // ignore
+  }
+};
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+const currentQuarterId = (quarters: { id: string; startDate: string; endDate: string }[]) => {
+  const today = todayISO();
+  return quarters.find((quarter) => quarter.startDate <= today && quarter.endDate >= today)?.id || "";
+};
+
+const normalizePageSize = (value: string) => {
+  const parsed = Number.parseInt(value.replace(/\D/g, ""), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 20;
+  return Math.min(parsed, 200);
+};
 
 const formatDate = (value?: string | null) => {
   if (!value) return "";
@@ -49,33 +143,11 @@ const formatDate = (value?: string | null) => {
 
 const getPlanningDemands = (item: PlanningWorkbenchItem): PlanningDemand[] => item.planningDemands || [];
 
-const collectItemQuarterIds = (
-  item: PlanningWorkbenchItem,
-  sprintQuarterById: Map<string, string>
-) => {
-  const quarterIds = new Set<string>();
-  (item.planningQuarterIds || []).forEach((quarterId) => {
-    if (quarterId) {
-      quarterIds.add(quarterId);
-    }
-  });
-  (item.planningSprintIds || []).forEach((sprintId) => {
-    const quarterId = sprintQuarterById.get(sprintId);
-    if (quarterId) {
-      quarterIds.add(quarterId);
-    }
-  });
-  if (quarterIds.size === 0 && item.initialQuarterId) {
-    quarterIds.add(item.initialQuarterId);
-  }
-  return Array.from(quarterIds);
-};
-
 const getItemIssues = (item: PlanningWorkbenchItem) => {
   const issues: string[] = [];
   const planningDemands = getPlanningDemands(item);
   if (planningDemands.length === 0) {
-    issues.push("нет общей оценки");
+    issues.push("оценка");
   }
   if (
     planningDemands.some(
@@ -97,8 +169,49 @@ const getItemIssues = (item: PlanningWorkbenchItem) => {
   return issues;
 };
 
+const getPlanningItemLoad = (item: PlanningWorkbenchItem) =>
+  getPlanningDemands(item).reduce((sum, demand) => sum + normalizeDayAmount(demand.days), 0);
+
+const comparePlanningItems = (
+  left: PlanningWorkbenchItem,
+  right: PlanningWorkbenchItem,
+  sortBy: PlanningSortBy,
+  direction: SortDirection,
+  releasePromDateById: Map<string, string>
+) => {
+  const multiplier = direction === "asc" ? 1 : -1;
+  let result = 0;
+
+  if (sortBy === "load") {
+    result = getPlanningItemLoad(left) - getPlanningItemLoad(right);
+  } else if (sortBy === "releaseDate") {
+    const leftRelease = left.releaseDateId ? releasePromDateById.get(left.releaseDateId) || "" : "";
+    const rightRelease = right.releaseDateId ? releasePromDateById.get(right.releaseDateId) || "" : "";
+    result = leftRelease.localeCompare(rightRelease, "ru");
+  } else if (sortBy === "priority") {
+    result = Number(left.priority || 0) - Number(right.priority || 0);
+  } else {
+    result = Number(left.order || 0) - Number(right.order || 0);
+  }
+
+  if (result !== 0) {
+    return result * multiplier;
+  }
+
+  const orderResult = Number(left.order || 0) - Number(right.order || 0);
+  if (orderResult !== 0) {
+    return orderResult;
+  }
+  const titleResult = (left.title || "").localeCompare(right.title || "", "ru");
+  return titleResult !== 0 ? titleResult : left.id.localeCompare(right.id);
+};
+
 export default function PlanningWorkbenchPage() {
   const { teamKey = "default" } = useParams<{ teamKey: string }>();
+  const initialStoredFilters = React.useMemo(
+    () => readPlanningFilters(teamKey) ?? defaultPlanningFilters(),
+    [teamKey]
+  );
   const navigate = useNavigate();
   const location = useLocation();
   const { data: participants = [] } = useGetParticipantsQuery();
@@ -115,25 +228,181 @@ export default function PlanningWorkbenchPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [dialogItem, setDialogItem] = React.useState<PlanningWorkbenchItem | null>(null);
   const [selectAfterSubmit, setSelectAfterSubmit] = React.useState(false);
-  const [quarterFilterIds, setQuarterFilterIds] = React.useState<string[]>([]);
-  const [priorityFilterValues, setPriorityFilterValues] = React.useState<string[]>([]);
-  const [releaseFilterValue, setReleaseFilterValue] = React.useState("");
-  const [streamFilterValues, setStreamFilterValues] = React.useState<string[]>([]);
-  const [customerFilterValues, setCustomerFilterValues] = React.useState<string[]>([]);
-  const [searchQuery, setSearchQuery] = React.useState("");
-  const [sortBy, setSortBy] = React.useState<PlanningSortBy>("manual");
-  const [sortDirection, setSortDirection] = React.useState<SortDirection>("asc");
-  const [error, setError] = React.useState("");
-
-  const planningBacklogSortArgs = React.useMemo(
-    () => ({ sortBy, sortDirection }),
-    [sortBy, sortDirection]
+  const [quarterFilterIds, setQuarterFilterIds] = React.useState<string[]>(initialStoredFilters.quarterFilterIds);
+  const [priorityFilterValues, setPriorityFilterValues] = React.useState<string[]>(initialStoredFilters.priorityFilterValues);
+  const [releaseFilterValue, setReleaseFilterValue] = React.useState(initialStoredFilters.releaseFilterValue);
+  const [streamFilterValues, setStreamFilterValues] = React.useState<string[]>(initialStoredFilters.streamFilterValues);
+  const [customerFilterValues, setCustomerFilterValues] = React.useState<string[]>(initialStoredFilters.customerFilterValues);
+  const [searchQuery, setSearchQuery] = React.useState(initialStoredFilters.searchQuery);
+  const [planningPageSize, setPlanningPageSize] = React.useState(initialStoredFilters.planningPageSize);
+  const [backlogPageNumber, setBacklogPageNumber] = React.useState(0);
+  const [itemCacheById, setItemCacheById] = React.useState<Map<string, PlanningWorkbenchItem>>(
+    () => new Map()
   );
-  const { data: backlog = [], isLoading } = useGetPlanningWorkbenchBacklogQuery(planningBacklogSortArgs, {
+  const [sortBy, setSortBy] = React.useState<PlanningSortBy>(initialStoredFilters.sortBy);
+  const [sortDirection, setSortDirection] = React.useState<SortDirection>(initialStoredFilters.sortDirection);
+  const [error, setError] = React.useState("");
+  const hasInitializedQuarterFilter = React.useRef(false);
+
+  React.useEffect(() => {
+    const stored = readPlanningFilters(teamKey) ?? defaultPlanningFilters();
+    hasInitializedQuarterFilter.current = false;
+    setQuarterFilterIds(stored.quarterFilterIds);
+    setPriorityFilterValues(stored.priorityFilterValues);
+    setReleaseFilterValue(stored.releaseFilterValue);
+    setStreamFilterValues(stored.streamFilterValues);
+    setCustomerFilterValues(stored.customerFilterValues);
+    setSearchQuery(stored.searchQuery);
+    setPlanningPageSize(stored.planningPageSize);
+    setSortBy(stored.sortBy);
+    setSortDirection(stored.sortDirection);
+    setBacklogPageNumber(0);
+  }, [teamKey]);
+
+  const planningPageSizeNumber = React.useMemo(
+    () => normalizePageSize(planningPageSize),
+    [planningPageSize]
+  );
+
+  const planningBacklogFiltersSignature = React.useMemo(
+    () =>
+      JSON.stringify({
+        quarterFilterIds: quarterFilterIds.slice().sort(),
+        priorityFilterValues: priorityFilterValues.slice().sort(),
+        releaseFilterValue,
+        streamFilterValues: streamFilterValues.slice().sort(),
+        customerFilterValues: customerFilterValues.slice().sort(),
+        searchQuery: searchQuery.trim(),
+        planningPageSize: planningPageSizeNumber,
+        sortBy,
+        sortDirection,
+      }),
+    [
+      customerFilterValues,
+      planningPageSizeNumber,
+      priorityFilterValues,
+      quarterFilterIds,
+      releaseFilterValue,
+      searchQuery,
+      sortBy,
+      sortDirection,
+      streamFilterValues,
+    ]
+  );
+  const lastPlanningBacklogFiltersSignature = React.useRef(planningBacklogFiltersSignature);
+  const effectiveBacklogPageNumber = React.useMemo(() => {
+    if (lastPlanningBacklogFiltersSignature.current !== planningBacklogFiltersSignature) {
+      return 0;
+    }
+    return backlogPageNumber;
+  }, [backlogPageNumber, planningBacklogFiltersSignature]);
+  const selectedStreamFilters = React.useMemo(
+    () => streamFilterValues.filter((value) => value !== WITHOUT_STREAM_FILTER_VALUE),
+    [streamFilterValues]
+  );
+  const selectedCustomerFilters = React.useMemo(
+    () => customerFilterValues.filter((value) => value !== WITHOUT_CUSTOMER_FILTER_VALUE),
+    [customerFilterValues]
+  );
+  const planningBacklogQueryArgs = React.useMemo(
+    () => ({
+      sortBy,
+      sortDirection,
+      page: effectiveBacklogPageNumber,
+      size: planningPageSizeNumber,
+      quarterIds: quarterFilterIds,
+      priority: priorityFilterValues,
+      releaseDateId: releaseFilterValue.trim() || undefined,
+      streams: selectedStreamFilters.length > 0 ? selectedStreamFilters : undefined,
+      customers: selectedCustomerFilters.length > 0 ? selectedCustomerFilters : undefined,
+      withoutStream: streamFilterValues.includes(WITHOUT_STREAM_FILTER_VALUE),
+      withoutCustomer: customerFilterValues.includes(WITHOUT_CUSTOMER_FILTER_VALUE),
+      search: searchQuery.trim(),
+    }),
+    [
+      customerFilterValues,
+      effectiveBacklogPageNumber,
+      planningPageSizeNumber,
+      priorityFilterValues,
+      quarterFilterIds,
+      releaseFilterValue,
+      searchQuery,
+      selectedCustomerFilters,
+      selectedStreamFilters,
+      sortBy,
+      sortDirection,
+      streamFilterValues,
+    ]
+  );
+  const { data: backlogPage, isLoading, isFetching } = useGetPlanningWorkbenchBacklogQuery(planningBacklogQueryArgs, {
     refetchOnMountOrArgChange: true,
     refetchOnFocus: true,
     refetchOnReconnect: true,
   });
+  const backlog = React.useMemo(() => backlogPage?.content ?? [], [backlogPage]);
+  const totalBacklogCount = backlogPage?.page?.totalElements ?? 0;
+  const hasMoreBacklog = backlog.length < totalBacklogCount;
+  const activeCurrentQuarterId = React.useMemo(() => currentQuarterId(quarters), [quarters]);
+
+  React.useEffect(() => {
+    if (hasInitializedQuarterFilter.current) return;
+    if (!quarters.length || !activeCurrentQuarterId) return;
+    hasInitializedQuarterFilter.current = true;
+
+    const validQuarterIds = new Set(quarters.map((quarter) => quarter.id));
+    const validSelected = quarterFilterIds.filter((quarterId) => validQuarterIds.has(quarterId));
+    const nextQuarterIds = validSelected.length ? validSelected : [activeCurrentQuarterId];
+    if (JSON.stringify(nextQuarterIds) !== JSON.stringify(quarterFilterIds)) {
+      setQuarterFilterIds(nextQuarterIds);
+    }
+  }, [activeCurrentQuarterId, quarterFilterIds, quarters]);
+
+  React.useEffect(() => {
+    writePlanningFilters(teamKey, {
+      quarterFilterIds,
+      priorityFilterValues,
+      releaseFilterValue,
+      streamFilterValues,
+      customerFilterValues,
+      searchQuery,
+      planningPageSize,
+      sortBy,
+      sortDirection,
+    });
+  }, [
+    customerFilterValues,
+    planningPageSize,
+    priorityFilterValues,
+    quarterFilterIds,
+    releaseFilterValue,
+    searchQuery,
+    sortBy,
+    sortDirection,
+    streamFilterValues,
+    teamKey,
+  ]);
+
+  React.useEffect(() => {
+    if (lastPlanningBacklogFiltersSignature.current !== planningBacklogFiltersSignature) {
+      lastPlanningBacklogFiltersSignature.current = planningBacklogFiltersSignature;
+      setBacklogPageNumber(0);
+    }
+  }, [planningBacklogFiltersSignature]);
+
+  React.useEffect(() => {
+    if (backlog.length === 0) return;
+    setItemCacheById((prev) => {
+      const next = new Map(prev);
+      let changed = false;
+      backlog.forEach((item) => {
+        if (next.get(item.id) !== item) {
+          next.set(item.id, item);
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [backlog]);
 
   React.useEffect(() => {
     const returnedIds = (location.state as { selectedItemIds?: string[] } | null)?.selectedItemIds;
@@ -143,8 +412,8 @@ export default function PlanningWorkbenchPage() {
   }, [location.state]);
 
   const backlogById = React.useMemo(
-    () => new Map(backlog.map((item) => [item.id, item])),
-    [backlog]
+    () => itemCacheById,
+    [itemCacheById]
   );
   const releaseLabelById = React.useMemo(
     () =>
@@ -156,13 +425,13 @@ export default function PlanningWorkbenchPage() {
       ),
     [releases]
   );
+  const releasePromDateById = React.useMemo(
+    () => new Map(releases.map((release) => [release.id, release.promDate || ""])),
+    [releases]
+  );
   const participantNameById = React.useMemo(
     () => new Map(participants.map((participant) => [participant.id, participant.fullName])),
     [participants]
-  );
-  const sprintQuarterById = React.useMemo(
-    () => new Map(sprints.map((sprint) => [sprint.id, sprint.quarterId])),
-    [sprints]
   );
   const quarterOptions = React.useMemo(
     () => quarters.map((quarter) => ({ value: quarter.id, label: quarter.name })),
@@ -170,9 +439,9 @@ export default function PlanningWorkbenchPage() {
   );
   const priorityOptions = React.useMemo(
     () => [
-      { value: "1", label: "P1" },
-      { value: "2", label: "P2" },
-      { value: "3", label: "P3" },
+      { value: "1", label: "1" },
+      { value: "2", label: "2" },
+      { value: "3", label: "3" },
     ],
     []
   );
@@ -209,66 +478,15 @@ export default function PlanningWorkbenchPage() {
     () => [
       { value: "manual", label: "Порядок" },
       { value: "load", label: "Нагрузка" },
-      { value: "releaseDate", label: "Дата реализации" },
+      { value: "releaseDate", label: "Дата релиза" },
       { value: "priority", label: "Приоритет" },
     ],
     []
   );
-  const filteredBacklog = React.useMemo(() => {
-    const selectedQuarterIds = new Set(quarterFilterIds);
-    const selectedPriorities = new Set(
-      priorityFilterValues
-        .map((value) => Number(value))
-        .filter((value) => Number.isFinite(value))
-    );
-    const selectedReleaseId = releaseFilterValue.trim();
-    const selectedStreams = new Set(streamFilterValues.filter((value) => value !== WITHOUT_STREAM_FILTER_VALUE));
-    const includeWithoutStream = streamFilterValues.includes(WITHOUT_STREAM_FILTER_VALUE);
-    const selectedCustomers = new Set(customerFilterValues.filter((value) => value !== WITHOUT_CUSTOMER_FILTER_VALUE));
-    const includeWithoutCustomer = customerFilterValues.includes(WITHOUT_CUSTOMER_FILTER_VALUE);
-    const normalizedSearch = searchQuery.trim().toLocaleLowerCase("ru");
-    return backlog.filter((item) => {
-      if (selectedPriorities.size > 0 && !selectedPriorities.has(Number(item.priority))) {
-        return false;
-      }
-      if (selectedReleaseId && item.releaseDateId !== selectedReleaseId) {
-        return false;
-      }
-      if (selectedStreams.size > 0 || includeWithoutStream) {
-        const itemStreams = item.streams || [];
-        const hasSelectedStream = itemStreams.some((stream) => selectedStreams.has(stream));
-        if (!hasSelectedStream && !(includeWithoutStream && itemStreams.length === 0)) {
-          return false;
-        }
-      }
-      if (selectedCustomers.size > 0 || includeWithoutCustomer) {
-        const itemCustomers = item.customers || [];
-        const hasSelectedCustomer = itemCustomers.some((customer) => selectedCustomers.has(customer));
-        if (!hasSelectedCustomer && !(includeWithoutCustomer && itemCustomers.length === 0)) {
-          return false;
-        }
-      }
-      if (normalizedSearch) {
-        const haystack = `${item.title || ""} ${item.description || ""} ${item.dod || ""}`.toLocaleLowerCase("ru");
-        if (!haystack.includes(normalizedSearch)) {
-          return false;
-        }
-      }
-      if (selectedQuarterIds.size === 0) {
-        return true;
-      }
-      return collectItemQuarterIds(item, sprintQuarterById).some((quarterId) => selectedQuarterIds.has(quarterId));
-    });
-  }, [
-    backlog,
-    customerFilterValues,
-    priorityFilterValues,
-    quarterFilterIds,
-    releaseFilterValue,
-    searchQuery,
-    sprintQuarterById,
-    streamFilterValues,
-  ]);
+  const tasksPageSizeOptions = React.useMemo(
+    () => ["10", "20", "50", "100", "200"].map((value) => ({ value, label: value })),
+    []
+  );
 
   const selectedItemIdSet = React.useMemo(
     () => new Set(selectedItemIds),
@@ -276,21 +494,23 @@ export default function PlanningWorkbenchPage() {
   );
 
   const availableItems = React.useMemo(
-    () => filteredBacklog.filter((item) => !selectedItemIdSet.has(item.id)),
-    [filteredBacklog, selectedItemIdSet]
-  );
-
-  const selectedItems = React.useMemo(
-    () => backlog.filter((item) => selectedItemIdSet.has(item.id)),
+    () => backlog.filter((item) => !selectedItemIdSet.has(item.id)),
     [backlog, selectedItemIdSet]
   );
 
-  const sortedAvailableItems = availableItems;
-  const sortedSelectedItems = selectedItems;
+  const selectedItems = React.useMemo(
+    () => selectedItemIds.map((itemId) => backlogById.get(itemId)).filter(Boolean) as PlanningWorkbenchItem[],
+    [backlogById, selectedItemIds]
+  );
 
-  React.useEffect(() => {
-    setSelectedItemIds((prev) => prev.filter((itemId) => backlogById.has(itemId)));
-  }, [backlogById]);
+  const sortedAvailableItems = React.useMemo(
+    () => availableItems.slice().sort((left, right) => comparePlanningItems(left, right, sortBy, sortDirection, releasePromDateById)),
+    [availableItems, releasePromDateById, sortBy, sortDirection]
+  );
+  const sortedSelectedItems = React.useMemo(
+    () => selectedItems.slice().sort((left, right) => comparePlanningItems(left, right, sortBy, sortDirection, releasePromDateById)),
+    [releasePromDateById, selectedItems, sortBy, sortDirection]
+  );
 
   const handleMoveItem = React.useCallback((itemId: string, to: "backlog" | "selected") => {
     setSelectedItemIds((prev) => {
@@ -307,23 +527,36 @@ export default function PlanningWorkbenchPage() {
   const handleMoveAllToPlan = React.useCallback(() => {
     setSelectedItemIds((prev) => {
       const next = new Set(prev);
-      filteredBacklog.forEach((item) => next.add(item.id));
+      backlog.forEach((item) => next.add(item.id));
       return Array.from(next);
     });
-  }, [filteredBacklog]);
+  }, [backlog]);
 
   const handleClearPlan = React.useCallback(() => {
     setSelectedItemIds([]);
   }, []);
 
   const handleResetFilters = React.useCallback(() => {
-    setQuarterFilterIds([]);
+    setQuarterFilterIds(activeCurrentQuarterId ? [activeCurrentQuarterId] : []);
     setPriorityFilterValues([]);
     setReleaseFilterValue("");
     setStreamFilterValues([]);
     setCustomerFilterValues([]);
     setSearchQuery("");
+    setPlanningPageSize(DEFAULT_PLANNING_PAGE_SIZE);
+    setSortBy("manual");
+    setSortDirection("asc");
+  }, [activeCurrentQuarterId]);
+
+  const handlePlanningPageSizeChange = React.useCallback((value: string) => {
+    const normalized = value.replace(/\D/g, "") || DEFAULT_PLANNING_PAGE_SIZE;
+    setPlanningPageSize(normalized);
   }, []);
+
+  const handleLoadMoreBacklog = React.useCallback(() => {
+    if (!hasMoreBacklog || isFetching) return;
+    setBacklogPageNumber((prev) => prev + 1);
+  }, [hasMoreBacklog, isFetching]);
 
   const handleDeleteItem = React.useCallback(async (item: PlanningWorkbenchItem) => {
     if (!window.confirm(`Удалить задачу планирования «${item.title}»?`)) {
@@ -333,6 +566,11 @@ export default function PlanningWorkbenchPage() {
       setError("");
       await deleteItem(item.id).unwrap();
       setSelectedItemIds((prev) => prev.filter((itemId) => itemId !== item.id));
+      setItemCacheById((prev) => {
+        const next = new Map(prev);
+        next.delete(item.id);
+        return next;
+      });
     } catch (err: any) {
       setError(String(err?.data?.message || err?.data || "Не удалось удалить задачу из планирования"));
     }
@@ -371,6 +609,7 @@ export default function PlanningWorkbenchPage() {
           planningSprintIds: payload.planningSprintIds || [],
           order: dialogItem.order,
         }).unwrap();
+        setItemCacheById((prev) => new Map(prev).set(updated.id, updated));
         if (selectAfterSubmit) {
           handleMoveItem(updated.id, "selected");
         }
@@ -388,6 +627,7 @@ export default function PlanningWorkbenchPage() {
           planningQuarterIds: payload.planningQuarterIds || [],
           planningSprintIds: payload.planningSprintIds || [],
         }).unwrap();
+        setItemCacheById((prev) => new Map(prev).set(created.id, created));
         if (selectAfterSubmit) {
           handleMoveItem(created.id, "selected");
         }
@@ -513,6 +753,21 @@ export default function PlanningWorkbenchPage() {
                   },
                 },
                 {
+                  type: "autocomplete",
+                  key: "planning-page-size",
+                  minWidth: 200,
+                  maxWidth: 180,
+                  props: {
+                    allowCustom: true,
+                    label: "Количество задач",
+                    value: planningPageSize,
+                    onChange: handlePlanningPageSizeChange,
+                    options: tasksPageSizeOptions,
+                    placeholder: DEFAULT_PLANNING_PAGE_SIZE,
+                    commitOnBlur: true,
+                  },
+                },
+                {
                   type: "search",
                   key: "search",
                   minWidth: 220,
@@ -622,6 +877,23 @@ export default function PlanningWorkbenchPage() {
                   />
                 ))
               )}
+            </Stack>
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={1}
+              alignItems={{ xs: "flex-start", sm: "center" }}
+              justifyContent="space-between"
+            >
+              <Typography variant="body2" color="text.secondary">
+                Загружено {backlog.length} задач из {totalBacklogCount}
+              </Typography>
+              <Button
+                variant="outlined"
+                onClick={handleLoadMoreBacklog}
+                disabled={!hasMoreBacklog || isFetching}
+              >
+                {isFetching && hasMoreBacklog ? "Загрузка..." : "Загрузить еще"}
+              </Button>
             </Stack>
           </Stack>
         </Paper>

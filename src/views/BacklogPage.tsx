@@ -67,6 +67,7 @@ import {
   useGetReleasesQuery,
   useGetFiltersQuery,
   useGetTaskHistoryQuery,
+  useUpdateTaskJiraLinksMutation,
 } from "../app/api";
 import EditableNumberCell from "../components/EditableNumberCell";
 import SharedBacklogTaskCard from "../components/BacklogTaskCard";
@@ -591,6 +592,17 @@ type TaskCardProps = {
   onUpdateTaskPatch: (task: BacklogItem, patch: Partial<BacklogItem>) => void;
   onDuplicateTask: (task: BacklogItem) => void;
   onOpenTaskHistory: (task: BacklogItem) => void;
+  onUpdateJiraLinks: (
+    task: BacklogItem,
+    payload: {
+      storyUrl: string;
+      participantLinks: {
+        participantId: string;
+        planningSprintId: string;
+        jiraIssueUrl: string;
+      }[];
+    }
+  ) => Promise<void> | void;
   onMoveTask: (id: string, dir: "up" | "down") => void;
   onRemoveTask: (task: BacklogItem) => void;
   isJiraSelected: boolean;
@@ -1436,10 +1448,14 @@ export default function BacklogPage() {
     const validSelected = selectedQuarterIds.filter((id) =>
       quarterIdSet.has(id)
     );
-    if (shallowArrayEqual(validSelected, selectedQuarterIds)) return;
+    const nextSelected =
+      validSelected.length > 0 || withoutQuarterFilter || !currentQuarterId
+        ? validSelected
+        : [currentQuarterId];
+    if (shallowArrayEqual(nextSelected, selectedQuarterIds)) return;
 
-    dispatch(setBacklogFilters({ selectedQuarterIds: validSelected }));
-  }, [selectedQuarterIds, quarterIdSet, dispatch]);
+    dispatch(setBacklogFilters({ selectedQuarterIds: nextSelected }));
+  }, [selectedQuarterIds, quarterIdSet, withoutQuarterFilter, currentQuarterId, dispatch]);
 
   React.useEffect(() => {
     const signature = JSON.stringify({
@@ -1704,7 +1720,7 @@ export default function BacklogPage() {
     () => [
       { value: "manual", label: "Порядок" },
       { value: "load", label: "Нагрузка" },
-      { value: "releaseDate", label: "Дата реализации" },
+      { value: "releaseDate", label: "Дата релиза" },
       { value: "priority", label: "Приоритет" },
     ],
     []
@@ -1977,7 +1993,7 @@ export default function BacklogPage() {
       dispatch(
         setBacklogFilters({
           quarterId: "all",
-          selectedQuarterIds: [],
+          selectedQuarterIds: currentQuarterId ? [currentQuarterId] : [],
           withoutQuarterFilter: false,
           withoutStreamFilter: false,
           withoutCustomerFilter: false,
@@ -1993,7 +2009,7 @@ export default function BacklogPage() {
         })
       );
     });
-  }, [dispatch, startFiltersTransition]);
+  }, [currentQuarterId, dispatch, startFiltersTransition]);
 
   const handleOpenTaskHistory = React.useCallback((task: BacklogItem) => {
     setHistoryTask(task);
@@ -2005,6 +2021,7 @@ export default function BacklogPage() {
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
+  const [updateTaskJiraLinks] = useUpdateTaskJiraLinksMutation();
   const [deleteTask] = useDeleteTaskMutation();
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [upsertTaskAllocationBulk] = useUpsertTaskAllocationBulkMutation();
@@ -2058,6 +2075,27 @@ export default function BacklogPage() {
       updateField(task, effectivePatch);
     },
     [updateField]
+  );
+
+  const handleUpdateJiraLinks = React.useCallback(
+    async (
+      task: BacklogItem,
+      payload: {
+        storyUrl: string;
+        participantLinks: {
+          participantId: string;
+          planningSprintId: string;
+          jiraIssueUrl: string;
+        }[];
+      }
+    ) => {
+      await updateTaskJiraLinks({
+        taskId: task.id,
+        storyUrl: payload.storyUrl,
+        participantLinks: payload.participantLinks,
+      }).unwrap();
+    },
+    [updateTaskJiraLinks]
   );
 
   const persistTaskOrder = React.useCallback(
@@ -2780,28 +2818,35 @@ export default function BacklogPage() {
               >
                 Очистить
               </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={<AddTask />}
-                onClick={handleAddAllToJira}
-                disabled={totalTasksCount === 0 || isAddingAllToJira}
-              >
-                {isAddingAllToJira
-                  ? "Добавляем..."
-                  : `Добавить все (${totalTasksCount || displayedTasksCount})`}
-              </Button>
             </Stack>
           }
         />
-        <SortControls
-          value={sortBy}
-          onChange={handleSortByChange}
-          options={backlogSortByOptions}
-          direction={sortDirection}
-          onDirectionChange={handleSortDirectionChange}
-          sx={{ width: { xs: "100%", md: "fit-content" } }}
-        />
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1}
+          alignItems={{ xs: "stretch", sm: "center" }}
+          justifyContent="space-between"
+        >
+          <SortControls
+            value={sortBy}
+            onChange={handleSortByChange}
+            options={backlogSortByOptions}
+            direction={sortDirection}
+            onDirectionChange={handleSortDirectionChange}
+            sx={{ width: { xs: "100%", md: "fit-content" } }}
+          />
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<AddTask />}
+            onClick={handleAddAllToJira}
+            disabled={totalTasksCount === 0 || isAddingAllToJira}
+          >
+            {isAddingAllToJira
+              ? "Добавляем..."
+              : `Добавить все (${totalTasksCount || displayedTasksCount})`}
+          </Button>
+        </Stack>
 
         {addAllToJiraError && <Alert severity="error">{addAllToJiraError}</Alert>}
         {/* Список задач с DnD */}
@@ -2829,6 +2874,7 @@ export default function BacklogPage() {
           onUpdateTaskPatch={handleUpdateTaskPatch}
           onDuplicateTask={duplicateTask}
           onOpenTaskHistory={handleOpenTaskHistory}
+          onUpdateJiraLinks={handleUpdateJiraLinks}
           onMoveTask={moveTask}
           onRemoveTask={removeTask}
           isJiraSelected={isTaskInJiraCart}
@@ -2863,6 +2909,7 @@ export default function BacklogPage() {
           tasks={jiraSelectedTasks}
           participantMap={participantMap}
           sprints={sprintsGlobalOrdered}
+          releases={releases}
           onClose={closeJiraDialog}
           onRemoveTask={removeTaskFromJiraCart}
           onClearTasks={clearJiraCart}

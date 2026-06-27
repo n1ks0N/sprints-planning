@@ -6,8 +6,10 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 import com.sber.isu.sprints_planning.dto.TaskDto;
-import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskJiraLinksUpdateRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskParticipantJiraLinkUpdateRequest;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
 import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
@@ -15,6 +17,7 @@ import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
 import com.sber.isu.sprints_planning.model.TaskCustomerEntity;
 import com.sber.isu.sprints_planning.model.TaskAllocationId;
 import com.sber.isu.sprints_planning.model.TaskEntity;
+import com.sber.isu.sprints_planning.model.TaskJiraIssueEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadEntity;
 import com.sber.isu.sprints_planning.model.TaskLoadId;
 import com.sber.isu.sprints_planning.model.TaskStreamEntity;
@@ -34,6 +37,7 @@ import com.sber.isu.sprints_planning.util.ApiActionDescriptionResolver;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -230,6 +234,70 @@ class TaskServiceAllocationTest {
         assertThat(savedTask.get()).isNotNull();
         assertThat(savedTask.get().getCustomer()).isEqualTo("A Customer");
         assertThat(savedTask.get().getStream()).isEqualTo("A Stream");
+    }
+
+    @Test
+    void updateJiraLinksSavesStoryAndParticipantIssueLinks() {
+        TaskEntity task = task("11111111-1111-1111-1111-111111111111");
+        ParticipantEntity participant = participant("22222222-2222-2222-2222-222222222222");
+        SprintEntity sprint = sprint("33333333-3333-3333-3333-333333333333");
+        task.getParticipants().add(participantLink(task, participant, "team-a"));
+        List<TaskJiraIssueEntity> savedIssues = new ArrayList<>();
+
+        when(taskRepository.findWithDetailsById(task.getId(), "team-a")).thenReturn(task);
+        when(sprintRepository.findByTeamKeyOrderByQuarterAndOrder("team-a")).thenReturn(List.of(sprint));
+        when(taskJiraIssueRepository.findFirstByTeamKeyAndTaskIdAndIssueScopeOrderByCreatedAtAsc(
+            "team-a",
+            task.getId(),
+            "STORY"
+        )).thenReturn(Optional.empty());
+        when(taskJiraIssueRepository.findAllByTeamKeyAndTaskIdAndIssueScope(
+            "team-a",
+            task.getId(),
+            "PARTICIPANT"
+        )).thenReturn(List.of());
+        when(participantRepository.findByIdAndTeamKey(participant.getId(), "team-a")).thenReturn(Optional.of(participant));
+        when(sprintRepository.findByIdAndTeamKey(sprint.getId(), "team-a")).thenReturn(Optional.of(sprint));
+        when(taskJiraIssueRepository.findAllByTeamKeyAndTaskIdAndParticipantIdAndPlanningSprintId(
+            "team-a",
+            task.getId(),
+            participant.getId(),
+            sprint.getId()
+        )).thenReturn(List.of());
+        when(taskJiraIssueRepository.saveAndFlush(org.mockito.ArgumentMatchers.any(TaskJiraIssueEntity.class)))
+            .thenAnswer(invocation -> {
+                TaskJiraIssueEntity entity = invocation.getArgument(0);
+                if (entity.getId() == null) {
+                    entity.setId(UUID.randomUUID());
+                }
+                savedIssues.removeIf(issue -> issue.getId().equals(entity.getId()));
+                savedIssues.add(entity);
+                return entity;
+            });
+        when(taskJiraIssueRepository.findAllByTeamKeyAndTaskIdIn(
+            org.mockito.ArgumentMatchers.eq("team-a"),
+            org.mockito.ArgumentMatchers.anySet()
+        )).thenAnswer(invocation -> List.copyOf(savedIssues));
+
+        TaskDto result = taskService.updateJiraLinks(
+            "team-a",
+            task.getId(),
+            new TaskJiraLinksUpdateRequest(
+                "https://jira.sberbank.ru/browse/TEAM-10",
+                List.of(new TaskParticipantJiraLinkUpdateRequest(
+                    participant.getId().toString(),
+                    sprint.getId().toString(),
+                    "TEAM-11"
+                ))
+            )
+        );
+
+        assertThat(result.jiraStoryIssue()).isNotNull();
+        assertThat(result.jiraStoryIssue().jiraIssueKey()).isEqualTo("TEAM-10");
+        assertThat(result.jiraIssues())
+            .containsKey(participant.getId().toString());
+        assertThat(result.jiraIssues().get(participant.getId().toString()).get(sprint.getId().toString()).jiraIssueKey())
+            .isEqualTo("TEAM-11");
     }
 
     private void commonTaskStubs(TaskEntity task, SprintEntity sprint) {

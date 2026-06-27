@@ -38,8 +38,8 @@ export default function SortControls({
   options,
   direction,
   onDirectionChange,
-  label = "Сортировка",
-  selectLabel = "Поле",
+  label = "",
+  selectLabel = "Сортировка",
   sx,
 }: SortControlsProps) {
   const labelId = React.useId();
@@ -66,17 +66,19 @@ export default function SortControls({
         spacing={0.75}
         alignItems={{ xs: "stretch", sm: "center" }}
       >
-        <Typography
-          variant="caption"
-          sx={{
-            color: "text.secondary",
-            fontWeight: 600,
-            lineHeight: { xs: 1.2, sm: 1 },
-            whiteSpace: "nowrap",
-          }}
-        >
-          {label}
-        </Typography>
+        {label ? (
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+              fontWeight: 600,
+              lineHeight: { xs: 1.2, sm: 1 },
+              whiteSpace: "nowrap",
+            }}
+          >
+            {label}
+          </Typography>
+        ) : null}
         <Stack direction="row" spacing={0.5} alignItems="center">
           <FormControl size="small" sx={{ minWidth: 164, flex: "1 1 auto" }}>
             <InputLabel id={labelId}>{selectLabel}</InputLabel>

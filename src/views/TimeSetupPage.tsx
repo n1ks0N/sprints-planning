@@ -71,6 +71,11 @@ function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
   return true;
 }
 
+function getCurrentQuarterId(quarters: Quarter[]) {
+  const today = moment().format(fmt);
+  return quarters.find((quarter) => quarter.startDate <= today && today <= quarter.endDate)?.id || "";
+}
+
 const LS_HIDE_PAST = "timeSetup.hidePast";
 
 const rangesOverlap = (
@@ -155,8 +160,9 @@ export default function TimeSetupPage() {
     if (!quarters.length) return;
     const actualIds = new Set(quarters.map((q) => q.id));
     const filtered = selectedQuarterIds.filter((id) => actualIds.has(id));
-    if (!shallowStringArrayEqual(filtered, selectedQuarterIds)) {
-      dispatch(setTimeSelectedQuarterIds(filtered));
+    const nextQuarterIds = filtered.length ? filtered : [getCurrentQuarterId(quarters)].filter(Boolean);
+    if (!shallowStringArrayEqual(nextQuarterIds, selectedQuarterIds)) {
+      dispatch(setTimeSelectedQuarterIds(nextQuarterIds));
     }
   }, [quarters, selectedQuarterIds, dispatch]);
 

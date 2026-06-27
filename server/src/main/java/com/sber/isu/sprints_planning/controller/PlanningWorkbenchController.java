@@ -10,6 +10,7 @@ import com.sber.isu.sprints_planning.service.PlanningWorkbenchService;
 import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,18 +35,37 @@ public class PlanningWorkbenchController {
     }
 
     @GetMapping("/backlog")
-    public List<PlanningWorkbenchItemDto> getBacklog(
+    public Page<PlanningWorkbenchItemDto> getBacklog(
         @PathVariable String teamKey,
         @RequestParam(value = "sortBy", required = false) String sortBy,
-        @RequestParam(value = "sortDirection", required = false) String sortDirection
+        @RequestParam(value = "sortDirection", required = false) String sortDirection,
+        @RequestParam(value = "page", required = false) Integer page,
+        @RequestParam(value = "size", required = false) Integer size,
+        @RequestParam(value = "quarterIds", required = false) List<String> quarterIds,
+        @RequestParam(value = "priority", required = false) String priority,
+        @RequestParam(value = "releaseDateId", required = false) String releaseDateId,
+        @RequestParam(value = "streams", required = false) List<String> streams,
+        @RequestParam(value = "customers", required = false) List<String> customers,
+        @RequestParam(value = "search", required = false) String search,
+        @RequestParam(value = "withoutStream", required = false) Boolean withoutStream,
+        @RequestParam(value = "withoutCustomer", required = false) Boolean withoutCustomer
     ) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
-        boolean hasSortBy = sortBy != null && !sortBy.isBlank();
-        boolean hasSortDirection = sortDirection != null && !sortDirection.isBlank();
-        if (!hasSortBy && !hasSortDirection) {
-            return planningWorkbenchService.getBacklogCandidates(normalizedTeamKey);
-        }
-        return planningWorkbenchService.getBacklogCandidates(normalizedTeamKey, sortBy, sortDirection);
+        return planningWorkbenchService.getBacklogCandidatesPage(
+            normalizedTeamKey,
+            sortBy,
+            sortDirection,
+            page,
+            size,
+            quarterIds,
+            priority,
+            releaseDateId,
+            streams,
+            customers,
+            search,
+            withoutStream,
+            withoutCustomer
+        );
     }
 
     @PostMapping("/items")

@@ -26,6 +26,9 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -55,7 +58,8 @@ class PlanningWorkbenchControllerTest {
 
         mockMvc.perform(get("/Team-A/planning-workbench/backlog"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$[0].id").value("item-1"));
+            .andExpect(jsonPath("$.content[0].id").value("item-1"))
+            .andExpect(jsonPath("$.totalElements").value(1));
 
         org.assertj.core.api.Assertions.assertThat(service.lastTeamKey).isEqualTo("team-a");
     }
@@ -274,9 +278,25 @@ class PlanningWorkbenchControllerTest {
         }
 
         @Override
-        public List<PlanningWorkbenchItemDto> getBacklogCandidates(String teamKey) {
+        public Page<PlanningWorkbenchItemDto> getBacklogCandidatesPage(
+            String teamKey,
+            String sortBy,
+            String sortDirection,
+            Integer page,
+            Integer size,
+            List<String> quarterIds,
+            String priority,
+            String releaseDateId,
+            List<String> streams,
+            List<String> customers,
+            String search,
+            Boolean withoutStream,
+            Boolean withoutCustomer
+        ) {
             this.lastTeamKey = teamKey;
-            return backlog;
+            int safePage = page == null ? 0 : Math.max(0, page);
+            int safeSize = size == null ? Math.max(1, backlog.size()) : Math.max(1, size);
+            return new PageImpl<>(backlog, Pageable.ofSize(safeSize).withPage(safePage), backlog.size());
         }
 
         @Override

@@ -21,6 +21,14 @@ public interface TaskJiraIssueRepository extends JpaRepository<TaskJiraIssueEnti
         UUID planningSprintId
     );
 
+    @EntityGraph(attributePaths = {"task", "participant", "planningSprint", "parentTaskJiraIssue"})
+    List<TaskJiraIssueEntity> findAllByTeamKeyAndTaskIdAndParticipantIdAndPlanningSprintId(
+        String teamKey,
+        UUID taskId,
+        UUID participantId,
+        UUID planningSprintId
+    );
+
     @EntityGraph(attributePaths = {"task", "participant", "planningSprint", "exportBatch"})
     Optional<TaskJiraIssueEntity> findByTeamKeyAndTaskIdAndParticipantIdAndPlanningSprintIdAndJiraProjectKey(
         String teamKey,
@@ -36,14 +44,6 @@ public interface TaskJiraIssueRepository extends JpaRepository<TaskJiraIssueEnti
         UUID taskId,
         String issueScope,
         UUID planningSprintId,
-        String jiraProjectKey
-    );
-
-    @EntityGraph(attributePaths = {"task", "exportBatch"})
-    Optional<TaskJiraIssueEntity> findFirstByTeamKeyAndTaskIdAndIssueScopeAndJiraProjectKeyOrderByCreatedAtAsc(
-        String teamKey,
-        UUID taskId,
-        String issueScope,
         String jiraProjectKey
     );
 

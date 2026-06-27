@@ -48,7 +48,12 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -100,6 +105,168 @@ public class PlanningWorkbenchService {
             .sorted(planningItemComparator(teamKey, sortBy, sortDirection))
             .map(item -> toPlanningItemDto(item, Map.of()))
             .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public Page<PlanningWorkbenchItemDto> getBacklogCandidatesPage(
+        String teamKey,
+        String sortBy,
+        String sortDirection,
+        Integer page,
+        Integer size,
+        List<String> quarterIds,
+        String priority,
+        String releaseDateId,
+        List<String> streams,
+        List<String> customers,
+        String search,
+        Boolean withoutStream,
+        Boolean withoutCustomer
+    ) {
+        int safePage = page == null ? 0 : Math.max(0, page);
+        int safeSize = size == null ? 20 : Math.min(Math.max(1, size), 200);
+        Pageable pageable = Pageable.ofSize(safeSize).withPage(safePage);
+        List<PlanningBacklogItemEntity> filtered = planningBacklogItemRepository.findAllByTeamKeyOrderByDisplayOrderAscCreatedAtAsc(teamKey)
+            .stream()
+            .filter(item -> planningItemMatchesFilters(
+                teamKey,
+                item,
+                quarterIds,
+                priority,
+                releaseDateId,
+                streams,
+                customers,
+                search,
+                withoutStream,
+                withoutCustomer
+            ))
+            .sorted(planningItemComparator(teamKey, sortBy, sortDirection))
+            .toList();
+
+        int fromIndex = Math.min(safePage * safeSize, filtered.size());
+        int toIndex = Math.min(fromIndex + safeSize, filtered.size());
+        List<PlanningWorkbenchItemDto> content = filtered.subList(fromIndex, toIndex).stream()
+            .map(item -> toPlanningItemDto(item, Map.of()))
+            .toList();
+        return new PageImpl<>(content, pageable, filtered.size());
+    }
+
+    private boolean planningItemMatchesFilters(
+        String teamKey,
+        PlanningBacklogItemEntity item,
+        List<String> quarterIds,
+        String priority,
+        String releaseDateId,
+        List<String> streams,
+        List<String> customers,
+        String search,
+        Boolean withoutStream,
+        Boolean withoutCustomer
+    ) {
+        Set<String> selectedPriorities = splitFilterValues(priority);
+        if (!selectedPriorities.isEmpty() && !selectedPriorities.contains(String.valueOf(item.getPriority()))) {
+            return false;
+        }
+
+        String normalizedReleaseDateId = normalizeOptional(releaseDateId);
+        if (normalizedReleaseDateId != null) {
+            UUID itemReleaseId = item.getReleaseDate() == null ? null : item.getReleaseDate().getId();
+            if (itemReleaseId == null || !normalizedReleaseDateId.equals(itemReleaseId.toString())) {
+                return false;
+            }
+        }
+
+        Set<String> selectedQuarterIds = normalizeFilterSet(quarterIds);
+        if (!selectedQuarterIds.isEmpty() && collectPlanningItemQuarterIds(teamKey, item).stream().noneMatch(selectedQuarterIds::contains)) {
+            return false;
+        }
+
+        Set<String> selectedStreams = normalizeFilterSet(streams);
+        List<String> itemStreams = item.getStreams() == null ? List.of() : item.getStreams();
+        if ((!selectedStreams.isEmpty() || Boolean.TRUE.equals(withoutStream))
+            && !matchesStringCollection(itemStreams, selectedStreams, Boolean.TRUE.equals(withoutStream))) {
+            return false;
+        }
+
+        Set<String> selectedCustomers = normalizeFilterSet(customers);
+        List<String> itemCustomers = item.getCustomers() == null ? List.of() : item.getCustomers();
+        if ((!selectedCustomers.isEmpty() || Boolean.TRUE.equals(withoutCustomer))
+            && !matchesStringCollection(itemCustomers, selectedCustomers, Boolean.TRUE.equals(withoutCustomer))) {
+            return false;
+        }
+
+        String normalizedSearch = normalizeOptional(search);
+        if (normalizedSearch != null) {
+            String needle = normalizedSearch.toLowerCase();
+            String haystack = String.join(" ", nullToBlank(item.getTitle()), nullToBlank(item.getDescription()), nullToBlank(item.getDod()))
+                .toLowerCase();
+            if (!haystack.contains(needle)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private Set<String> splitFilterValues(String rawValue) {
+        String normalized = normalizeOptional(rawValue);
+        if (normalized == null) {
+            return Set.of();
+        }
+        return Pattern.compile(",")
+            .splitAsStream(normalized)
+            .map(String::trim)
+            .filter(value -> !value.isEmpty())
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private Set<String> normalizeFilterSet(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return Set.of();
+        }
+        return values.stream()
+            .filter(Objects::nonNull)
+            .flatMap(value -> Pattern.compile(",").splitAsStream(value))
+            .map(String::trim)
+            .filter(value -> !value.isEmpty())
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private boolean matchesStringCollection(List<String> itemValues, Set<String> selectedValues, boolean includeEmpty) {
+        if ((itemValues == null || itemValues.isEmpty()) && includeEmpty) {
+            return true;
+        }
+        if (selectedValues.isEmpty()) {
+            return false;
+        }
+        return itemValues != null && itemValues.stream()
+            .filter(Objects::nonNull)
+            .anyMatch(selectedValues::contains);
+    }
+
+    private List<String> collectPlanningItemQuarterIds(String teamKey, PlanningBacklogItemEntity item) {
+        LinkedHashSet<String> quarterIds = new LinkedHashSet<>();
+        if (item.getPlanningQuarterIds() != null) {
+            item.getPlanningQuarterIds().stream()
+                .filter(Objects::nonNull)
+                .map(UUID::toString)
+                .forEach(quarterIds::add);
+        }
+        if (item.getPlanningSprintIds() != null && !item.getPlanningSprintIds().isEmpty()) {
+            sprintRepository.findByTeamKeyAndIdIn(teamKey, item.getPlanningSprintIds()).forEach(sprint -> {
+                if (sprint.getQuarter() != null && sprint.getQuarter().getId() != null) {
+                    quarterIds.add(sprint.getQuarter().getId().toString());
+                }
+            });
+        }
+        if (quarterIds.isEmpty() && item.getInitialQuarter() != null && item.getInitialQuarter().getId() != null) {
+            quarterIds.add(item.getInitialQuarter().getId().toString());
+        }
+        return List.copyOf(quarterIds);
+    }
+
+    private String nullToBlank(String value) {
+        return value == null ? "" : value;
     }
 
     private Comparator<PlanningBacklogItemEntity> planningItemComparator(
@@ -607,10 +774,35 @@ public class PlanningWorkbenchService {
         return new PlanningSolverResult(
             result.plannerType(),
             allocations,
-            result.warnings(),
+            scaleWarningsFromHalfDayUnits(result.warnings()),
             unitsToHalfDays(result.plannedDays()),
             unitsToHalfDays(result.unplannedDays())
         );
+    }
+
+    private List<String> scaleWarningsFromHalfDayUnits(List<String> warnings) {
+        if (warnings == null || warnings.isEmpty()) {
+            return List.of();
+        }
+
+        return warnings.stream()
+            .map(this::scaleWarningFromHalfDayUnits)
+            .toList();
+    }
+
+    private String scaleWarningFromHalfDayUnits(String warning) {
+        if (warning == null || warning.isBlank()) {
+            return warning;
+        }
+
+        Matcher matcher = UNPLANNED_WARNING_PATTERN.matcher(warning);
+        if (!matcher.find()) {
+            return warning;
+        }
+
+        BigDecimal days = unitsToHalfDays(new BigDecimal(matcher.group(2)));
+        String formattedDays = days.stripTrailingZeros().toPlainString();
+        return matcher.replaceFirst(Matcher.quoteReplacement(matcher.group(1) + formattedDays + matcher.group(3)));
     }
 
     private List<SprintEntity> resolveRelevantSprints(String teamKey, List<PlanningBacklogItemEntity> items) {
@@ -987,6 +1179,7 @@ public class PlanningWorkbenchService {
     }
 
     private static final BigDecimal HALF_DAY_UNITS = BigDecimal.valueOf(2);
+    private static final Pattern UNPLANNED_WARNING_PATTERN = Pattern.compile("(не распределена полностью: )([0-9]+(?:\\.[0-9]+)?)( дн\\.)");
 
     private int releaseWindowDays(SprintEntity sprint, LocalDate releasePromDate) {
         if (releasePromDate == null) {

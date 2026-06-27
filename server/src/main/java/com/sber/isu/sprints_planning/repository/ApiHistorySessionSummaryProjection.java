@@ -1,6 +1,6 @@
 package com.sber.isu.sprints_planning.repository;
 
-import java.time.OffsetDateTime;
+import java.time.Instant;
 
 public interface ApiHistorySessionSummaryProjection {
 
@@ -8,5 +8,5 @@ public interface ApiHistorySessionSummaryProjection {
 
     String getUserName();
 
-    OffsetDateTime getLatestCreatedAt();
+    Instant getLatestCreatedAt();
 }

@@ -31,6 +31,7 @@ public class ApiActionDescriptionResolver {
         actions.put("POST /tasks", "Добавлена задача");
         actions.put("POST /tasks/update", "Изменена задача");
         actions.put("POST /tasks/delete", "Удалена задача");
+        actions.put("POST /tasks/{id}/jira-links", "Обновлены ссылки Jira по задаче");
 
         actions.put("POST /taskload", "Обновлена нагрузка задачи");
         actions.put("POST /taskalloc", "Обновлено распределение задачи");

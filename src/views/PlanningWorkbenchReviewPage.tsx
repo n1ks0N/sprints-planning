@@ -796,6 +796,7 @@ export default function PlanningWorkbenchReviewPage() {
                     onUpdateTaskPatch={(item, patch) => updateDraftTask(item.id, patch)}
                     onDuplicateTask={() => undefined}
                     onOpenTaskHistory={() => undefined}
+                    onUpdateJiraLinks={() => undefined}
                     onMoveTask={() => undefined}
                     onRemoveTask={handleRemovePreviewTask}
                     isJiraSelected={false}

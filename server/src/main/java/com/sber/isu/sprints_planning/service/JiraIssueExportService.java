@@ -469,6 +469,7 @@ public class JiraIssueExportService {
                 continue;
             }
 
+            List<String> taskLabels = labelsForTask(labels, request, task.getId());
             List<TaskParticipantEntity> participants = task.getParticipants().stream()
                 .sorted(Comparator.comparingInt(TaskParticipantEntity::getDisplayOrder))
                 .toList();
@@ -492,7 +493,7 @@ public class JiraIssueExportService {
                     JiraCreateIssueRequest requestBody = buildStoryIssueRequest(
                         projectKey,
                         jiraSprintId,
-                        labels,
+                        taskLabels,
                         task,
                         storyAssignee,
                         storyPoints
@@ -508,6 +509,7 @@ public class JiraIssueExportService {
                         null,
                         storyPoints,
                         projectKey,
+                        taskLabels,
                         requestPreview
                     ));
                 }
@@ -582,7 +584,7 @@ public class JiraIssueExportService {
                 JiraCreateIssueRequest requestBody = buildIssueRequest(
                     projectKey,
                     jiraSprintId,
-                    labels,
+                    taskLabels,
                     task,
                     participant,
                     storyPoints
@@ -598,6 +600,7 @@ public class JiraIssueExportService {
                     planningSprint.getName(),
                     storyPoints,
                     projectKey,
+                    taskLabels,
                     requestPreview
                 ));
             }
@@ -777,7 +780,7 @@ public class JiraIssueExportService {
         JiraCreateIssueRequest requestBody = buildIssueRequest(
             projectKey,
             batch.getJiraSprintId(),
-            normalizeLabels(batch.getLabelsJson()),
+            labelsForItem(batch, item),
             task,
             participant,
             item.storyPoints()
@@ -907,7 +910,7 @@ public class JiraIssueExportService {
         JiraCreateIssueRequest requestBody = buildStoryIssueRequest(
             projectKey,
             batch.getJiraSprintId(),
-            normalizeLabels(batch.getLabelsJson()),
+            labelsForItem(batch, item),
             task,
             storyAssignee,
             item.storyPoints()
@@ -1668,6 +1671,28 @@ public class JiraIssueExportService {
             .toList();
     }
 
+    private List<String> labelsForTask(
+        List<String> commonLabels,
+        JiraIssueExportRequest request,
+        UUID taskId
+    ) {
+        List<String> taskLabels = request.taskLabelsByTaskId() == null
+            ? List.of()
+            : request.taskLabelsByTaskId().getOrDefault(taskId.toString(), List.of());
+        List<String> merged = new ArrayList<>();
+        merged.addAll(commonLabels == null ? List.of() : commonLabels);
+        merged.addAll(taskLabels == null ? List.of() : taskLabels);
+        return normalizeLabels(merged);
+    }
+
+    private List<String> labelsForItem(JiraExportBatchEntity batch, BatchItemState item) {
+        List<String> itemLabels = normalizeLabels(item.labels());
+        if (!itemLabels.isEmpty()) {
+            return itemLabels;
+        }
+        return normalizeLabels(batch.getLabelsJson());
+    }
+
     private UUID parseRequiredUuid(String value, String fieldName) {
         String normalized = normalizeRequired(value, fieldName);
         try {
@@ -2106,6 +2131,7 @@ public class JiraIssueExportService {
         String planningSprintName,
         BigDecimal storyPoints,
         String projectKey,
+        List<String> labels,
         String status,
         boolean manualActionRequired,
         String message,
@@ -2124,6 +2150,7 @@ public class JiraIssueExportService {
             String planningSprintName,
             BigDecimal storyPoints,
             String projectKey,
+            List<String> labels,
             JiraIssueRequestPreviewDto jiraRequest
         ) {
             return new BatchItemState(
@@ -2138,6 +2165,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 projectKey,
+                normalizeStaticLabels(labels),
                 ITEM_STATUS_PENDING,
                 false,
                 "Ожидает обработки",
@@ -2170,6 +2198,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 BigDecimal.ZERO,
                 null,
+                List.of(),
                 ITEM_STATUS_SKIPPED,
                 false,
                 message,
@@ -2202,6 +2231,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 BigDecimal.ZERO,
                 null,
+                List.of(),
                 ITEM_STATUS_FAILED,
                 false,
                 message,
@@ -2225,6 +2255,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 projectKey,
+                labels,
                 nextStatus,
                 ITEM_STATUS_MANUAL_CHECK_REQUIRED.equals(nextStatus),
                 nextMessage,
@@ -2248,6 +2279,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 projectKey,
+                labels,
                 status,
                 manualActionRequired,
                 message,
@@ -2277,6 +2309,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 projectKey,
+                labels,
                 ITEM_STATUS_CREATED,
                 false,
                 nextMessage,
@@ -2300,6 +2333,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 projectKey,
+                labels,
                 ITEM_STATUS_SKIPPED,
                 false,
                 "Jira-задача уже заведена",
@@ -2323,6 +2357,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 projectKey,
+                labels,
                 ITEM_STATUS_MANUAL_CHECK_REQUIRED,
                 true,
                 nextMessage,
@@ -2346,6 +2381,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 projectKey,
+                labels,
                 ITEM_STATUS_SKIPPED,
                 true,
                 nextMessage,
@@ -2369,6 +2405,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 projectKey,
+                labels,
                 ITEM_STATUS_FAILED,
                 false,
                 nextMessage,
@@ -2398,6 +2435,7 @@ public class JiraIssueExportService {
                 planningSprintName,
                 storyPoints,
                 projectKey,
+                labels,
                 nextStatus,
                 false,
                 nextMessage,
@@ -2428,6 +2466,17 @@ public class JiraIssueExportService {
                 jiraIssueUrl,
                 jiraRequest
             );
+        }
+
+        private static List<String> normalizeStaticLabels(List<String> values) {
+            if (values == null || values.isEmpty()) {
+                return List.of();
+            }
+            return values.stream()
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .distinct()
+                .toList();
         }
     }
 }

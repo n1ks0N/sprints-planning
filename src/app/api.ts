@@ -261,6 +261,62 @@ const applyPatches = <Args>(
   );
 
 type TasksPage = Page<BacklogItem>;
+type PlanningWorkbenchBacklogPage = Page<PlanningWorkbenchItem>;
+
+type PlanningWorkbenchBacklogArgs = {
+  sortBy?: string;
+  sortDirection?: string;
+  page?: number;
+  size?: number;
+  quarterIds?: string[];
+  priority?: string[];
+  releaseDateId?: string;
+  streams?: string[];
+  customers?: string[];
+  search?: string;
+  withoutStream?: boolean;
+  withoutCustomer?: boolean;
+};
+
+type TaskJiraLinksUpdateArgs = {
+  taskId: string;
+  storyUrl?: string;
+  participantLinks: {
+    participantId: string;
+    planningSprintId: string;
+    jiraIssueUrl?: string;
+  }[];
+};
+
+const normalizePageResponse = <T>(data: any): Page<T> => {
+  const content = Array.isArray(data?.content) ? data.content : [];
+  if (data?.page) {
+    return {
+      ...data,
+      content,
+    } as Page<T>;
+  }
+
+  const size = Number(data?.size ?? content.length ?? 1) || 1;
+  const number = Number(data?.number ?? 0) || 0;
+  const totalElements = Number(data?.totalElements ?? content.length) || 0;
+  const totalPages = Number(data?.totalPages ?? Math.max(1, Math.ceil(totalElements / size))) || 1;
+
+  return {
+    ...data,
+    content,
+    page: {
+      size,
+      number,
+      totalElements,
+      totalPages,
+    },
+    numberOfElements: Number(data?.numberOfElements ?? content.length) || content.length,
+    first: data?.first ?? number === 0,
+    last: data?.last ?? number + 1 >= totalPages,
+    empty: data?.empty ?? content.length === 0,
+  };
+};
 
 const joinFilterValues = (values?: Array<string | number>) => {
   if (!Array.isArray(values) || values.length === 0) return undefined;
@@ -1021,6 +1077,8 @@ export const api = createApi({
           params: Object.keys(params).length ? params : undefined,
         };
       },
+      transformResponse: (response: unknown) =>
+        normalizePageResponse<BacklogItem>(response),
       serializeQueryArgs: ({ queryArgs, endpointName }) => {
         if (!queryArgs || typeof queryArgs !== "object") return endpointName;
         const { page, size, ...rest } = queryArgs as Record<string, unknown>;
@@ -1080,15 +1138,42 @@ export const api = createApi({
       ],
     }),
     getPlanningWorkbenchBacklog: b.query<
-      PlanningWorkbenchItem[],
-      void | { sortBy?: string; sortDirection?: string }
+      PlanningWorkbenchBacklogPage,
+      void | PlanningWorkbenchBacklogArgs
     >({
       query: (arg) => {
         const params: Record<string, string> = {};
+        const joinOrUndefined = (values?: string[]) => {
+          if (!values || values.length === 0) return undefined;
+          return values.join(",");
+        };
+
         const sortBy = (arg?.sortBy || "").trim();
         if (sortBy) params.sortBy = sortBy;
         const sortDirection = (arg?.sortDirection || "").trim();
         if (sortDirection) params.sortDirection = sortDirection;
+        if (typeof arg?.page === "number") params.page = String(arg.page);
+        if (typeof arg?.size === "number") params.size = String(arg.size);
+
+        const quarters = joinOrUndefined(arg?.quarterIds);
+        if (quarters) params.quarterIds = quarters;
+
+        const priorities = joinOrUndefined(arg?.priority);
+        if (priorities) params.priority = priorities;
+
+        const releaseDateId = (arg?.releaseDateId || "").trim();
+        if (releaseDateId) params.releaseDateId = releaseDateId;
+
+        const streams = joinOrUndefined(arg?.streams);
+        if (streams) params.streams = streams;
+        if (arg?.withoutStream) params.withoutStream = "true";
+
+        const customers = joinOrUndefined(arg?.customers);
+        if (customers) params.customers = customers;
+        if (arg?.withoutCustomer) params.withoutCustomer = "true";
+
+        const search = (arg?.search || "").trim();
+        if (search) params.search = search;
 
         return {
           url: "/planning-workbench/backlog",
@@ -1096,11 +1181,57 @@ export const api = createApi({
           params: Object.keys(params).length ? params : undefined,
         };
       },
+      transformResponse: (response: unknown) =>
+        normalizePageResponse<PlanningWorkbenchItem>(response),
+      serializeQueryArgs: ({ queryArgs, endpointName }) => {
+        if (!queryArgs || typeof queryArgs !== "object") return endpointName;
+        const { page, size, ...rest } = queryArgs as Record<string, unknown>;
+        return `${endpointName}-${JSON.stringify(rest)}`;
+      },
+      merge: (currentCache, newData, { arg }) => {
+        if (!newData) return;
+        if (!currentCache) {
+          return newData;
+        }
+
+        const shouldReset = !arg || typeof arg !== "object" || !("page" in arg) || (arg as any).page === 0;
+        if (shouldReset) {
+          Object.assign(currentCache, newData);
+          return;
+        }
+
+        const existingIndex = new Map(currentCache.content.map((item, idx) => [item.id, idx] as const));
+        newData.content.forEach((item) => {
+          const idx = existingIndex.get(item.id);
+          if (idx === undefined) {
+            currentCache.content.push(item);
+          } else {
+            currentCache.content[idx] = item;
+          }
+        });
+
+        currentCache.page = newData.page;
+        currentCache.numberOfElements = currentCache.content.length;
+        currentCache.first = newData.first ?? currentCache.first;
+        currentCache.last = newData.last;
+        currentCache.empty = currentCache.content.length === 0;
+        currentCache._links = newData._links;
+      },
+      forceRefetch({ currentArg, previousArg }) {
+        if (!currentArg || !previousArg) return true;
+        const { page: currentPage, size: currentSize, ...currentFilters } =
+          (currentArg as Record<string, unknown>) || {};
+        const { page: prevPage, size: prevSize, ...prevFilters } =
+          (previousArg as Record<string, unknown>) || {};
+
+        if (currentPage !== prevPage || currentSize !== prevSize) return true;
+        return JSON.stringify(currentFilters) !== JSON.stringify(prevFilters);
+      },
       providesTags: (result) =>
         result
           ? [
               { type: "PlanningItem" as const, id: "LIST" as const },
-              ...result.map((item) => ({ type: "PlanningItem" as const, id: item.id })),
+              ...result.content.map((item) => ({ type: "PlanningItem" as const, id: item.id })),
             ]
           : [{ type: "PlanningItem" as const, id: "LIST" as const }],
     }),
@@ -1123,20 +1254,9 @@ export const api = createApi({
     >({
       query: (body) => ({ url: "/planning-workbench/items", method: "POST", body }),
       invalidatesTags: () => [{ type: "PlanningItem" as const, id: "LIST" as const }],
-      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+      async onQueryStarted(_arg, { queryFulfilled }) {
         try {
-          const { data } = await queryFulfilled;
-          dispatch(
-            api.util.updateQueryData("getPlanningWorkbenchBacklog", undefined, (draft) => {
-              const index = draft.findIndex((item) => item.id === data.id);
-              if (index >= 0) {
-                draft[index] = data;
-              } else {
-                draft.push(data);
-              }
-              draft.sort((left, right) => (left.order || 0) - (right.order || 0));
-            })
-          );
+          await queryFulfilled;
         } catch (error) {
           notifyError("Не удалось создать задачу для планирования", error);
         }
@@ -1165,41 +1285,53 @@ export const api = createApi({
         { type: "PlanningItem" as const, id: arg.id },
         { type: "PlanningItem" as const, id: "LIST" as const },
       ],
-      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
+      async onQueryStarted(_arg, { queryFulfilled }) {
         try {
-          const { data } = await queryFulfilled;
-          dispatch(
-            api.util.updateQueryData("getPlanningWorkbenchBacklog", undefined, (draft) => {
-              const index = draft.findIndex((item) => item.id === data.id);
-              if (index >= 0) {
-                draft[index] = data;
-              }
-            })
-          );
+          await queryFulfilled;
         } catch (error) {
           notifyError("Не удалось обновить задачу для планирования", error);
         }
       },
     }),
     deletePlanningWorkbenchItem: b.mutation<void, string>({
-      query: (id) => ({ url: `/planning-workbench/items/${id}`, method: "DELETE" }),
+      query: (id) => ({
+        url: `/planning-workbench/items/${id}`,
+        method: "DELETE",
+        responseHandler: "text",
+      }),
+      transformResponse: () => undefined,
       invalidatesTags: (_result, _error, id) => [
         { type: "PlanningItem" as const, id },
         { type: "PlanningItem" as const, id: "LIST" as const },
       ],
-      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
-        const patch = dispatch(
-          api.util.updateQueryData("getPlanningWorkbenchBacklog", undefined, (draft) => {
-            const index = draft.findIndex((item) => item.id === arg);
-            if (index >= 0) {
-              draft.splice(index, 1);
+      async onQueryStarted(arg, { dispatch, getState, queryFulfilled }) {
+        const patches = applyPatches(
+          dispatch,
+          "getPlanningWorkbenchBacklog",
+          collectCachedArgs<PlanningWorkbenchBacklogArgs | void>(
+            getState,
+            "getPlanningWorkbenchBacklog",
+            [listTag("PlanningItem")]
+          ),
+          (draft) => {
+            const index = draft?.content?.findIndex((item: PlanningWorkbenchItem) => item.id === arg);
+            if (index == null || index < 0) return;
+            draft.content.splice(index, 1);
+            draft.numberOfElements = draft.content.length;
+            draft.empty = draft.content.length === 0;
+            if (draft.page && draft.page.totalElements > 0) {
+              draft.page.totalElements -= 1;
+              draft.page.totalPages = Math.max(
+                1,
+                Math.ceil(draft.page.totalElements / Math.max(1, draft.page.size || 1))
+              );
             }
-          })
+          }
         );
         try {
           await queryFulfilled;
         } catch (error) {
-          patch.undo();
+          patches.forEach((patch) => patch.undo());
           notifyError("Не удалось удалить задачу из планирования", error);
         }
       },
@@ -1283,6 +1415,7 @@ export const api = createApi({
         participantIdsByTaskId?: Record<string, string[]>;
         createStoryByTaskId?: Record<string, boolean>;
         labels: string[];
+        taskLabelsByTaskId?: Record<string, string[]>;
       }
     >({
       query: (body) => ({ url: "/jira/issues", method: "POST", body }),
@@ -1455,6 +1588,45 @@ export const api = createApi({
         },
       }
     ),
+    updateTaskJiraLinks: b.mutation<BacklogItem, TaskJiraLinksUpdateArgs>({
+      query: ({ taskId, storyUrl, participantLinks }) => ({
+        url: `/tasks/${taskId}/jira-links`,
+        method: "POST",
+        body: { storyUrl, participantLinks },
+      }),
+      invalidatesTags: (result, error, arg) => [
+        { type: "Task" as const, id: arg.taskId },
+        { type: "Task" as const, id: "LIST" as const },
+      ],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        try {
+          const { data } = await queryFulfilled;
+          const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
+            getState,
+            "getTasks",
+            [
+              { type: "Task", id: "LIST" },
+              { type: "Task", id: arg.taskId },
+            ]
+          );
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const idx = tasks.findIndex((task: BacklogItem) => task.id === data.id);
+              if (idx >= 0) tasks[idx] = data;
+            });
+          });
+          dispatch(
+            api.util.updateQueryData("getTask", data.id, (draft) => {
+              updateTaskDetailDraft(draft, (task) => {
+                Object.assign(task, data);
+              });
+            })
+          );
+        } catch (error) {
+          notifyError("Не удалось сохранить ссылки Jira", error);
+        }
+      },
+    }),
     deleteTask: b.mutation<BacklogItem, { id: string }>({
       query: (body) => ({ url: "/tasks/delete", method: "POST", body }),
       invalidatesTags: (result, error, arg) => [
@@ -1924,6 +2096,7 @@ export const {
   useConfirmJiraIssueNotCreatedMutation,
   useAddTaskMutation,
   useUpdateTaskMutation,
+  useUpdateTaskJiraLinksMutation,
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
   useUpsertTaskAllocationBulkMutation,

@@ -38,6 +38,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.Page;
 
 class PlanningWorkbenchServiceTest {
 
@@ -87,6 +88,54 @@ class PlanningWorkbenchServiceTest {
             assertThat(dto.estimateDays()).isEqualByComparingTo("5");
             assertThat(dto.loads()).isEmpty();
             assertThat(dto.allocations()).isEmpty();
+        });
+    }
+
+    @Test
+    void getBacklogCandidatesPageFiltersSortsAndPaginatesPlanningItems() {
+        PlanningBacklogItemEntity first = planningItem("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        first.setTitle("Alpha task");
+        first.setPriority((short) 2);
+        first.setStreams(new ArrayList<>(List.of("Core")));
+        first.setDisplayOrder(2);
+
+        PlanningBacklogItemEntity second = planningItem("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        second.setTitle("Beta task");
+        second.setPriority((short) 1);
+        second.setStreams(new ArrayList<>(List.of("Core")));
+        second.setDisplayOrder(1);
+
+        PlanningBacklogItemEntity ignored = planningItem("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        ignored.setTitle("Gamma task");
+        ignored.setPriority((short) 3);
+        ignored.setStreams(new ArrayList<>(List.of("Other")));
+        ignored.setDisplayOrder(3);
+
+        items.put(first.getId(), first);
+        items.put(second.getId(), second);
+        items.put(ignored.getId(), ignored);
+
+        Page<com.sber.isu.sprints_planning.dto.PlanningWorkbenchItemDto> page = service.getBacklogCandidatesPage(
+            "team-a",
+            "priority",
+            "asc",
+            0,
+            1,
+            null,
+            "1,2",
+            null,
+            List.of("Core"),
+            null,
+            "task",
+            null,
+            null
+        );
+
+        assertThat(page.getTotalElements()).isEqualTo(2);
+        assertThat(page.getTotalPages()).isEqualTo(2);
+        assertThat(page.getContent()).singleElement().satisfies(dto -> {
+            assertThat(dto.id()).isEqualTo(second.getId().toString());
+            assertThat(dto.priority()).isEqualTo((short) 1);
         });
     }
 
@@ -171,7 +220,7 @@ class PlanningWorkbenchServiceTest {
             Map.of(item.getId().toString(), Map.of(
                 participant.getId().toString(), Map.of(sprint.getId().toString(), BigDecimal.ONE)
             )),
-            List.of(),
+            List.of("Задача 'Half Day' не распределена полностью: 1 дн."),
             BigDecimal.ONE,
             BigDecimal.ZERO
         );
@@ -182,6 +231,8 @@ class PlanningWorkbenchServiceTest {
             assertThat(task.estimateDays()).isEqualTo(1)
         );
         assertThat(preview.summary().plannedDays()).isEqualByComparingTo("0.5");
+        assertThat(preview.summary().unplannedDays()).isEqualByComparingTo("0");
+        assertThat(preview.warnings()).containsExactly("Задача 'Half Day' не распределена полностью: 0.5 дн.");
         assertThat(preview.items().get(0).allocations().get(participant.getId().toString()))
             .containsEntry(sprint.getId().toString(), new BigDecimal("0.5"));
     }

@@ -4,6 +4,7 @@ import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.TaskHistoryItemDto;
 import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskJiraLinksUpdateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
 import com.sber.isu.sprints_planning.service.ApiHistoryService;
 import com.sber.isu.sprints_planning.service.TaskFilter;
@@ -105,6 +106,16 @@ public class TaskController {
     public TaskDto deleteTask(@PathVariable String teamKey, @RequestBody @Valid IdRequest request) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
         return taskService.delete(normalizedTeamKey, request);
+    }
+
+    @PostMapping("/tasks/{id}/jira-links")
+    public TaskDto updateTaskJiraLinks(
+        @PathVariable String teamKey,
+        @PathVariable UUID id,
+        @RequestBody @Valid TaskJiraLinksUpdateRequest request
+    ) {
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.updateJiraLinks(normalizedTeamKey, id, request);
     }
 
 }

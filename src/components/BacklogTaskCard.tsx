@@ -21,11 +21,13 @@ import {
   DialogTitle,
   Tooltip,
   InputBase,
+  ListItemIcon,
+  ListItemText,
   MenuItem,
   Menu,
 } from "@mui/material";
 import {
-  Add,
+  AddTask,
   Delete,
   CopyAll,
   ArrowBack,
@@ -40,6 +42,8 @@ import {
   VisibilityOff,
   History,
   OpenInNew,
+  MoreVert,
+  Link as LinkIcon,
 } from "@mui/icons-material";
 import moment from "moment";
 import "moment/locale/ru";
@@ -355,6 +359,17 @@ export type BacklogTaskCardProps = {
   onUpdateTaskPatch: (task: BacklogItem, patch: Partial<BacklogItem>) => void;
   onDuplicateTask: (task: BacklogItem) => void;
   onOpenTaskHistory: (task: BacklogItem) => void;
+  onUpdateJiraLinks: (
+    task: BacklogItem,
+    payload: {
+      storyUrl: string;
+      participantLinks: {
+        participantId: string;
+        planningSprintId: string;
+        jiraIssueUrl: string;
+      }[];
+    }
+  ) => Promise<void> | void;
   onMoveTask: (id: string, dir: "up" | "down") => void;
   onRemoveTask: (task: BacklogItem) => void;
   isJiraSelected: boolean;
@@ -416,6 +431,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
   onUpdateTaskPatch,
   onDuplicateTask,
   onOpenTaskHistory,
+  onUpdateJiraLinks,
   onMoveTask,
   onRemoveTask,
   isJiraSelected,
@@ -500,6 +516,12 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
   const [jiraMenuParticipantId, setJiraMenuParticipantId] = React.useState<
     string | null
   >(null);
+  const [taskOptionsAnchorEl, setTaskOptionsAnchorEl] =
+    React.useState<HTMLElement | null>(null);
+  const [jiraLinksDialogOpen, setJiraLinksDialogOpen] = React.useState(false);
+  const [jiraStoryDraft, setJiraStoryDraft] = React.useState("");
+  const [jiraLinkDrafts, setJiraLinkDrafts] = React.useState<Record<string, string>>({});
+  const [isSavingJiraLinks, setIsSavingJiraLinks] = React.useState(false);
 
   React.useEffect(() => {
     setCustomersDraft(task.customers || []);
@@ -548,11 +570,41 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
     setJiraMenuParticipantId(null);
   }, []);
 
+  const handleOpenTaskOptions = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
+    setTaskOptionsAnchorEl(event.currentTarget);
+  }, []);
+
+  const handleCloseTaskOptions = React.useCallback(() => {
+    setTaskOptionsAnchorEl(null);
+  }, []);
+
+  const handleTaskOption = React.useCallback((action: () => void) => {
+    action();
+    handleCloseTaskOptions();
+  }, [handleCloseTaskOptions]);
+
   const jiraMenuParticipantIssues = React.useMemo(
     () => (jiraMenuParticipantId ? task.jiraIssues?.[jiraMenuParticipantId] || {} : {}),
     [jiraMenuParticipantId, task.jiraIssues]
   );
   const storyJiraIssue = task.jiraStoryIssue || null;
+  const jiraLinkSprintIds = React.useMemo(() => {
+    const ids = new Set(effectiveSprints.map((sprint) => sprint.id));
+    for (const participantIssues of Object.values(task.jiraIssues || {})) {
+      for (const sprintId of Object.keys(participantIssues || {})) {
+        ids.add(sprintId);
+      }
+    }
+    return ids;
+  }, [effectiveSprints, task.jiraIssues]);
+  const jiraLinkSprints = React.useMemo(
+    () => sprintsGlobalOrdered.filter((sprint) => jiraLinkSprintIds.has(sprint.id)),
+    [jiraLinkSprintIds, sprintsGlobalOrdered]
+  );
+  const jiraLinkKey = React.useCallback(
+    (participantId: string, sprintId: string) => `${participantId}:${sprintId}`,
+    []
+  );
 
   const tooltipContent = (
     <Stack spacing={0.5} sx={{ maxWidth: 360 }}>
@@ -636,6 +688,52 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
   const handleToggleParticipants = React.useCallback(() => {
     onToggleParticipantsVisibility(task.id, !hiddenParticipants);
   }, [hiddenParticipants, onToggleParticipantsVisibility, task.id]);
+
+  const handleOpenJiraLinksDialog = React.useCallback(() => {
+    const nextDrafts: Record<string, string> = {};
+    for (const participant of participantRows) {
+      const participantIssues = task.jiraIssues?.[participant.id] || {};
+      for (const sprint of jiraLinkSprints) {
+        nextDrafts[jiraLinkKey(participant.id, sprint.id)] =
+          participantIssues[sprint.id]?.jiraIssueUrl || "";
+      }
+    }
+    setJiraStoryDraft(storyJiraIssue?.jiraIssueUrl || "");
+    setJiraLinkDrafts(nextDrafts);
+    setJiraLinksDialogOpen(true);
+  }, [jiraLinkKey, jiraLinkSprints, participantRows, storyJiraIssue?.jiraIssueUrl, task.jiraIssues]);
+
+  const handleCloseJiraLinksDialog = React.useCallback(() => {
+    if (isSavingJiraLinks) return;
+    setJiraLinksDialogOpen(false);
+  }, [isSavingJiraLinks]);
+
+  const handleSaveJiraLinks = React.useCallback(async () => {
+    setIsSavingJiraLinks(true);
+    try {
+      await onUpdateJiraLinks(task, {
+        storyUrl: jiraStoryDraft,
+        participantLinks: participantRows.flatMap((participant) =>
+          jiraLinkSprints.map((sprint) => ({
+            participantId: participant.id,
+            planningSprintId: sprint.id,
+            jiraIssueUrl: jiraLinkDrafts[jiraLinkKey(participant.id, sprint.id)] || "",
+          }))
+        ),
+      });
+      setJiraLinksDialogOpen(false);
+    } finally {
+      setIsSavingJiraLinks(false);
+    }
+  }, [
+    jiraLinkDrafts,
+    jiraLinkKey,
+    jiraLinkSprints,
+    jiraStoryDraft,
+    onUpdateJiraLinks,
+    participantRows,
+    task,
+  ]);
 
   const participantsToggleLabel = hiddenParticipants
     ? "Показать участников"
@@ -922,108 +1020,43 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
               </Tooltip>
             )}
 
-            <Tooltip title={participantsToggleLabel}>
-              <IconButton size="small" onClick={handleToggleParticipants}>
-                {hiddenParticipants ? (
-                  <Visibility fontSize="small" />
-                ) : (
-                  <VisibilityOff fontSize="small" />
-                )}
-              </IconButton>
-            </Tooltip>
-
-            <Tooltip title="Сдвинуть всех участников влево (по всем спринтам)">
-              <IconButton
-                size="small"
-                onClick={() => onShiftTaskAllocations(task, "left")}
-              >
-                <ArrowBack fontSize="small" />
-              </IconButton>
-            </Tooltip>
-
-            <Tooltip title="Сдвинуть всех участников вправо (по всем спринтам)">
-              <IconButton
-                size="small"
-                onClick={() => onShiftTaskAllocations(task, "right")}
-              >
-                <ArrowForward fontSize="small" />
-              </IconButton>
-            </Tooltip>
+            {!isPreview && storyJiraIssue?.jiraIssueUrl && (
+              <Tooltip title={`Открыть Story ${storyJiraIssue.jiraIssueKey}`}>
+                <IconButton
+                  size="small"
+                  component="a"
+                  href={storyJiraIssue.jiraIssueUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Открыть Story ${storyJiraIssue.jiraIssueKey}`}
+                  sx={{ color: "info.main" }}
+                >
+                  <OpenInNew fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
 
             {!isPreview && (
-              <>
-                {storyJiraIssue?.jiraIssueUrl ? (
-                  <Tooltip title={`Story в Jira: ${storyJiraIssue.jiraIssueKey}`}>
-                    <IconButton
-                      size="small"
-                      color="info"
-                      component="a"
-                      href={storyJiraIssue.jiraIssueUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <OpenInNew fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                ) : (
-                  <Tooltip title="Story в Jira не заведена">
-                    <span>
-                      <IconButton size="small" disabled>
-                        <OpenInNew fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                )}
-
-                <Tooltip title="Дублировать">
-                  <IconButton size="small" onClick={() => onDuplicateTask(task)}>
-                    <CopyAll fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-
-                <Tooltip
-                  title={
+              <Tooltip
+                title={
+                  isJiraSelected
+                    ? "Убрать из корзины Jira"
+                    : "Добавить в корзину Jira"
+                }
+              >
+                <IconButton
+                  size="small"
+                  onClick={() => onToggleJiraSelection(task)}
+                  aria-label={
                     isJiraSelected
-                      ? "Убрать из корзины Jira"
-                      : "Добавить в корзину Jira"
+                      ? `Убрать задачу ${task.title} из корзины Jira`
+                      : `Добавить задачу ${task.title} в корзину Jira`
                   }
+                  sx={{ color: isJiraSelected ? "success.main" : undefined }}
                 >
-                  <IconButton
-                    size="small"
-                    onClick={() => onToggleJiraSelection(task)}
-                    sx={{ color: isJiraSelected ? "success.main" : undefined }}
-                  >
-                    <Add fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-
-                <Tooltip title="История изменений">
-                  <IconButton
-                    size="small"
-                    onClick={() => onOpenTaskHistory(task)}
-                  >
-                    <History fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-
-                <Tooltip title="Вверх">
-                  <IconButton
-                    size="small"
-                    onClick={() => onMoveTask(task.id, "up")}
-                  >
-                    <ArrowUpward fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-
-                <Tooltip title="Вниз">
-                  <IconButton
-                    size="small"
-                    onClick={() => onMoveTask(task.id, "down")}
-                  >
-                    <ArrowDownward fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </>
+                  <AddTask fontSize="small" />
+                </IconButton>
+              </Tooltip>
             )}
 
             <Tooltip title={isPreview ? "Убрать задачу из preview" : "Удалить задачу"}>
@@ -1036,6 +1069,117 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                 <Delete />
               </IconButton>
             </Tooltip>
+
+            <Tooltip title="Опции">
+              <IconButton
+                size="small"
+                onClick={handleOpenTaskOptions}
+                aria-label={`Опции задачи ${task.title}`}
+                data-testid={isPreview ? `planning-preview-task-options-${task.id}` : `task-options-${task.id}`}
+              >
+                <MoreVert fontSize="small" />
+              </IconButton>
+            </Tooltip>
+
+            <Menu
+              anchorEl={taskOptionsAnchorEl}
+              open={Boolean(taskOptionsAnchorEl)}
+              onClose={handleCloseTaskOptions}
+              keepMounted
+            >
+              <MenuItem onClick={() => handleTaskOption(handleToggleParticipants)}>
+                <ListItemIcon>
+                  {hiddenParticipants ? (
+                    <Visibility fontSize="small" />
+                  ) : (
+                    <VisibilityOff fontSize="small" />
+                  )}
+                </ListItemIcon>
+                <ListItemText>{participantsToggleLabel}</ListItemText>
+              </MenuItem>
+              <MenuItem onClick={() => handleTaskOption(() => onShiftTaskAllocations(task, "left"))}>
+                <ListItemIcon>
+                  <ArrowBack fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>Сдвинуть нагрузку влево</ListItemText>
+              </MenuItem>
+              <MenuItem onClick={() => handleTaskOption(() => onShiftTaskAllocations(task, "right"))}>
+                <ListItemIcon>
+                  <ArrowForward fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>Сдвинуть нагрузку вправо</ListItemText>
+              </MenuItem>
+
+              {!isPreview && (
+                <>
+                  <MenuItem onClick={() => handleTaskOption(() => onToggleJiraSelection(task))}>
+                    <ListItemIcon>
+                      <AddTask fontSize="small" color={isJiraSelected ? "success" : "inherit"} />
+                    </ListItemIcon>
+                    <ListItemText>
+                      {isJiraSelected ? "Убрать из корзины Jira" : "Добавить в корзину Jira"}
+                    </ListItemText>
+                  </MenuItem>
+                  {storyJiraIssue?.jiraIssueUrl ? (
+                    <MenuItem
+                      component="a"
+                      href={storyJiraIssue.jiraIssueUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={handleCloseTaskOptions}
+                    >
+                      <ListItemIcon>
+                        <OpenInNew fontSize="small" color="info" />
+                      </ListItemIcon>
+                      <ListItemText primary="Открыть Story в Jira" secondary={storyJiraIssue.jiraIssueKey} />
+                    </MenuItem>
+                  ) : (
+                    <MenuItem disabled>
+                      <ListItemIcon>
+                        <OpenInNew fontSize="small" />
+                      </ListItemIcon>
+                      <ListItemText>Story в Jira не заведена</ListItemText>
+                    </MenuItem>
+                  )}
+                  <MenuItem onClick={() => handleTaskOption(handleOpenJiraLinksDialog)}>
+                    <ListItemIcon>
+                      <LinkIcon fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText>Редактировать ссылки Jira</ListItemText>
+                  </MenuItem>
+                  <MenuItem onClick={() => handleTaskOption(() => onDuplicateTask(task))}>
+                    <ListItemIcon>
+                      <CopyAll fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText>Дублировать</ListItemText>
+                  </MenuItem>
+                  <MenuItem onClick={() => handleTaskOption(() => onOpenTaskHistory(task))}>
+                    <ListItemIcon>
+                      <History fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText>История изменений</ListItemText>
+                  </MenuItem>
+                  <MenuItem onClick={() => handleTaskOption(() => onMoveTask(task.id, "up"))}>
+                    <ListItemIcon>
+                      <ArrowUpward fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText>Переместить вверх</ListItemText>
+                  </MenuItem>
+                  <MenuItem onClick={() => handleTaskOption(() => onMoveTask(task.id, "down"))}>
+                    <ListItemIcon>
+                      <ArrowDownward fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText>Переместить вниз</ListItemText>
+                  </MenuItem>
+                </>
+              )}
+              <MenuItem onClick={() => handleTaskOption(() => onRemoveTask(task))}>
+                <ListItemIcon>
+                  <Delete fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>{isPreview ? "Убрать задачу из preview" : "Удалить задачу"}</ListItemText>
+              </MenuItem>
+            </Menu>
           </Stack>
         </Box>
       </Stack>
@@ -1484,6 +1628,111 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
             })
           )}
         </Menu>
+      )}
+
+      {!isPreview && (
+        <Dialog
+          open={jiraLinksDialogOpen}
+          onClose={handleCloseJiraLinksDialog}
+          fullWidth
+          maxWidth="md"
+        >
+          <DialogTitle>Ссылки Jira</DialogTitle>
+          <DialogContent>
+            <TableContainer sx={{ mt: 1, maxHeight: 520 }}>
+              <Table size="small" stickyHeader>
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ width: 220 }}>Участник</TableCell>
+                    <TableCell sx={{ width: 220 }}>Спринт</TableCell>
+                    <TableCell>Ссылка Jira</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 700 }}>Story</TableCell>
+                    <TableCell>—</TableCell>
+                    <TableCell>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Story"
+                        value={jiraStoryDraft}
+                        onChange={(event) => setJiraStoryDraft(event.target.value)}
+                        placeholder="https://jira.sberbank.ru/browse/PROJECT-123"
+                      />
+                    </TableCell>
+                  </TableRow>
+                  {participantRows.length === 0 || jiraLinkSprints.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={3}>
+                        <Typography variant="body2" color="text.secondary">
+                          Для участнических задач нет строк: добавьте участника и спринт в задачу.
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    participantRows.flatMap((participant) =>
+                      jiraLinkSprints.map((sprint) => {
+                        const key = jiraLinkKey(participant.id, sprint.id);
+                        const sprintLabel = `${moment(sprint.startDate).format("DD.MM.YYYY")} — ${moment(
+                          sprint.endDate
+                        ).format("DD.MM.YYYY")}`;
+                        return (
+                          <TableRow key={key}>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                {participant.fullName}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {participant.role}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                {sprintLabel}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {sprint.name}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Jira"
+                                value={jiraLinkDrafts[key] || ""}
+                                onChange={(event) =>
+                                  setJiraLinkDrafts((prev) => ({
+                                    ...prev,
+                                    [key]: event.target.value,
+                                  }))
+                                }
+                                placeholder="https://jira.sberbank.ru/browse/PROJECT-123"
+                              />
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleCloseJiraLinksDialog} disabled={isSavingJiraLinks}>
+              Отмена
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleSaveJiraLinks}
+              disabled={isSavingJiraLinks}
+            >
+              {isSavingJiraLinks ? "Сохранение..." : "Сохранить"}
+            </Button>
+          </DialogActions>
+        </Dialog>
       )}
 
       <Dialog open={Boolean(noteParticipant)} onClose={handleCloseNote} fullWidth>

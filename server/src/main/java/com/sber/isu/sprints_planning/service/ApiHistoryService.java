@@ -13,7 +13,9 @@ import com.sber.isu.sprints_planning.repository.TeamRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -135,7 +137,7 @@ public class ApiHistoryService {
             orderedSessions.put(sessionKey(summary.getSessionId(), summary.getUserName()), new SessionSummary(
                 summary.getSessionId(),
                 summary.getUserName(),
-                summary.getLatestCreatedAt()
+                toOffsetDateTime(summary.getLatestCreatedAt())
             ));
         }
         List<ApiCallHistoryEntity> actions = historyRepository.findActionHistoryByTeamKeyAndSessionIds(
@@ -268,6 +270,10 @@ public class ApiHistoryService {
             logger.warn("Failed to decode user name header", ex);
             return rawHeader;
         }
+    }
+
+    private OffsetDateTime toOffsetDateTime(Instant value) {
+        return value == null ? null : OffsetDateTime.ofInstant(value, ZoneOffset.UTC);
     }
 
     private ApiSessionHistoryDto toSessionDto(SessionSummary summary, List<ApiCallHistoryEntity> entities) {

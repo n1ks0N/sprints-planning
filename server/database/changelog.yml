@@ -50,6 +50,3 @@ databaseChangeLog:
   - include:
       file: 1.0.0/1.0.0_19_jira_story_and_projects.sql
       relativeToChangelogFile: true
-  - include:
-      file: 1.0.0/1.0.0_20_half_days.sql
-      relativeToChangelogFile: true
