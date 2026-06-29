@@ -13,6 +13,9 @@ This directory is the top-level documentation entry point for the project.
 - `docs/database-normalization-roadmap.md`
   Roadmap for improving the database schema toward stronger normal forms, stricter constraints, and safer planning data persistence.
 
+- `docs/api-performance-optimization-plan.md`
+  Detailed plan for measuring and improving API latency, database query performance, payload size, and frontend cache/refetch behavior.
+
 - `server/docs/README.md`
   Backend documentation index.
 

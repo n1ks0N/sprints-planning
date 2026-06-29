@@ -55,6 +55,28 @@ type StoredPlanningFilters = {
   sortDirection: SortDirection;
 };
 
+type PlanningBacklogQueryArgs = {
+  sortBy?: string;
+  sortDirection?: string;
+  page?: number;
+  size?: number;
+  quarterIds?: string[];
+  priority?: string[];
+  releaseDateId?: string;
+  streams?: string[];
+  customers?: string[];
+  search?: string;
+  withoutStream?: boolean;
+  withoutCustomer?: boolean;
+};
+
+type PlanningBacklogFetchPage = {
+  content?: PlanningWorkbenchItem[];
+  page?: {
+    totalPages?: number;
+  };
+};
+
 const defaultPlanningFilters = (): StoredPlanningFilters => ({
   quarterFilterIds: [],
   priorityFilterValues: [],
@@ -69,6 +91,30 @@ const defaultPlanningFilters = (): StoredPlanningFilters => ({
 
 const planningFiltersStorageKey = (teamKey: string) =>
   `${PLANNING_FILTERS_STORAGE_KEY_PREFIX}:${teamKey || "default"}`;
+
+const buildPlanningBacklogSearchParams = (args: PlanningBacklogQueryArgs) => {
+  const params = new URLSearchParams();
+  const appendArray = (key: string, values?: string[]) => {
+    if (values && values.length > 0) {
+      params.set(key, values.join(","));
+    }
+  };
+
+  if (args.sortBy) params.set("sortBy", args.sortBy);
+  if (args.sortDirection) params.set("sortDirection", args.sortDirection);
+  if (typeof args.page === "number") params.set("page", String(args.page));
+  if (typeof args.size === "number") params.set("size", String(args.size));
+  appendArray("quarterIds", args.quarterIds);
+  appendArray("priority", args.priority);
+  if (args.releaseDateId) params.set("releaseDateId", args.releaseDateId);
+  appendArray("streams", args.streams);
+  appendArray("customers", args.customers);
+  if (args.search) params.set("search", args.search);
+  if (args.withoutStream) params.set("withoutStream", "true");
+  if (args.withoutCustomer) params.set("withoutCustomer", "true");
+
+  return params;
+};
 
 const readStringArray = (value: unknown): string[] =>
   Array.isArray(value)
@@ -228,6 +274,7 @@ export default function PlanningWorkbenchPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [dialogItem, setDialogItem] = React.useState<PlanningWorkbenchItem | null>(null);
   const [selectAfterSubmit, setSelectAfterSubmit] = React.useState(false);
+  const [isAddingAllToPlan, setIsAddingAllToPlan] = React.useState(false);
   const [quarterFilterIds, setQuarterFilterIds] = React.useState<string[]>(initialStoredFilters.quarterFilterIds);
   const [priorityFilterValues, setPriorityFilterValues] = React.useState<string[]>(initialStoredFilters.priorityFilterValues);
   const [releaseFilterValue, setReleaseFilterValue] = React.useState(initialStoredFilters.releaseFilterValue);
@@ -524,13 +571,63 @@ export default function PlanningWorkbenchPage() {
     });
   }, []);
 
-  const handleMoveAllToPlan = React.useCallback(() => {
-    setSelectedItemIds((prev) => {
-      const next = new Set(prev);
-      backlog.forEach((item) => next.add(item.id));
-      return Array.from(next);
-    });
-  }, [backlog]);
+  const fetchAllFilteredPlanningItems = React.useCallback(async () => {
+    const baseUrl = process.env.API_URL || "/api/v1/sprints-planning";
+    const pageSize = 200;
+    const items: PlanningWorkbenchItem[] = [];
+    let page = 0;
+    let totalPages = 1;
+
+    while (page < totalPages) {
+      const params = buildPlanningBacklogSearchParams({
+        ...planningBacklogQueryArgs,
+        page,
+        size: pageSize,
+      });
+      const response = await fetch(
+        `${baseUrl}/${teamKey}/planning-workbench/backlog?${params.toString()}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Не удалось загрузить задачи планирования по текущим фильтрам");
+      }
+
+      const data = (await response.json()) as PlanningBacklogFetchPage;
+      const pageItems = Array.isArray(data.content) ? data.content : [];
+      items.push(...pageItems);
+
+      const reportedTotalPages = Number(data.page?.totalPages || 0);
+      totalPages = reportedTotalPages > 0 ? reportedTotalPages : page + 1;
+      page += 1;
+    }
+
+    return items;
+  }, [planningBacklogQueryArgs, teamKey]);
+
+  const handleMoveAllToPlan = React.useCallback(async () => {
+    setError("");
+    setIsAddingAllToPlan(true);
+    try {
+      const items =
+        totalBacklogCount > backlog.length
+          ? await fetchAllFilteredPlanningItems()
+          : backlog;
+      setItemCacheById((prev) => {
+        const next = new Map(prev);
+        items.forEach((item) => next.set(item.id, item));
+        return next;
+      });
+      setSelectedItemIds((prev) => {
+        const next = new Set(prev);
+        items.forEach((item) => next.add(item.id));
+        return Array.from(next);
+      });
+    } catch (err: any) {
+      setError(String(err?.message || "Не удалось загрузить все задачи по текущим фильтрам"));
+    } finally {
+      setIsAddingAllToPlan(false);
+    }
+  }, [backlog, fetchAllFilteredPlanningItems, totalBacklogCount]);
 
   const handleClearPlan = React.useCallback(() => {
     setSelectedItemIds([]);
@@ -817,12 +914,12 @@ export default function PlanningWorkbenchPage() {
                 <Chip label={`${sortedAvailableItems.length}`} color="primary" size="small" data-testid="planning-backlog-count" />
                 <Button
                   variant="outlined"
-                  startIcon={<ArrowForward />}
+                  startIcon={isAddingAllToPlan ? <CircularProgress size={16} color="inherit" /> : <ArrowForward />}
                   onClick={handleMoveAllToPlan}
-                  disabled={sortedAvailableItems.length === 0}
+                  disabled={totalBacklogCount === 0 || isAddingAllToPlan}
                   data-testid="planning-move-all-to-plan"
                 >
-                  Все в план
+                  {isAddingAllToPlan ? "Добавляем..." : `Все в план (${totalBacklogCount || sortedAvailableItems.length})`}
                 </Button>
                 <Button
                   variant="outlined"

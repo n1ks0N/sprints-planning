@@ -58,22 +58,8 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
 
     @Override
     public PlanningSolverResult solve(PlanningSolverInput input) {
-        try {
-            loadNativeLibraries();
-        } catch (RuntimeException | LinkageError exception) {
-            return appendWarning(
-                solveWithHeuristicInternal(input),
-                "CP-SAT solver недоступен, использован эвристический fallback: " + sanitizeWarning(exception.getMessage())
-            );
-        }
-        try {
-            return solveWithCpSatInternal(input);
-        } catch (LinkageError exception) {
-            return appendWarning(
-                solveWithHeuristicInternal(input),
-                "CP-SAT solver недоступен, использован эвристический fallback: " + sanitizeWarning(exception.getMessage())
-            );
-        }
+        loadNativeLibraries();
+        return solveWithCpSatInternal(input);
     }
 
     protected void loadNativeLibraries() {
@@ -82,10 +68,6 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
 
     protected PlanningSolverResult solveWithCpSatInternal(PlanningSolverInput input) {
         return solveWithCpSat(input);
-    }
-
-    protected PlanningSolverResult solveWithHeuristicInternal(PlanningSolverInput input) {
-        return solveWithHeuristic(input);
     }
 
     private PlanningSolverResult solveWithCpSat(PlanningSolverInput input) {
@@ -97,51 +79,55 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
 
         List<String> warnings = new ArrayList<>();
         Map<String, Map<String, Map<String, BigDecimal>>> allocations = new LinkedHashMap<>();
-        List<PreparedTask> preparedTasks = new ArrayList<>();
-        int guaranteedUnplannedDays = 0;
+        List<AggregatePart> parts = new ArrayList<>();
         int totalRequestedDays = 0;
         Map<String, Integer> sprintChronologyIndex = buildSprintChronologyIndex(input.sprints());
 
         for (PlanningDraftTask task : orderTasksByPlanningPriority(input.tasks())) {
             allocations.computeIfAbsent(task.taskId(), ignored -> new LinkedHashMap<>());
             totalRequestedDays += Math.max(0, task.estimateDays());
-            PreparedTask prepared = prepareTask(task, input, sprintsById, participantsById, warnings);
-            if (prepared == null) {
-                guaranteedUnplannedDays += Math.max(0, task.estimateDays());
-                continue;
-            }
-            preparedTasks.add(prepared);
+            parts.addAll(prepareAggregateParts(task, input, sprintsById, participantsById, warnings));
         }
 
-        if (preparedTasks.isEmpty()) {
+        if (parts.isEmpty()) {
+            int unplannedDays = input.tasks().stream()
+                .mapToInt(task -> Math.max(0, task.estimateDays()))
+                .sum();
             return new PlanningSolverResult(
                 type(),
                 allocations,
                 warnings,
                 BigDecimal.ZERO,
-                BigDecimal.valueOf(guaranteedUnplannedDays)
+                BigDecimal.valueOf(unplannedDays)
             );
         }
 
         CpModel model = new CpModel();
         LinearExprBuilder objective = LinearExpr.newBuilder();
-        Map<String, Map<String, List<BoolVar>>> participantSprintAssignments = new LinkedHashMap<>();
-        Map<String, Map<String, List<BoolVar>>> strictParticipantSprintAssignments = new LinkedHashMap<>();
-        List<ModelTaskState> taskStates = new ArrayList<>();
+        Map<String, Map<String, List<IntVar>>> participantSprintAssignments = new LinkedHashMap<>();
+        Map<String, Map<String, List<IntVar>>> strictParticipantSprintAssignments = new LinkedHashMap<>();
+        List<AggregatePartState> partStates = new ArrayList<>();
 
-        for (PreparedTask task : preparedTasks) {
-            taskStates.add(buildTaskModel(model, task, objective, participantSprintAssignments, strictParticipantSprintAssignments,
+        for (AggregatePart part : parts) {
+            AggregatePartState state = buildAggregatePartModel(
+                model,
+                part,
+                objective,
+                participantSprintAssignments,
+                strictParticipantSprintAssignments,
                 input.committedLoadByParticipantAndSprint(),
                 participantsById,
-                sprintChronologyIndex));
+                sprintChronologyIndex
+            );
+            partStates.add(state);
         }
-        addDemandOrderConstraints(model, taskStates);
+        addAggregateOrderConstraints(model, partStates, sprintChronologyIndex.size());
 
         long overloadUpperBound = Math.max(1, totalRequestedDays);
         for (ParticipantEntity participant : input.participants()) {
             String participantId = participant.getId().toString();
             for (SprintEntity sprint : input.sprints()) {
-                List<BoolVar> assignments = participantSprintAssignments
+                List<IntVar> assignments = participantSprintAssignments
                     .getOrDefault(participantId, Map.of())
                     .getOrDefault(sprint.getId().toString(), List.of());
                 if (assignments.isEmpty()) {
@@ -149,7 +135,7 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
                 }
                 int remainingCapacity = remainingCapacityWholeDays(participant, sprint, input.committedLoadByParticipantAndSprint(),
                     input.normFactor());
-                List<BoolVar> strictAssignments = strictParticipantSprintAssignments
+                List<IntVar> strictAssignments = strictParticipantSprintAssignments
                     .getOrDefault(participantId, Map.of())
                     .getOrDefault(sprint.getId().toString(), List.of());
                 if (!strictAssignments.isEmpty()) {
@@ -188,35 +174,31 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
         }
 
         int plannedDays = 0;
-        int unplannedDays = guaranteedUnplannedDays;
-        for (ModelTaskState taskState : taskStates) {
-            Map<String, Map<String, BigDecimal>> taskAllocation = new LinkedHashMap<>();
-            int taskPlannedDays = 0;
-            for (ModelDay day : taskState.days()) {
-                if (solver.booleanValue(day.unplanned())) {
+        int unplannedDays = 0;
+        Map<String, Integer> unplannedByTask = new LinkedHashMap<>();
+        for (AggregatePartState partState : partStates) {
+            Map<String, Map<String, BigDecimal>> partAllocation = new LinkedHashMap<>();
+            int partPlannedDays = 0;
+            for (AggregateAssignment assignment : partState.assignments()) {
+                long value = solver.value(assignment.days());
+                if (value <= 0) {
                     continue;
                 }
-                boolean assigned = false;
-                for (DayOption option : day.options()) {
-                    if (!solver.booleanValue(option.literal())) {
-                        continue;
-                    }
-                    taskAllocation.computeIfAbsent(option.participantId(), key -> new LinkedHashMap<>())
-                        .merge(option.sprintId(), BigDecimal.ONE, BigDecimal::add);
-                    taskPlannedDays += 1;
-                    plannedDays += 1;
-                    assigned = true;
-                    break;
-                }
-                if (!assigned) {
-                    unplannedDays += 1;
-                }
+                int days = Math.toIntExact(value);
+                partAllocation.computeIfAbsent(assignment.participantId(), key -> new LinkedHashMap<>())
+                    .merge(assignment.sprintId(), BigDecimal.valueOf(days), BigDecimal::add);
+                partPlannedDays += days;
             }
-            int taskUnplannedDays = Math.max(0, taskState.task().task().estimateDays() - taskPlannedDays);
-            unplannedDays += taskUnplannedDays;
-            mergeTaskAllocation(allocations, taskState.task().task().taskId(), taskAllocation);
+            int partUnplannedDays = Math.toIntExact(solver.value(partState.unplanned()));
+            plannedDays += partPlannedDays;
+            unplannedDays += partUnplannedDays;
+            unplannedByTask.merge(partState.part().task().taskId(), partUnplannedDays, Integer::sum);
+            mergeTaskAllocation(allocations, partState.part().task().taskId(), partAllocation);
+        }
+        for (PlanningDraftTask task : input.tasks()) {
+            int taskUnplannedDays = unplannedByTask.getOrDefault(task.taskId(), 0);
             if (taskUnplannedDays > 0) {
-                warnings.add("Задача '" + taskState.task().task().title() + "' не распределена полностью: "
+                warnings.add("Задача '" + task.title() + "' не распределена полностью: "
                     + taskUnplannedDays + " дн.");
             }
         }
@@ -230,187 +212,7 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
         );
     }
 
-    private ModelTaskState buildTaskModel(
-        CpModel model,
-        PreparedTask preparedTask,
-        LinearExprBuilder objective,
-        Map<String, Map<String, List<BoolVar>>> participantSprintAssignments,
-        Map<String, Map<String, List<BoolVar>>> strictParticipantSprintAssignments,
-        Map<String, Map<String, BigDecimal>> committedLoadByParticipantAndSprint,
-        Map<String, ParticipantEntity> participantsById,
-        Map<String, Integer> sprintChronologyIndex
-    ) {
-        List<ModelDay> days = new ArrayList<>();
-        Map<Integer, List<BoolVar>> slotUsage = new LinkedHashMap<>();
-        Map<String, List<BoolVar>> sprintUsage = new LinkedHashMap<>();
-        Map<String, List<BoolVar>> participantUsage = new LinkedHashMap<>();
-
-        for (TaskSlot slot : preparedTask.slots()) {
-            slotUsage.put(slot.index(), new ArrayList<>());
-        }
-
-        for (int dayIndex = 0; dayIndex < preparedTask.days().size(); dayIndex++) {
-            PreparedDay day = preparedTask.days().get(dayIndex);
-            BoolVar unplanned = model.newBoolVar(dayPrefix(preparedTask.task().taskId(), dayIndex) + "_unplanned");
-            IntVar slotIndex = model.newIntVar(0, preparedTask.slots().size(),
-                dayPrefix(preparedTask.task().taskId(), dayIndex) + "_slot");
-            int unplannedSprintOrder = sprintChronologyIndex.size();
-            IntVar sprintOrder = model.newIntVar(0, unplannedSprintOrder,
-                dayPrefix(preparedTask.task().taskId(), dayIndex) + "_sprint_order");
-            List<DayOption> options = new ArrayList<>();
-
-            if (preparedTask.specificParticipants()) {
-                String participantId = day.candidateParticipantIds().get(0);
-                BoolVar[] slotChoices = new BoolVar[preparedTask.slots().size() + 1];
-                LinearExprBuilder sprintOrderExpr = LinearExpr.newBuilder();
-                for (TaskSlot slot : preparedTask.slots()) {
-                    BoolVar choice = model.newBoolVar(dayPrefix(preparedTask.task().taskId(), dayIndex) + "_slot_" + slot.index());
-                    slotChoices[slot.index()] = choice;
-                    sprintOrderExpr.addTerm(choice, sprintChronologyIndex.getOrDefault(slot.sprintId(), unplannedSprintOrder));
-                    options.add(new DayOption(choice, participantId, slot.sprintId(), slot.index()));
-                    slotUsage.get(slot.index()).add(choice);
-                    sprintUsage.computeIfAbsent(slot.sprintId(), key -> new ArrayList<>()).add(choice);
-                    participantSprintAssignments
-                        .computeIfAbsent(participantId, key -> new LinkedHashMap<>())
-                        .computeIfAbsent(slot.sprintId(), key -> new ArrayList<>())
-                        .add(choice);
-                    if (!allowsOverload(preparedTask.task().priority())) {
-                        strictParticipantSprintAssignments
-                            .computeIfAbsent(participantId, key -> new LinkedHashMap<>())
-                            .computeIfAbsent(slot.sprintId(), key -> new ArrayList<>())
-                            .add(choice);
-                    }
-                    objective.addTerm(choice, assignmentCost(preparedTask.task(), slot, participantId,
-                        committedLoadByParticipantAndSprint, participantsById, false));
-                }
-                slotChoices[preparedTask.slots().size()] = unplanned;
-                sprintOrderExpr.addTerm(unplanned, unplannedSprintOrder);
-                model.addExactlyOne(slotChoices);
-                model.addMapDomain(slotIndex, slotChoices, 0);
-                model.addEquality(sprintOrder, sprintOrderExpr.build());
-            } else {
-                BoolVar[] slotPresence = new BoolVar[preparedTask.slots().size() + 1];
-                LinearExprBuilder sprintOrderExpr = LinearExpr.newBuilder();
-                for (TaskSlot slot : preparedTask.slots()) {
-                    BoolVar presentInSlot = model.newBoolVar(dayPrefix(preparedTask.task().taskId(), dayIndex) + "_slot_" + slot.index());
-                    slotPresence[slot.index()] = presentInSlot;
-                    sprintOrderExpr.addTerm(presentInSlot, sprintChronologyIndex.getOrDefault(slot.sprintId(), unplannedSprintOrder));
-                    List<BoolVar> participantChoices = new ArrayList<>();
-                    for (String participantId : day.candidateParticipantIds()) {
-                        BoolVar choice = model.newBoolVar(dayPrefix(preparedTask.task().taskId(), dayIndex)
-                            + "_p_" + sanitizeId(participantId) + "_slot_" + slot.index());
-                        participantChoices.add(choice);
-                        options.add(new DayOption(choice, participantId, slot.sprintId(), slot.index()));
-                        slotUsage.get(slot.index()).add(choice);
-                        sprintUsage.computeIfAbsent(slot.sprintId(), key -> new ArrayList<>()).add(choice);
-                        participantUsage.computeIfAbsent(participantId, key -> new ArrayList<>()).add(choice);
-                        participantSprintAssignments
-                            .computeIfAbsent(participantId, key -> new LinkedHashMap<>())
-                            .computeIfAbsent(slot.sprintId(), key -> new ArrayList<>())
-                            .add(choice);
-                        if (!allowsOverload(preparedTask.task().priority())) {
-                            strictParticipantSprintAssignments
-                                .computeIfAbsent(participantId, key -> new LinkedHashMap<>())
-                                .computeIfAbsent(slot.sprintId(), key -> new ArrayList<>())
-                                .add(choice);
-                        }
-                        objective.addTerm(choice,
-                            assignmentCost(preparedTask.task(), slot, participantId, committedLoadByParticipantAndSprint, participantsById,
-                                true));
-                    }
-                    model.addEquality(LinearExpr.sum(participantChoices.toArray(LinearArgument[]::new)), presentInSlot);
-                }
-                slotPresence[preparedTask.slots().size()] = unplanned;
-                sprintOrderExpr.addTerm(unplanned, unplannedSprintOrder);
-                model.addExactlyOne(slotPresence);
-                model.addMapDomain(slotIndex, slotPresence, 0);
-                model.addEquality(sprintOrder, sprintOrderExpr.build());
-            }
-
-            objective.addTerm(unplanned, preparedTask.unplannedPenalty());
-            days.add(new ModelDay(unplanned, slotIndex, sprintOrder, options));
-        }
-
-        for (List<BoolVar> slotAssignments : slotUsage.values()) {
-            if (slotAssignments.size() > 1) {
-                model.addAtMostOne(slotAssignments.toArray(BoolVar[]::new));
-            }
-        }
-
-        for (int index = 0; index < days.size() - 1; index++) {
-            model.addLessOrEqual(days.get(index).slotIndex(), days.get(index + 1).slotIndex());
-        }
-
-        addSprintFragmentationPenalty(model, objective, preparedTask, sprintUsage);
-        if (!preparedTask.specificParticipants()) {
-            addParticipantFragmentationPenalty(model, objective, preparedTask, participantUsage);
-        }
-
-        return new ModelTaskState(preparedTask, days);
-    }
-
-    private void addDemandOrderConstraints(CpModel model, List<ModelTaskState> taskStates) {
-        Map<String, List<ModelTaskState>> byTaskId = taskStates.stream()
-            .collect(Collectors.groupingBy(
-                state -> state.task().task().taskId(),
-                LinkedHashMap::new,
-                Collectors.toCollection(ArrayList::new)
-            ));
-        byTaskId.values().forEach(states -> {
-            states.sort(Comparator.comparingInt(state -> state.task().task().demandOrder()));
-            for (int index = 0; index < states.size() - 1; index += 1) {
-                ModelTaskState previous = states.get(index);
-                ModelTaskState next = states.get(index + 1);
-                if (previous.task().task().demandOrder() >= next.task().task().demandOrder()) {
-                    continue;
-                }
-                for (ModelDay previousDay : previous.days()) {
-                    for (ModelDay nextDay : next.days()) {
-                        model.addLessOrEqual(previousDay.sprintOrder(), nextDay.sprintOrder());
-                    }
-                }
-            }
-        });
-    }
-
-    private void addSprintFragmentationPenalty(
-        CpModel model,
-        LinearExprBuilder objective,
-        PreparedTask task,
-        Map<String, List<BoolVar>> sprintUsage
-    ) {
-        for (Map.Entry<String, List<BoolVar>> entry : sprintUsage.entrySet()) {
-            if (entry.getValue().isEmpty()) {
-                continue;
-            }
-            BoolVar used = model.newBoolVar("task_" + sanitizeId(task.task().taskId()) + "_sprint_" + sanitizeId(entry.getKey()) + "_used");
-            LinearExpr load = LinearExpr.sum(entry.getValue().toArray(LinearArgument[]::new));
-            model.addGreaterOrEqual(load, used);
-            model.addLessOrEqual(load, LinearExpr.term(used, task.days().size()));
-            objective.addTerm(used, task.sprintFragmentPenalty());
-        }
-    }
-
-    private void addParticipantFragmentationPenalty(
-        CpModel model,
-        LinearExprBuilder objective,
-        PreparedTask task,
-        Map<String, List<BoolVar>> participantUsage
-    ) {
-        for (Map.Entry<String, List<BoolVar>> entry : participantUsage.entrySet()) {
-            if (entry.getValue().isEmpty()) {
-                continue;
-            }
-            BoolVar used = model.newBoolVar(
-                "task_" + sanitizeId(task.task().taskId()) + "_participant_" + sanitizeId(entry.getKey()) + "_used");
-            LinearExpr load = LinearExpr.sum(entry.getValue().toArray(LinearArgument[]::new));
-            model.addGreaterOrEqual(load, used);
-            model.addLessOrEqual(load, LinearExpr.term(used, task.days().size()));
-            objective.addTerm(used, task.participantFragmentPenalty());
-        }
-    }
-
-    private PreparedTask prepareTask(
+    private List<AggregatePart> prepareAggregateParts(
         PlanningDraftTask task,
         PlanningSolverInput input,
         Map<String, SprintEntity> sprintsById,
@@ -419,26 +221,25 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
     ) {
         int estimateDays = Math.max(0, task.estimateDays());
         if (estimateDays <= 0) {
-            return null;
+            return List.of();
         }
 
         List<SprintEntity> allowedSprints = task.allowedSprintIds().stream()
             .map(sprintsById::get)
             .filter(Objects::nonNull)
             .sorted(Comparator.comparing(SprintEntity::getStartDate).thenComparingInt(SprintEntity::getOrder))
+            .filter(sprint -> releaseWindowDays(sprint, task.releasePromDate()) > 0)
             .toList();
         if (allowedSprints.isEmpty()) {
-            warnings.add("Задача '" + task.title() + "' не имеет доступных спринтов");
-            return null;
+            List<SprintEntity> knownSprints = task.allowedSprintIds().stream()
+                .map(sprintsById::get)
+                .filter(Objects::nonNull)
+                .toList();
+            warnings.add("Задача '" + task.title() + "' "
+                + (knownSprints.isEmpty() ? "не имеет доступных спринтов" : "не имеет доступных рабочих дней до релиза"));
+            return List.of();
         }
 
-        List<TaskSlot> slots = buildTaskSlots(allowedSprints, task);
-        if (slots.isEmpty()) {
-            warnings.add("Задача '" + task.title() + "' не имеет доступных рабочих дней до релиза");
-            return null;
-        }
-
-        List<PreparedDay> days = new ArrayList<>(estimateDays);
         boolean specific = ASSIGNMENT_MODE_SPECIFIC_PARTICIPANTS.equalsIgnoreCase(task.assignmentMode());
         if (specific) {
             List<String> orderedParticipants = task.orderedParticipantIds().stream()
@@ -446,60 +247,236 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
                 .toList();
             if (orderedParticipants.isEmpty()) {
                 warnings.add("Задача '" + task.title() + "' не имеет доступных участников");
-                return null;
+                return List.of();
             }
             int[] quotas = splitEvenly(estimateDays, orderedParticipants.size());
+            List<AggregatePart> parts = new ArrayList<>();
             for (int index = 0; index < orderedParticipants.size(); index++) {
-                for (int day = 0; day < quotas[index]; day++) {
-                    days.add(new PreparedDay(List.of(orderedParticipants.get(index))));
+                if (quotas[index] <= 0) {
+                    continue;
                 }
-            }
-        } else {
-            List<String> candidates = input.participants().stream()
-                .filter(participant -> roleMatches(task.role(), participant.getRole()))
-                .filter(participant -> streamMatches(task.stream(), participant.getUserStreams()))
-                .map(participant -> participant.getId().toString())
-                .toList();
-            if (candidates.isEmpty()) {
-                warnings.add("Задача '" + task.title() + "' не имеет доступных участников по роли/стриму");
-                return null;
-            }
-            for (int day = 0; day < estimateDays; day++) {
-                days.add(new PreparedDay(candidates));
-            }
-        }
-
-        return new PreparedTask(
-            task,
-            slots,
-            days,
-            specific,
-            unplannedPenalty(task.priority()),
-            sprintFragmentPenalty(task.priority()),
-            participantFragmentPenalty(task.priority())
-        );
-    }
-
-    private List<TaskSlot> buildTaskSlots(List<SprintEntity> allowedSprints, PlanningDraftTask task) {
-        List<TaskSlot> slots = new ArrayList<>();
-        int absoluteIndex = 0;
-        for (SprintEntity sprint : allowedSprints) {
-            int availableDays = releaseWindowDays(sprint, task.releasePromDate());
-            for (int dayIndex = 0; dayIndex < availableDays; dayIndex++) {
-                slots.add(new TaskSlot(
-                    absoluteIndex++,
-                    sprint.getId().toString(),
-                    approximateWorkingDate(sprint, dayIndex, availableDays)
+                parts.add(new AggregatePart(
+                    task,
+                    task.taskId() + ":" + task.demandOrder() + ":" + index,
+                    quotas[index],
+                    List.of(orderedParticipants.get(index)),
+                    allowedSprints,
+                    true,
+                    task.demandOrder(),
+                    index
                 ));
             }
+            return parts;
         }
-        return slots;
+
+        List<String> candidates = input.participants().stream()
+            .filter(participant -> roleMatches(task.role(), participant.getRole()))
+            .filter(participant -> streamMatches(task.stream(), participant.getUserStreams()))
+            .map(participant -> participant.getId().toString())
+            .toList();
+        if (candidates.isEmpty()) {
+            warnings.add("Задача '" + task.title() + "' не имеет доступных участников по роли/стриму");
+            return List.of();
+        }
+        return List.of(new AggregatePart(
+            task,
+            task.taskId() + ":" + task.demandOrder(),
+            estimateDays,
+            candidates,
+            allowedSprints,
+            false,
+            task.demandOrder(),
+            0
+        ));
     }
 
-    private PlanningSolverResult appendWarning(PlanningSolverResult base, String warning) {
-        List<String> warnings = new ArrayList<>(base.warnings());
-        warnings.add(warning);
-        return new PlanningSolverResult(base.plannerType(), base.taskAllocations(), warnings, base.plannedDays(), base.unplannedDays());
+    private AggregatePartState buildAggregatePartModel(
+        CpModel model,
+        AggregatePart part,
+        LinearExprBuilder objective,
+        Map<String, Map<String, List<IntVar>>> participantSprintAssignments,
+        Map<String, Map<String, List<IntVar>>> strictParticipantSprintAssignments,
+        Map<String, Map<String, BigDecimal>> committedLoadByParticipantAndSprint,
+        Map<String, ParticipantEntity> participantsById,
+        Map<String, Integer> sprintChronologyIndex
+    ) {
+        List<AggregateAssignment> assignments = new ArrayList<>();
+        Map<String, List<IntVar>> sprintLoads = new LinkedHashMap<>();
+        Map<String, List<IntVar>> participantLoads = new LinkedHashMap<>();
+        int sprintCount = sprintChronologyIndex.size();
+        IntVar unplanned = model.newIntVar(0, part.requiredDays(), aggregatePrefix(part) + "_unplanned");
+        BoolVar unplannedUsed = model.newBoolVar(aggregatePrefix(part) + "_unplanned_used");
+        model.addLessOrEqual(unplanned, LinearExpr.term(unplannedUsed, part.requiredDays()));
+        model.addGreaterOrEqual(unplanned, unplannedUsed);
+        LinearExprBuilder requiredExpr = LinearExpr.newBuilder();
+        requiredExpr.add(unplanned);
+        List<BoolVar> usedForOrder = new ArrayList<>();
+        List<Integer> orderForUsed = new ArrayList<>();
+        usedForOrder.add(unplannedUsed);
+        orderForUsed.add(sprintCount);
+
+        Map<String, Integer> sprintWindows = buildSprintWindows(part.allowedSprints(), part.task().releasePromDate());
+        for (SprintEntity sprint : part.allowedSprints()) {
+            String sprintId = sprint.getId().toString();
+            int sprintWindow = sprintWindows.getOrDefault(sprintId, 0);
+            if (sprintWindow <= 0) {
+                continue;
+            }
+            List<IntVar> partSprintLoads = new ArrayList<>();
+            for (String participantId : part.candidateParticipantIds()) {
+                IntVar days = model.newIntVar(0, Math.min(part.requiredDays(), sprintWindow),
+                    aggregatePrefix(part) + "_p_" + sanitizeId(participantId) + "_s_" + sanitizeId(sprintId));
+                assignments.add(new AggregateAssignment(days, participantId, sprintId));
+                requiredExpr.add(days);
+                partSprintLoads.add(days);
+                sprintLoads.computeIfAbsent(sprintId, key -> new ArrayList<>()).add(days);
+                participantLoads.computeIfAbsent(participantId, key -> new ArrayList<>()).add(days);
+                participantSprintAssignments
+                    .computeIfAbsent(participantId, key -> new LinkedHashMap<>())
+                    .computeIfAbsent(sprintId, key -> new ArrayList<>())
+                    .add(days);
+                if (!allowsOverload(part.task().priority())) {
+                    strictParticipantSprintAssignments
+                        .computeIfAbsent(participantId, key -> new LinkedHashMap<>())
+                        .computeIfAbsent(sprintId, key -> new ArrayList<>())
+                        .add(days);
+                }
+                objective.addTerm(days, aggregateAssignmentCost(
+                    part.task(),
+                    sprint,
+                    participantId,
+                    committedLoadByParticipantAndSprint,
+                    participantsById,
+                    sprintChronologyIndex,
+                    !part.specificParticipants()
+                ));
+            }
+            if (!partSprintLoads.isEmpty()) {
+                model.addLessOrEqual(LinearExpr.sum(partSprintLoads.toArray(LinearArgument[]::new)), sprintWindow);
+            }
+        }
+        model.addEquality(requiredExpr.build(), part.requiredDays());
+
+        List<AggregateUsedSprint> usedSprints = new ArrayList<>();
+        sprintLoads.forEach((sprintId, loads) -> {
+            BoolVar used = model.newBoolVar(aggregatePrefix(part) + "_sprint_" + sanitizeId(sprintId) + "_used");
+            LinearExpr load = LinearExpr.sum(loads.toArray(LinearArgument[]::new));
+            model.addGreaterOrEqual(load, used);
+            model.addLessOrEqual(load, LinearExpr.term(used, part.requiredDays()));
+            objective.addTerm(used, sprintFragmentPenalty(part.task().priority()));
+            usedSprints.add(new AggregateUsedSprint(sprintId, used));
+            usedForOrder.add(used);
+            orderForUsed.add(sprintChronologyIndex.getOrDefault(sprintId, sprintCount));
+        });
+
+        if (!part.specificParticipants()) {
+            participantLoads.forEach((participantId, loads) -> {
+                BoolVar used = model.newBoolVar(aggregatePrefix(part) + "_participant_" + sanitizeId(participantId) + "_used");
+                LinearExpr load = LinearExpr.sum(loads.toArray(LinearArgument[]::new));
+                model.addGreaterOrEqual(load, used);
+                model.addLessOrEqual(load, LinearExpr.term(used, part.requiredDays()));
+                objective.addTerm(used, participantFragmentPenalty(part.task().priority()));
+            });
+        }
+
+        objective.addTerm(unplanned, unplannedPenalty(part.task().priority()));
+        return new AggregatePartState(part, assignments, usedSprints, unplanned, unplannedUsed, usedForOrder, orderForUsed);
+    }
+
+    private void addAggregateOrderConstraints(
+        CpModel model,
+        List<AggregatePartState> partStates,
+        int unplannedOrder
+    ) {
+        Map<String, List<AggregatePartState>> byTaskId = partStates.stream()
+            .collect(Collectors.groupingBy(
+                state -> state.part().task().taskId(),
+                LinkedHashMap::new,
+                Collectors.toCollection(ArrayList::new)
+            ));
+        byTaskId.values().forEach(states -> {
+            states.sort(Comparator
+                .comparingInt((AggregatePartState state) -> state.part().demandOrder())
+                .thenComparingInt(state -> state.part().sequenceOrder()));
+            for (int leftIndex = 0; leftIndex < states.size() - 1; leftIndex += 1) {
+                AggregatePartState previous = states.get(leftIndex);
+                for (int rightIndex = leftIndex + 1; rightIndex < states.size(); rightIndex += 1) {
+                    AggregatePartState next = states.get(rightIndex);
+                    if (previous.part().demandOrder() == next.part().demandOrder()
+                        && previous.part().sequenceOrder() >= next.part().sequenceOrder()) {
+                        continue;
+                    }
+                    addAggregatePartBeforeConstraint(model, previous, next, unplannedOrder);
+                }
+            }
+        });
+    }
+
+    private void addAggregatePartBeforeConstraint(
+        CpModel model,
+        AggregatePartState previous,
+        AggregatePartState next,
+        int unplannedOrder
+    ) {
+        for (int left = 0; left < previous.usedForOrder().size(); left += 1) {
+            int previousOrder = previous.orderForUsed().get(left);
+            BoolVar previousUsed = previous.usedForOrder().get(left);
+            for (int right = 0; right < next.usedForOrder().size(); right += 1) {
+                int nextOrder = next.orderForUsed().get(right);
+                if (previousOrder <= nextOrder) {
+                    continue;
+                }
+                BoolVar nextUsed = next.usedForOrder().get(right);
+                model.addLessOrEqual(LinearExpr.sum(new LinearArgument[] { previousUsed, nextUsed }), 1);
+            }
+            if (previousOrder == unplannedOrder) {
+                for (int right = 0; right < next.usedForOrder().size(); right += 1) {
+                    if (next.orderForUsed().get(right) < unplannedOrder) {
+                        model.addLessOrEqual(LinearExpr.sum(new LinearArgument[] {
+                            previousUsed,
+                            next.usedForOrder().get(right)
+                        }), 1);
+                    }
+                }
+            }
+        }
+    }
+
+    private long aggregateAssignmentCost(
+        PlanningDraftTask task,
+        SprintEntity sprint,
+        String participantId,
+        Map<String, Map<String, BigDecimal>> committedLoadByParticipantAndSprint,
+        Map<String, ParticipantEntity> participantsById,
+        Map<String, Integer> sprintChronologyIndex,
+        boolean applyCommittedLoadBias
+    ) {
+        int urgency = priorityUrgency(task.priority());
+        int sprintOrder = sprintChronologyIndex.getOrDefault(sprint.getId().toString(), 0);
+        long cost = (long) (sprintOrder + 1) * Math.max(1, sprint.getWorkingDays()) * baseSlotWeight(task.priority());
+        LocalDate representativeDate = approximateWorkingDate(sprint, 0, Math.max(1, releaseWindowDays(sprint, task.releasePromDate())));
+        if (representativeDate != null) {
+            if (task.releaseRegressStart() != null && !representativeDate.isBefore(task.releaseRegressStart())) {
+                cost += REGRESS_START_PENALTY * urgency;
+            } else if (task.releaseIftStart() != null && !representativeDate.isBefore(task.releaseIftStart())) {
+                cost += IFT_START_PENALTY * urgency;
+            } else if (task.releaseDevEnd() != null && representativeDate.isAfter(task.releaseDevEnd())) {
+                cost += DEV_END_PENALTY * urgency;
+            }
+        }
+        if (applyCommittedLoadBias) {
+            cost += (long) getWholeDays(committedLoadByParticipantAndSprint, participantId, sprint.getId().toString())
+                * COMMITTED_LOAD_COST;
+        }
+        ParticipantEntity participant = participantsById.get(participantId);
+        if (participant != null) {
+            cost += Math.max(0, participant.getDisplayOrder());
+        }
+        return cost;
+    }
+
+    private String aggregatePrefix(AggregatePart part) {
+        return "part_" + sanitizeId(part.partKey());
     }
 
     private synchronized void ensureNativeLibrariesLoaded() {
@@ -507,36 +484,6 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
             Loader.loadNativeLibraries();
             nativeLibrariesLoaded = true;
         }
-    }
-
-    private long assignmentCost(
-        PlanningDraftTask task,
-        TaskSlot slot,
-        String participantId,
-        Map<String, Map<String, BigDecimal>> committedLoadByParticipantAndSprint,
-        Map<String, ParticipantEntity> participantsById,
-        boolean applyCommittedLoadBias
-    ) {
-        int urgency = priorityUrgency(task.priority());
-        long cost = (long) (slot.index() + 1) * baseSlotWeight(task.priority());
-        LocalDate slotDate = slot.approximateDate();
-        if (slotDate != null) {
-            if (task.releaseRegressStart() != null && !slotDate.isBefore(task.releaseRegressStart())) {
-                cost += REGRESS_START_PENALTY * urgency;
-            } else if (task.releaseIftStart() != null && !slotDate.isBefore(task.releaseIftStart())) {
-                cost += IFT_START_PENALTY * urgency;
-            } else if (task.releaseDevEnd() != null && slotDate.isAfter(task.releaseDevEnd())) {
-                cost += DEV_END_PENALTY * urgency;
-            }
-        }
-        if (applyCommittedLoadBias) {
-            cost += (long) getWholeDays(committedLoadByParticipantAndSprint, participantId, slot.sprintId()) * COMMITTED_LOAD_COST;
-        }
-        ParticipantEntity participant = participantsById.get(participantId);
-        if (participant != null) {
-            cost += Math.max(0, participant.getDisplayOrder());
-        }
-        return cost;
     }
 
     private int priorityUrgency(short priority) {
@@ -609,228 +556,8 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
         return sprint.getStartDate().plusDays(offset);
     }
 
-    private String sanitizeWarning(String message) {
-        if (message == null || message.isBlank()) {
-            return "неизвестная ошибка";
-        }
-        String normalized = message.replace('\n', ' ').replace('\r', ' ').trim();
-        return normalized.length() > 200 ? normalized.substring(0, 200) : normalized;
-    }
-
     private String sanitizeId(String raw) {
         return raw == null ? "unknown" : raw.replaceAll("[^A-Za-z0-9_]", "_");
-    }
-
-    private String dayPrefix(String taskId, int dayIndex) {
-        return "task_" + sanitizeId(taskId) + "_day_" + dayIndex;
-    }
-
-    private PlanningSolverResult solveWithHeuristic(PlanningSolverInput input) {
-        Map<String, SprintEntity> sprintsById = input.sprints().stream()
-            .collect(Collectors.toMap(s -> s.getId().toString(), s -> s, (left, right) -> left, LinkedHashMap::new));
-        Map<String, ParticipantEntity> participantsById = input.participants().stream()
-            .collect(Collectors.toMap(p -> p.getId().toString(), p -> p));
-        Map<String, Map<String, BigDecimal>> committed = deepCopy(input.committedLoadByParticipantAndSprint());
-        Map<String, Map<String, BigDecimal>> draftLoad = new LinkedHashMap<>();
-        Map<String, Map<String, Map<String, BigDecimal>>> allocations = new LinkedHashMap<>();
-        List<String> warnings = new ArrayList<>();
-        BigDecimal plannedDays = BigDecimal.ZERO;
-        BigDecimal unplannedDays = BigDecimal.ZERO;
-        Map<String, Integer> minDemandSprintIndexByTask = new LinkedHashMap<>();
-        Map<String, Integer> sprintChronologyIndex = buildSprintChronologyIndex(input.sprints());
-
-        List<PlanningDraftTask> tasks = orderTasksByPlanningPriority(input.tasks());
-
-        for (PlanningDraftTask task : tasks) {
-            int totalDays = Math.max(0, task.estimateDays());
-            if (totalDays <= 0) {
-                allocations.computeIfAbsent(task.taskId(), ignored -> new LinkedHashMap<>());
-                continue;
-            }
-            List<SprintEntity> allowedSprints = task.allowedSprintIds().stream()
-                .map(sprintsById::get)
-                .filter(Objects::nonNull)
-                .sorted(Comparator.comparing(SprintEntity::getStartDate).thenComparingInt(SprintEntity::getOrder))
-                .toList();
-            Integer minDemandSprintIndex = minDemandSprintIndexByTask.get(task.taskId());
-            if (minDemandSprintIndex != null) {
-                allowedSprints = allowedSprints.stream()
-                    .filter(sprint -> sprintChronologyIndex.getOrDefault(sprint.getId().toString(), Integer.MAX_VALUE) >= minDemandSprintIndex)
-                    .toList();
-            }
-            if (allowedSprints.isEmpty()) {
-                warnings.add("Задача '" + task.title() + "' не имеет доступных спринтов");
-                allocations.computeIfAbsent(task.taskId(), ignored -> new LinkedHashMap<>());
-                unplannedDays = unplannedDays.add(BigDecimal.valueOf(totalDays));
-                minDemandSprintIndexByTask.put(task.taskId(), Integer.MAX_VALUE);
-                continue;
-            }
-
-            Map<String, Map<String, BigDecimal>> taskAllocation;
-            if (ASSIGNMENT_MODE_SPECIFIC_PARTICIPANTS.equalsIgnoreCase(task.assignmentMode())) {
-                taskAllocation = allocateSequential(task, participantsById, allowedSprints, committed, draftLoad, input.normFactor());
-            } else {
-                taskAllocation = allocateByPool(task, participantsById, allowedSprints, committed, draftLoad, input.normFactor(),
-                    input.participants());
-            }
-            mergeTaskAllocation(allocations, task.taskId(), taskAllocation);
-
-            int taskPlanned = sumAllocationDays(taskAllocation);
-            plannedDays = plannedDays.add(BigDecimal.valueOf(taskPlanned));
-            int taskUnplanned = Math.max(0, totalDays - taskPlanned);
-            int maxSprintIndex = maxAllocatedSprintIndex(taskAllocation, sprintChronologyIndex);
-            if (taskUnplanned > 0 && taskPlanned == 0) {
-                minDemandSprintIndexByTask.put(task.taskId(), Integer.MAX_VALUE);
-            } else if (maxSprintIndex >= 0) {
-                minDemandSprintIndexByTask.put(task.taskId(), maxSprintIndex);
-            }
-            if (taskUnplanned > 0) {
-                warnings.add("Задача '" + task.title() + "' не распределена полностью: " + taskUnplanned + " дн.");
-                unplannedDays = unplannedDays.add(BigDecimal.valueOf(taskUnplanned));
-            }
-        }
-
-        return new PlanningSolverResult(type(), allocations, warnings, plannedDays, unplannedDays);
-    }
-
-    private Map<String, Map<String, BigDecimal>> allocateSequential(
-        PlanningDraftTask task,
-        Map<String, ParticipantEntity> participantsById,
-        List<SprintEntity> allowedSprints,
-        Map<String, Map<String, BigDecimal>> committed,
-        Map<String, Map<String, BigDecimal>> draftLoad,
-        double normFactor
-    ) {
-        List<String> orderedParticipants = task.orderedParticipantIds().stream()
-            .filter(participantsById::containsKey)
-            .toList();
-        if (orderedParticipants.isEmpty()) {
-            return Map.of();
-        }
-
-        int[] quotas = splitEvenly(task.estimateDays(), orderedParticipants.size());
-        Map<String, Map<String, BigDecimal>> result = new LinkedHashMap<>();
-        Map<String, Integer> sprintWindow = buildSprintWindows(allowedSprints, task.releasePromDate());
-        int nextParticipantCursor = 0;
-
-        for (int index = 0; index < orderedParticipants.size(); index++) {
-            String participantId = orderedParticipants.get(index);
-            ParticipantEntity participant = participantsById.get(participantId);
-            if (participant == null) {
-                continue;
-            }
-            int remaining = quotas[index];
-            Map<String, BigDecimal> row = new LinkedHashMap<>();
-            int participantCursor = nextParticipantCursor;
-            int lastOccupiedCursor = nextParticipantCursor;
-            int sprintStartOffset = 0;
-            for (SprintEntity sprint : allowedSprints) {
-                int sprintDays = sprintWindow.getOrDefault(sprint.getId().toString(), 0);
-                if (remaining <= 0 || sprintDays <= 0) {
-                    sprintStartOffset += sprintDays;
-                    continue;
-                }
-                int relativeCursor = Math.max(0, participantCursor - sprintStartOffset);
-                int sequenceRoom = Math.max(0, sprintDays - relativeCursor);
-                int available = allowsOverload(task.priority())
-                    ? sequenceRoom
-                    : availableWholeDays(participant, sprint, committed, draftLoad, normFactor);
-                int assign = Math.min(remaining, Math.min(sequenceRoom, available));
-                if (assign > 0) {
-                    row.put(sprint.getId().toString(), BigDecimal.valueOf(assign));
-                    addLoad(draftLoad, participantId, sprint.getId().toString(), assign);
-                    remaining -= assign;
-                    participantCursor = sprintStartOffset + relativeCursor + assign;
-                    lastOccupiedCursor = participantCursor;
-                }
-                sprintStartOffset += sprintDays;
-            }
-            if (!row.isEmpty()) {
-                result.put(participantId, row);
-            }
-            if (remaining > 0) {
-                break;
-            }
-            nextParticipantCursor = lastOccupiedCursor;
-        }
-
-        return result;
-    }
-
-    private Map<String, Map<String, BigDecimal>> allocateByPool(
-        PlanningDraftTask task,
-        Map<String, ParticipantEntity> participantsById,
-        List<SprintEntity> allowedSprints,
-        Map<String, Map<String, BigDecimal>> committed,
-        Map<String, Map<String, BigDecimal>> draftLoad,
-        double normFactor,
-        List<ParticipantEntity> allParticipants
-    ) {
-        List<ParticipantEntity> candidates = allParticipants.stream()
-            .filter(participant -> roleMatches(task.role(), participant.getRole()))
-            .filter(participant -> streamMatches(task.stream(), participant.getUserStreams()))
-            .toList();
-        if (candidates.isEmpty()) {
-            return Map.of();
-        }
-
-        List<SprintEntity> sprintOrder = orderSprintsByPriority(allowedSprints, task.priority());
-        int remaining = task.estimateDays();
-        Map<String, Map<String, BigDecimal>> result = new LinkedHashMap<>();
-
-        for (SprintEntity sprint : sprintOrder) {
-            if (remaining <= 0) {
-                break;
-            }
-            int sprintWindow = releaseWindowDays(sprint, task.releasePromDate());
-            if (sprintWindow <= 0) {
-                continue;
-            }
-            int sprintRemaining = sprintWindow;
-            List<ParticipantEntity> sortedCandidates = candidates.stream()
-                .sorted(Comparator
-                    .comparingInt((ParticipantEntity participant) -> availableWholeDays(participant, sprint, committed, draftLoad, normFactor))
-                    .reversed()
-                    .thenComparing(ParticipantEntity::getDisplayOrder))
-                .toList();
-            for (ParticipantEntity participant : sortedCandidates) {
-                if (remaining <= 0 || sprintRemaining <= 0) {
-                    break;
-                }
-                int available = allowsOverload(task.priority())
-                    ? sprintRemaining
-                    : Math.min(sprintRemaining, availableWholeDays(participant, sprint, committed, draftLoad, normFactor));
-                if (available <= 0) {
-                    continue;
-                }
-                int assign = Math.min(remaining, available);
-                result.computeIfAbsent(participant.getId().toString(), key -> new LinkedHashMap<>())
-                    .merge(sprint.getId().toString(), BigDecimal.valueOf(assign), BigDecimal::add);
-                addLoad(draftLoad, participant.getId().toString(), sprint.getId().toString(), assign);
-                remaining -= assign;
-                sprintRemaining -= assign;
-            }
-        }
-
-        return result;
-    }
-
-    private int availableWholeDays(
-        ParticipantEntity participant,
-        SprintEntity sprint,
-        Map<String, Map<String, BigDecimal>> committed,
-        Map<String, Map<String, BigDecimal>> draftLoad,
-        double normFactor
-    ) {
-        BigDecimal rate = participant.getRate() == null ? BigDecimal.ZERO : participant.getRate();
-        int capacity = BigDecimal.valueOf(sprint.getWorkingDays())
-            .multiply(rate)
-            .multiply(BigDecimal.valueOf(normFactor))
-            .setScale(0, RoundingMode.DOWN)
-            .intValue();
-        int committedDays = getWholeDays(committed, participant.getId().toString(), sprint.getId().toString());
-        int draftDays = getWholeDays(draftLoad, participant.getId().toString(), sprint.getId().toString());
-        return Math.max(0, capacity - committedDays - draftDays);
     }
 
     private int getWholeDays(Map<String, Map<String, BigDecimal>> matrix, String participantId, String sprintId) {
@@ -839,14 +566,6 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
             return 0;
         }
         return value.setScale(0, RoundingMode.DOWN).intValue();
-    }
-
-    private void addLoad(Map<String, Map<String, BigDecimal>> matrix, String participantId, String sprintId, int days) {
-        if (days <= 0) {
-            return;
-        }
-        matrix.computeIfAbsent(participantId, key -> new LinkedHashMap<>())
-            .merge(sprintId, BigDecimal.valueOf(days), BigDecimal::add);
     }
 
     private int[] splitEvenly(int totalDays, int buckets) {
@@ -915,22 +634,6 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
         return streams.stream().filter(Objects::nonNull).anyMatch(value -> requiredStream.trim().equalsIgnoreCase(value.trim()));
     }
 
-    private List<SprintEntity> orderSprintsByPriority(List<SprintEntity> sprints, short priority) {
-        List<SprintEntity> ordered = new ArrayList<>(sprints);
-        ordered.sort(Comparator.comparing(SprintEntity::getStartDate).thenComparingInt(SprintEntity::getOrder));
-        if (priority <= 2) {
-            return ordered;
-        }
-        if (ordered.size() <= 2) {
-            return ordered;
-        }
-        int middleIndex = ordered.size() / 2;
-        List<SprintEntity> result = new ArrayList<>();
-        result.addAll(ordered.subList(middleIndex, ordered.size()));
-        result.addAll(ordered.subList(0, middleIndex));
-        return result;
-    }
-
     private List<PlanningDraftTask> orderTasksByPlanningPriority(List<PlanningDraftTask> tasks) {
         if (tasks == null || tasks.isEmpty()) {
             return List.of();
@@ -951,13 +654,6 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
         return priority <= 2 ? 0 : 1;
     }
 
-    private int sumAllocationDays(Map<String, Map<String, BigDecimal>> taskAllocation) {
-        return taskAllocation.values().stream()
-            .flatMap(map -> map.values().stream())
-            .map(value -> value.setScale(0, RoundingMode.DOWN).intValue())
-            .reduce(0, Integer::sum);
-    }
-
     private Map<String, Integer> buildSprintChronologyIndex(List<SprintEntity> sprints) {
         List<SprintEntity> ordered = sprints.stream()
             .sorted(Comparator.comparing(SprintEntity::getStartDate).thenComparingInt(SprintEntity::getOrder))
@@ -967,19 +663,6 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
             result.put(ordered.get(index).getId().toString(), index);
         }
         return result;
-    }
-
-    private int maxAllocatedSprintIndex(Map<String, Map<String, BigDecimal>> taskAllocation, Map<String, Integer> sprintChronologyIndex) {
-        int max = -1;
-        for (Map<String, BigDecimal> row : taskAllocation.values()) {
-            for (Map.Entry<String, BigDecimal> entry : row.entrySet()) {
-                if (entry.getValue() == null || entry.getValue().signum() <= 0) {
-                    continue;
-                }
-                max = Math.max(max, sprintChronologyIndex.getOrDefault(entry.getKey(), Integer.MAX_VALUE));
-            }
-        }
-        return max;
     }
 
     private void mergeTaskAllocation(
@@ -994,44 +677,32 @@ public class AlgorithmPlanningSolver implements PlanningSolverPort {
         });
     }
 
-    private Map<String, Map<String, BigDecimal>> deepCopy(Map<String, Map<String, BigDecimal>> source) {
-        Map<String, Map<String, BigDecimal>> result = new LinkedHashMap<>();
-        if (source == null) {
-            return result;
-        }
-        source.forEach((outerKey, inner) -> {
-            Map<String, BigDecimal> nested = new LinkedHashMap<>();
-            if (inner != null) {
-                inner.forEach((innerKey, value) -> nested.put(innerKey, value == null ? BigDecimal.ZERO : value));
-            }
-            result.put(outerKey, nested);
-        });
-        return result;
-    }
-
-    private record PreparedTask(
+    private record AggregatePart(
         PlanningDraftTask task,
-        List<TaskSlot> slots,
-        List<PreparedDay> days,
+        String partKey,
+        int requiredDays,
+        List<String> candidateParticipantIds,
+        List<SprintEntity> allowedSprints,
         boolean specificParticipants,
-        long unplannedPenalty,
-        long sprintFragmentPenalty,
-        long participantFragmentPenalty
+        int demandOrder,
+        int sequenceOrder
     ) {
     }
 
-    private record PreparedDay(List<String> candidateParticipantIds) {
+    private record AggregateAssignment(IntVar days, String participantId, String sprintId) {
     }
 
-    private record TaskSlot(int index, String sprintId, LocalDate approximateDate) {
+    private record AggregateUsedSprint(String sprintId, BoolVar used) {
     }
 
-    private record ModelTaskState(PreparedTask task, List<ModelDay> days) {
-    }
-
-    private record ModelDay(BoolVar unplanned, IntVar slotIndex, IntVar sprintOrder, List<DayOption> options) {
-    }
-
-    private record DayOption(BoolVar literal, String participantId, String sprintId, int slotIndex) {
+    private record AggregatePartState(
+        AggregatePart part,
+        List<AggregateAssignment> assignments,
+        List<AggregateUsedSprint> usedSprints,
+        IntVar unplanned,
+        BoolVar unplannedUsed,
+        List<BoolVar> usedForOrder,
+        List<Integer> orderForUsed
+    ) {
     }
 }

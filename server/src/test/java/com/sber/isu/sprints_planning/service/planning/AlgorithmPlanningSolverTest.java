@@ -1,7 +1,6 @@
 package com.sber.isu.sprints_planning.service.planning;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
 import com.sber.isu.sprints_planning.model.QuarterEntity;
@@ -806,48 +805,41 @@ class AlgorithmPlanningSolverTest {
     }
 
     @Test
-    void fallsBackToHeuristicOnlyWhenNativeLibrariesUnavailable() {
-        PlanningSolverInput input = new PlanningSolverInput(
-            PlannerType.ALGORITHM,
-            "team-a",
-            List.of(),
-            List.of(),
-            List.of(),
-            Map.of(),
-            1.0
+    void solvesSingleRoleTaskAcrossWidePlanningWindowWithoutFallbackWarning() {
+        ParticipantEntity analyst = participant("11111111-1111-1111-1111-111111111111", "Analyst", 0.5, Set.of());
+        analyst.setRole("Analyst");
+        SprintEntity sprint1 = sprint("33333333-3333-3333-3333-333333333331", "Sprint 1", LocalDate.of(2026, 4, 1), 20, 1);
+        SprintEntity sprint2 = sprint("33333333-3333-3333-3333-333333333332", "Sprint 2", LocalDate.of(2026, 4, 29), 20, 2);
+        SprintEntity sprint3 = sprint("33333333-3333-3333-3333-333333333333", "Sprint 3", LocalDate.of(2026, 5, 27), 24, 3);
+        List<String> sprintIds = List.of(
+            sprint1.getId().toString(),
+            sprint2.getId().toString(),
+            sprint3.getId().toString()
         );
-        PlanningSolverResult heuristicResult = new PlanningSolverResult(
-            PlannerType.ALGORITHM,
-            Map.of(),
-            List.of("heuristic"),
-            BigDecimal.ZERO,
-            BigDecimal.ZERO
-        );
-        NativeFailureSolver failingSolver = new NativeFailureSolver(heuristicResult);
 
-        PlanningSolverResult result = failingSolver.solve(input);
+        PlanningSolverResult result = solver.solve(input(
+            List.of(new PlanningDraftTask(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "Wide Window",
+                (short) 2,
+                20,
+                "ROLE_STREAM",
+                "Analyst",
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of(),
+                sprintIds
+            )),
+            List.of(analyst),
+            List.of(sprint1, sprint2, sprint3)
+        ));
 
-        assertThat(failingSolver.fallbackUsed).isTrue();
-        assertThat(result.warnings()).anyMatch(warning -> warning.contains("эвристический fallback"));
-    }
-
-    @Test
-    void doesNotHideCpSatModelBugsBehindHeuristicFallback() {
-        PlanningSolverInput input = new PlanningSolverInput(
-            PlannerType.ALGORITHM,
-            "team-a",
-            List.of(),
-            List.of(),
-            List.of(),
-            Map.of(),
-            1.0
-        );
-        BrokenModelSolver solver = new BrokenModelSolver();
-
-        assertThatThrownBy(() -> solver.solve(input))
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("broken model");
-        assertThat(solver.fallbackUsed).isFalse();
+        assertThat(sumTaskDays(result, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")).isEqualTo(20);
+        assertThat(result.unplannedDays()).isEqualByComparingTo("0");
+        assertThat(result.warnings()).isEmpty();
     }
 
     private ParticipantEntity participant(String id, String fullName, double rate) {
@@ -966,45 +958,4 @@ class AlgorithmPlanningSolverTest {
             .sum();
     }
 
-    private static final class NativeFailureSolver extends AlgorithmPlanningSolver {
-
-        private final PlanningSolverResult heuristicResult;
-        private boolean fallbackUsed;
-
-        private NativeFailureSolver(PlanningSolverResult heuristicResult) {
-            this.heuristicResult = heuristicResult;
-        }
-
-        @Override
-        protected void loadNativeLibraries() {
-            throw new UnsatisfiedLinkError("native not available");
-        }
-
-        @Override
-        protected PlanningSolverResult solveWithHeuristicInternal(PlanningSolverInput input) {
-            fallbackUsed = true;
-            return heuristicResult;
-        }
-    }
-
-    private static final class BrokenModelSolver extends AlgorithmPlanningSolver {
-
-        private boolean fallbackUsed;
-
-        @Override
-        protected void loadNativeLibraries() {
-            // Pretend native layer is available so the test verifies solver-bug propagation.
-        }
-
-        @Override
-        protected PlanningSolverResult solveWithCpSatInternal(PlanningSolverInput input) {
-            throw new IllegalStateException("broken model");
-        }
-
-        @Override
-        protected PlanningSolverResult solveWithHeuristicInternal(PlanningSolverInput input) {
-            fallbackUsed = true;
-            return new PlanningSolverResult(PlannerType.ALGORITHM, Map.of(), List.of(), BigDecimal.ZERO, BigDecimal.ZERO);
-        }
-    }
 }
