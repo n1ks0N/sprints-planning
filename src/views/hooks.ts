@@ -37,3 +37,17 @@ export function useDebouncedCallback<T extends (...args: any[]) => void>(
     [delay]
   ) as (...args: Parameters<T>) => void;
 }
+
+export function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = React.useState(value);
+
+  React.useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => clearTimeout(timeout);
+  }, [delay, value]);
+
+  return debouncedValue;
+}

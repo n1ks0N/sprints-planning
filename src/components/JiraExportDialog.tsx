@@ -45,7 +45,7 @@ import type {
   Release,
   Sprint,
 } from "../types";
-import { useAppDispatch } from "../views/hooks";
+import { useAppDispatch, useDebounce } from "../views/hooks";
 
 type JiraExportDialogProps = {
   open: boolean;
@@ -152,16 +152,22 @@ function participantOptionLabel(participantId: string, participantMap: Map<strin
   return login ? `${participant.fullName} (${login})` : participant.fullName;
 }
 
-function buildDefaultParticipantIds(
+function participantIdsWithLoad(
   task: BacklogItem,
   planningSprintId: string
 ) {
   const participantIds = Array.isArray(task.participantIds) ? task.participantIds : [];
-  const withLoad = participantIds.filter((participantId) => {
+  return participantIds.filter((participantId) => {
     const storyPoints = Number(task.allocations?.[participantId]?.[planningSprintId] ?? 0);
     return storyPoints > 0;
   });
-  return withLoad.length ? withLoad : participantIds;
+}
+
+function buildDefaultParticipantIds(
+  task: BacklogItem,
+  planningSprintId: string
+) {
+  return participantIdsWithLoad(task, planningSprintId);
 }
 
 function selectedStoryPoints(task: BacklogItem, planningSprintId: string, participantIds: string[]) {
@@ -264,7 +270,7 @@ export default function JiraExportDialog({
   const [jiraSprintId, setJiraSprintId] = React.useState("");
   const [jiraSprintInputValue, setJiraSprintInputValue] = React.useState("");
   const [jiraSprintSearch, setJiraSprintSearch] = React.useState("");
-  const [jiraSprintQuery, setJiraSprintQuery] = React.useState("");
+  const debouncedJiraSprintQuery = useDebounce(jiraSprintSearch.trim(), 500);
   const [projectKey, setProjectKey] = React.useState("");
   const [labels, setLabels] = React.useState<string[]>([]);
   const [taskLabelsByTaskId, setTaskLabelsByTaskId] = React.useState<Record<string, string[]>>({});
@@ -278,7 +284,7 @@ export default function JiraExportDialog({
   const [confirmCreated, { isLoading: isConfirmingCreated }] = useConfirmJiraIssueCreatedMutation();
   const [confirmNotCreated, { isLoading: isConfirmingNotCreated }] = useConfirmJiraIssueNotCreatedMutation();
   const sprintOptionsQuery = useGetJiraSprintOptionsQuery(
-    jiraSprintQuery ? { query: jiraSprintQuery } : undefined,
+    debouncedJiraSprintQuery ? { query: debouncedJiraSprintQuery } : undefined,
     { skip: !open }
   );
   const jiraSprintOptions = sprintOptionsQuery.data || [];
@@ -314,21 +320,16 @@ export default function JiraExportDialog({
   );
 
   const selectedJiraSprintOption = React.useMemo(
-    () => jiraSprintOptions.find((option) => option.id === jiraSprintId) ?? null,
-    [jiraSprintId, jiraSprintOptions]
+    () =>
+      jiraSprintOptions.find(
+        (option) => option.id === jiraSprintId && jiraSprintInputValue === sprintOptionLabel(option)
+      ) ?? null,
+    [jiraSprintId, jiraSprintInputValue, jiraSprintOptions]
   );
   const selectedProjectOption = React.useMemo(
     () => JIRA_PROJECT_OPTIONS.find((option) => option === projectKey) ?? null,
     [projectKey]
   );
-
-  React.useEffect(() => {
-    if (!open) return;
-    const handle = window.setTimeout(() => {
-      setJiraSprintQuery(jiraSprintSearch.trim());
-    }, 400);
-    return () => window.clearTimeout(handle);
-  }, [jiraSprintSearch, open]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -359,7 +360,6 @@ export default function JiraExportDialog({
     setJiraSprintId(nextJiraSprintId);
     setJiraSprintInputValue(nextJiraSprintId);
     setJiraSprintSearch("");
-    setJiraSprintQuery("");
     setProjectKey(nextProjectKey);
     setLabels(nextLabels);
     setTaskLabelsByTaskId(nextTaskLabelsByTaskId);
@@ -378,23 +378,11 @@ export default function JiraExportDialog({
   }, [open, sprints, currentPlanningSprintId, releaseMap, tasks]);
 
   React.useEffect(() => {
-    if (!open || jiraSprintId || jiraSprintOptions.length === 0) return;
-    const firstOption = jiraSprintOptions[0];
-    setJiraSprintId(firstOption.id);
-    setJiraSprintInputValue(sprintOptionLabel(firstOption));
-  }, [jiraSprintId, jiraSprintOptions, open]);
-
-  React.useEffect(() => {
-    if (!open || !selectedJiraSprintOption) return;
-    setJiraSprintInputValue(sprintOptionLabel(selectedJiraSprintOption));
-  }, [open, selectedJiraSprintOption]);
-
-  React.useEffect(() => {
     if (!open || !planningSprintId) return;
     setParticipantIdsByTaskId((prev) => {
       const next: Record<string, string[]> = {};
       for (const task of tasks) {
-        const validTaskParticipantIds = new Set(Array.isArray(task.participantIds) ? task.participantIds : []);
+        const validTaskParticipantIds = new Set(participantIdsWithLoad(task, planningSprintId));
         const previous = (prev[task.id] || []).filter((participantId) => validTaskParticipantIds.has(participantId));
         next[task.id] = previous.length ? previous : buildDefaultParticipantIds(task, planningSprintId);
       }
@@ -808,7 +796,7 @@ export default function JiraExportDialog({
                               size="small"
                               disableCloseOnSelect
                               limitTags={2}
-                              options={Array.isArray(task.participantIds) ? task.participantIds : []}
+                              options={participantIdsWithLoad(task, planningSprintId)}
                               value={participantIdsByTaskId[task.id] || []}
                               onChange={(_event, value) => {
                                 setParticipantIdsByTaskId((prev) => ({

@@ -71,6 +71,7 @@ public class JiraIssueExportService {
     private static final String DEFAULT_STORY_ISSUE_TYPE_ID = "10001";
     private static final String DEFAULT_PARTICIPANT_ISSUE_TYPE_ID = "3";
     private static final String JIRA_LINK_TYPE_PART_OF = "PartOf";
+    private static final String DATE_SORT_FALLBACK = "9999-12-31T23:59:59.999Z";
     private static final String HISTORY_FIELD = "jiraIssue";
     private static final String HISTORY_LABEL = "Jira";
 
@@ -161,13 +162,13 @@ public class JiraIssueExportService {
             : fetchJiraSprintOptions(jiraApiBaseUrl, boardId, normalizedQuery);
 
         if (normalizedQuery == null) {
-            return sprints;
+            return sortSprintOptions(sprints);
         }
         String queryLower = normalizedQuery.toLowerCase();
-        return sprints.stream()
+        return sortSprintOptions(sprints.stream()
             .filter(sprint -> sprint.id().contains(normalizedQuery)
                 || normalizeOptional(sprint.name()) != null && sprint.name().toLowerCase().contains(queryLower))
-            .toList();
+            .toList());
     }
 
     public JiraExportBatchStartDto startExport(
@@ -1453,7 +1454,7 @@ public class JiraIssueExportService {
                     break;
                 }
             }
-            return result;
+            return sortSprintOptions(result);
         } catch (ResourceAccessException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Jira недоступна или отвечает слишком долго", ex);
         } catch (RestClientResponseException ex) {
@@ -1496,6 +1497,35 @@ public class JiraIssueExportService {
         );
     }
 
+    private List<JiraSprintOptionDto> sortSprintOptions(List<JiraSprintOptionDto> sprints) {
+        return sprints.stream()
+            .sorted(Comparator
+                .comparingInt((JiraSprintOptionDto sprint) -> sprintStateRank(sprint.state()))
+                .thenComparing(sprint -> dateSortValue(sprint.startDate()))
+                .thenComparing(sprint -> dateSortValue(sprint.endDate()))
+                .thenComparing(JiraSprintOptionDto::id, Comparator.nullsLast(String::compareTo)))
+            .toList();
+    }
+
+    private int sprintStateRank(String state) {
+        String normalized = normalizeOptional(state);
+        if ("active".equalsIgnoreCase(normalized)) {
+            return 0;
+        }
+        if ("future".equalsIgnoreCase(normalized)) {
+            return 1;
+        }
+        if ("closed".equalsIgnoreCase(normalized)) {
+            return 2;
+        }
+        return 3;
+    }
+
+    private String dateSortValue(String value) {
+        String normalized = normalizeOptional(value);
+        return normalized == null ? DATE_SORT_FALLBACK : normalized;
+    }
+
     private boolean sprintMatchesQuery(JiraSprintValue sprint, String query) {
         String normalizedQuery = normalizeOptional(query);
         if (normalizedQuery == null) {
@@ -1525,8 +1555,8 @@ public class JiraIssueExportService {
                 .uri("/rest/api/2/issueLink")
                 .body(new JiraIssueLinkRequest(
                     new JiraIssueLinkType(JIRA_LINK_TYPE_PART_OF),
-                    new JiraIssueLinkIssue(storyIssueKey),
-                    new JiraIssueLinkIssue(participantIssueKey)
+                    new JiraIssueLinkIssue(participantIssueKey),
+                    new JiraIssueLinkIssue(storyIssueKey)
                 ))
                 .retrieve()
                 .toBodilessEntity();
