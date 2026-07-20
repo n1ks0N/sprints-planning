@@ -1,5 +1,6 @@
 package com.sber.isu.sprints_planning.controller;
 
+import com.sber.isu.sprints_planning.dto.ParticipantWorkloadRowDto;
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.TaskHistoryItemDto;
 import com.sber.isu.sprints_planning.dto.request.IdRequest;
@@ -24,6 +25,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/{teamKey}")
 public class TaskController {
+
+    private static final String UUID_PATTERN =
+        "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
     private final TaskService taskService;
     private final ApiHistoryService apiHistoryService;
@@ -73,13 +77,43 @@ public class TaskController {
         return taskService.findPage(normalizedTeamKey, filter, page, size, sortBy, sortDirection);
     }
 
-    @GetMapping("/tasks/{id}")
+    @GetMapping("/participant-workload")
+    public Page<ParticipantWorkloadRowDto> getParticipantWorkload(@PathVariable String teamKey,
+        @RequestParam(value = "quarterId", required = false) String quarterId,
+        @RequestParam(value = "priority", required = false) String priority,
+        @RequestParam(value = "stream", required = false) String stream,
+        @RequestParam(value = "participantId", required = false) String participantId,
+        @RequestParam(value = "role", required = false) String role,
+        @RequestParam(value = "userStream", required = false) String userStream,
+        @RequestParam(value = "page", defaultValue = "0") Integer page,
+        @RequestParam(value = "size", defaultValue = "10") Integer size) {
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        TaskFilter filter = TaskFilter.from(
+            quarterId,
+            priority,
+            null,
+            null,
+            stream,
+            null,
+            null,
+            null,
+            participantId,
+            role,
+            userStream,
+            null,
+            null,
+            null
+        );
+        return taskService.findParticipantWorkloadPage(normalizedTeamKey, filter, page, size);
+    }
+
+    @GetMapping("/tasks/{id:" + UUID_PATTERN + "}")
     public TaskDto getTask(@PathVariable String teamKey, @PathVariable UUID id) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
         return taskService.findById(normalizedTeamKey, id);
     }
 
-    @GetMapping("/tasks/{id}/history")
+    @GetMapping("/tasks/{id:" + UUID_PATTERN + "}/history")
     public Page<TaskHistoryItemDto> getTaskHistory(
         @PathVariable String teamKey,
         @PathVariable UUID id,
@@ -108,7 +142,7 @@ public class TaskController {
         return taskService.delete(normalizedTeamKey, request);
     }
 
-    @PostMapping("/tasks/{id}/jira-links")
+    @PostMapping("/tasks/{id:" + UUID_PATTERN + "}/jira-links")
     public TaskDto updateTaskJiraLinks(
         @PathVariable String teamKey,
         @PathVariable UUID id,

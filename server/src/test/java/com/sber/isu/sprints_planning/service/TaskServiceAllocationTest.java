@@ -2,14 +2,20 @@ package com.sber.isu.sprints_planning.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.sber.isu.sprints_planning.dto.ParticipantWorkloadRowDto;
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskJiraLinksUpdateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskParticipantJiraLinkUpdateRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
 import com.sber.isu.sprints_planning.model.QuarterEntity;
 import com.sber.isu.sprints_planning.model.SprintEntity;
@@ -33,11 +39,13 @@ import com.sber.isu.sprints_planning.repository.TaskJiraIssueRepository;
 import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
 import com.sber.isu.sprints_planning.repository.TaskStreamRepository;
+import com.sber.isu.sprints_planning.repository.ParticipantWorkloadTaskFlatRow;
 import com.sber.isu.sprints_planning.util.ApiActionDescriptionResolver;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -45,8 +53,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -157,6 +169,140 @@ class TaskServiceAllocationTest {
         assertThat(result.loads()).doesNotContainKey(sprint.getId().toString());
         assertThat(task.getAllocations()).isEmpty();
         assertThat(task.getLoads()).isEmpty();
+    }
+
+    @Test
+    void updateParticipantReplacementMovesSoleSprintAllocationWithoutDeletingDerivedLoad() {
+        TaskEntity task = task("11111111-1111-1111-1111-111111111111");
+        ParticipantEntity oldParticipant = participant("22222222-2222-2222-2222-222222222222");
+        ParticipantEntity newParticipant = participant("44444444-4444-4444-4444-444444444444");
+        SprintEntity sprint = sprint("33333333-3333-3333-3333-333333333333");
+        TaskAllocationId newAllocationId = new TaskAllocationId(task.getId(), newParticipant.getId(), sprint.getId());
+        TaskLoadId loadId = new TaskLoadId(task.getId(), sprint.getId());
+
+        task.getParticipants().add(participantLink(task, oldParticipant, "team-a"));
+        task.getAllocations().add(taskAllocation(task, oldParticipant, sprint, new BigDecimal("3.0")));
+        task.getLoads().add(taskLoad(task, sprint, new BigDecimal("3.0")));
+
+        when(taskRepository.findWithDetailsById(task.getId(), "team-a")).thenReturn(task);
+        when(sprintRepository.findByTeamKeyOrderByQuarterAndOrder("team-a")).thenReturn(List.of(sprint));
+        when(participantRepository.findByIdAndTeamKey(newParticipant.getId(), "team-a")).thenReturn(Optional.of(newParticipant));
+        when(taskAllocationRepository.findById(newAllocationId)).thenAnswer(invocation -> findAllocation(task, newAllocationId));
+        when(taskLoadRepository.findById(loadId)).thenAnswer(invocation -> findLoad(task, loadId));
+        lenient().when(taskJiraIssueRepository.findAllByTeamKeyAndTaskIdIn("team-a", Set.of(task.getId()))).thenReturn(List.of());
+
+        TaskDto result = taskService.update("team-a", new TaskUpdateRequest(
+            task.getId().toString(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of(newParticipant.getId().toString()),
+            null,
+            null,
+            null,
+            Map.of(newParticipant.getId().toString(), Map.of(sprint.getId().toString(), new BigDecimal("3.0"))),
+            null,
+            null,
+            null,
+            null,
+            null
+        ));
+
+        assertThat(result.participantIds()).containsExactly(newParticipant.getId().toString());
+        assertThat(result.allocations()).containsKey(newParticipant.getId().toString());
+        assertThat(result.loads()).containsEntry(sprint.getId().toString(), new BigDecimal("3.0"));
+        assertThat(task.getAllocations()).hasSize(1);
+        assertThat(task.getLoads()).hasSize(1);
+        verify(taskLoadRepository, never()).delete(any(TaskLoadEntity.class));
+    }
+
+    @Test
+    void participantWorkloadPagesParticipantsAndReturnsOnlyParticipantAllocations() {
+        ParticipantEntity first = participant("11111111-1111-1111-1111-111111111111");
+        ParticipantEntity second = participant("22222222-2222-2222-2222-222222222222");
+        ParticipantEntity third = participant("33333333-3333-3333-3333-333333333333");
+        SprintEntity sprint = sprint("44444444-4444-4444-4444-444444444444");
+        TaskEntity task = task("55555555-5555-5555-5555-555555555555");
+        task.setPriority((short) 1);
+        task.getParticipants().add(participantLink(task, second, "team-a"));
+        task.getParticipants().add(participantLink(task, third, "team-a"));
+        task.getAllocations().add(taskAllocation(task, second, sprint, new BigDecimal("2.0")));
+        task.getAllocations().add(taskAllocation(task, third, sprint, new BigDecimal("4.0")));
+
+        when(participantRepository.findWorkloadPage(eq("team-a"), any(TaskFilter.class), eq(1), eq(1)))
+            .thenReturn(new PageImpl<>(List.of(second), PageRequest.of(1, 1), 3));
+        when(taskRepository.findParticipantWorkloadRows(eq("team-a"), any(TaskFilter.class), eq(Set.of(second.getId()))))
+            .thenReturn(List.of(
+                new ParticipantWorkloadTaskFlatRow(
+                    second.getId(),
+                    task.getId(),
+                    task.getTitle(),
+                    task.getPriority(),
+                    task.getStatus(),
+                    null,
+                    "Backend",
+                    sprint.getId(),
+                    new BigDecimal("2.0")
+                )
+            ));
+
+        Page<ParticipantWorkloadRowDto> result = taskService.findParticipantWorkloadPage(
+            "team-a",
+            TaskFilter.from(
+                sprint.getQuarter().getId().toString(),
+                "1,2,3",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ),
+            1,
+            1
+        );
+
+        assertThat(result.getTotalElements()).isEqualTo(3);
+        assertThat(result.getContent()).hasSize(1);
+        ParticipantWorkloadRowDto row = result.getContent().get(0);
+        assertThat(row.participant().id()).isEqualTo(second.getId().toString());
+        assertThat(row.tasks()).hasSize(1);
+        assertThat(row.tasks().get(0).allocations())
+            .containsEntry(sprint.getId().toString(), new BigDecimal("2.0"));
+
+        ArgumentCaptor<TaskFilter> participantFilterCaptor = ArgumentCaptor.forClass(TaskFilter.class);
+        verify(participantRepository).findWorkloadPage(eq("team-a"), participantFilterCaptor.capture(), eq(1), eq(1));
+        assertThat(participantFilterCaptor.getValue().quarterIds())
+            .containsExactly(sprint.getQuarter().getId());
+        assertThat(participantFilterCaptor.getValue().priorities())
+            .containsExactlyInAnyOrder((short) 1, (short) 2, (short) 3);
+
+        ArgumentCaptor<TaskFilter> taskFilterCaptor = ArgumentCaptor.forClass(TaskFilter.class);
+        verify(taskRepository).findParticipantWorkloadRows(
+            eq("team-a"),
+            taskFilterCaptor.capture(),
+            eq(Set.of(second.getId()))
+        );
+        assertThat(taskFilterCaptor.getValue().participantIds())
+            .containsExactly(second.getId());
+        verify(taskRepository, never()).findFilteredWithDetails(eq("team-a"), any(TaskFilter.class));
+    }
+
+    @Test
+    void participantWorkloadRequiresQuarterFilter() {
+        assertThatThrownBy(() -> taskService.findParticipantWorkloadPage("team-a", TaskFilter.empty(), 0, 10))
+            .isInstanceOfSatisfying(ResponseStatusException.class, error ->
+                assertThat(error.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
     }
 
     @Test
@@ -316,6 +462,32 @@ class TaskServiceAllocationTest {
         return task.getLoads().stream()
             .filter(load -> load.getId() != null && load.getId().equals(id))
             .findFirst();
+    }
+
+    private TaskAllocationEntity taskAllocation(
+        TaskEntity task,
+        ParticipantEntity participant,
+        SprintEntity sprint,
+        BigDecimal days
+    ) {
+        TaskAllocationEntity allocation = new TaskAllocationEntity();
+        allocation.setId(new TaskAllocationId(task.getId(), participant.getId(), sprint.getId()));
+        allocation.setTask(task);
+        allocation.setParticipant(participant);
+        allocation.setSprint(sprint);
+        allocation.setDays(days);
+        allocation.setTeamKey("team-a");
+        return allocation;
+    }
+
+    private TaskLoadEntity taskLoad(TaskEntity task, SprintEntity sprint, BigDecimal days) {
+        TaskLoadEntity load = new TaskLoadEntity();
+        load.setId(new TaskLoadId(task.getId(), sprint.getId()));
+        load.setTask(task);
+        load.setSprint(sprint);
+        load.setDays(days);
+        load.setTeamKey("team-a");
+        return load;
     }
 
     private TaskEntity task(String id) {

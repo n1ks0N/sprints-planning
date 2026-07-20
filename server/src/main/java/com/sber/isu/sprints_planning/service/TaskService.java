@@ -2,6 +2,9 @@ package com.sber.isu.sprints_planning.service;
 
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.TaskHistoryChangeDto;
+import com.sber.isu.sprints_planning.dto.ParticipantWorkloadParticipantDto;
+import com.sber.isu.sprints_planning.dto.ParticipantWorkloadRowDto;
+import com.sber.isu.sprints_planning.dto.ParticipantWorkloadTaskDto;
 import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationBulkRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationMultiRequest;
@@ -27,6 +30,7 @@ import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
 import com.sber.isu.sprints_planning.model.TaskParticipantId;
 import com.sber.isu.sprints_planning.model.TaskStreamEntity;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
+import com.sber.isu.sprints_planning.repository.ParticipantWorkloadTaskFlatRow;
 import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
@@ -40,6 +44,7 @@ import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import java.util.ArrayList;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -124,6 +129,53 @@ public class TaskService {
     }
 
     @Transactional
+    public Page<ParticipantWorkloadRowDto> findParticipantWorkloadPage(
+        String teamKey,
+        TaskFilter filter,
+        Integer page,
+        Integer size
+    ) {
+        TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
+        if (effectiveFilter.quarterIds().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "quarterId is required");
+        }
+
+        int safePage = page == null ? 0 : Math.max(page, 0);
+        int safeSize = size == null ? 10 : Math.min(Math.max(size, 1), 50);
+        Page<ParticipantEntity> participantPage = participantRepository.findWorkloadPage(
+            teamKey,
+            effectiveFilter,
+            safePage,
+            safeSize
+        );
+        List<ParticipantEntity> pageParticipants = participantPage.getContent();
+        Set<UUID> pageParticipantIds = pageParticipants.stream()
+            .map(ParticipantEntity::getId)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        Map<UUID, List<ParticipantWorkloadTaskDto>> tasksByParticipant = pageParticipantIds.isEmpty()
+            ? Map.of()
+            : findParticipantWorkloadTasks(teamKey, effectiveFilter, pageParticipantIds);
+
+        List<ParticipantWorkloadRowDto> rows = pageParticipants.stream()
+            .map(participant -> new ParticipantWorkloadRowDto(
+                new ParticipantWorkloadParticipantDto(
+                    participant.getId().toString(),
+                    participant.getFullName(),
+                    participant.getRole()
+                ),
+                tasksByParticipant.getOrDefault(participant.getId(), List.of())
+            ))
+            .toList();
+
+        return new PageImpl<>(
+            rows,
+            participantPage.getPageable(),
+            participantPage.getTotalElements()
+        );
+    }
+
+    @Transactional
     public Page<TaskDto> findPage(String teamKey, TaskFilter filter, Integer page, Integer size) {
         return findPage(teamKey, filter, page, size, null, null);
     }
@@ -164,6 +216,100 @@ public class TaskService {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
         List<TaskEntity> tasks = taskRepository.findFilteredWithDetails(teamKey, effectiveFilter);
         return toDtos(teamKey, tasks);
+    }
+
+    private Map<UUID, List<ParticipantWorkloadTaskDto>> findParticipantWorkloadTasks(
+        String teamKey,
+        TaskFilter filter,
+        Set<UUID> participantIds
+    ) {
+        TaskFilter taskFilter = new TaskFilter(
+            filter.quarterIds(),
+            filter.priorities(),
+            filter.statuses(),
+            filter.releaseDateId(),
+            filter.streams(),
+            filter.withoutStream(),
+            filter.customers(),
+            filter.withoutCustomer(),
+            participantIds,
+            Set.of(),
+            Set.of(),
+            filter.searchQuery(),
+            filter.withoutQuarter(),
+            null
+        );
+        List<ParticipantWorkloadTaskFlatRow> rows = taskRepository.findParticipantWorkloadRows(
+            teamKey,
+            taskFilter,
+            participantIds
+        );
+        Map<UUID, List<ParticipantWorkloadTaskDto>> result = new LinkedHashMap<>();
+        for (UUID participantId : participantIds) {
+            result.put(participantId, new ArrayList<>());
+        }
+
+        Map<ParticipantTaskKey, MutableParticipantWorkloadTask> tasks = new LinkedHashMap<>();
+        for (ParticipantWorkloadTaskFlatRow row : rows) {
+            ParticipantTaskKey key = new ParticipantTaskKey(row.participantId(), row.taskId());
+            MutableParticipantWorkloadTask task = tasks.computeIfAbsent(
+                key,
+                ignored -> new MutableParticipantWorkloadTask(row)
+            );
+            task.addStream(row.stream());
+            task.addAllocation(row.sprintId(), row.days());
+        }
+        for (Map.Entry<ParticipantTaskKey, MutableParticipantWorkloadTask> entry : tasks.entrySet()) {
+            result.computeIfAbsent(entry.getKey().participantId(), ignored -> new ArrayList<>())
+                .add(entry.getValue().toDto());
+        }
+        return result;
+    }
+
+    private record ParticipantTaskKey(UUID participantId, UUID taskId) {
+    }
+
+    private class MutableParticipantWorkloadTask {
+
+        private final UUID taskId;
+        private final String title;
+        private final short priority;
+        private final String status;
+        private final UUID leaderId;
+        private final Set<String> streams = new LinkedHashSet<>();
+        private final Map<String, BigDecimal> allocations = new LinkedHashMap<>();
+
+        private MutableParticipantWorkloadTask(ParticipantWorkloadTaskFlatRow row) {
+            this.taskId = row.taskId();
+            this.title = row.title();
+            this.priority = row.priority();
+            this.status = normalizeStatus(row.status());
+            this.leaderId = row.leaderId();
+        }
+
+        private void addStream(String stream) {
+            if (stream != null && !stream.isBlank()) {
+                streams.add(stream);
+            }
+        }
+
+        private void addAllocation(UUID sprintId, BigDecimal days) {
+            if (sprintId != null && days != null && days.signum() > 0) {
+                allocations.put(sprintId.toString(), days);
+            }
+        }
+
+        private ParticipantWorkloadTaskDto toDto() {
+            return new ParticipantWorkloadTaskDto(
+                taskId.toString(),
+                title,
+                priority,
+                status,
+                streams.stream().sorted().toList(),
+                leaderId == null ? null : leaderId.toString(),
+                allocations
+            );
+        }
     }
 
     @Transactional
@@ -207,9 +353,11 @@ public class TaskService {
 
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
-        updateParticipants(teamKey, saved, request.participantIds(), sprints);
+        Set<UUID> loadRecalcSprintIds = new LinkedHashSet<>();
+        loadRecalcSprintIds.addAll(updateParticipants(teamKey, saved, request.participantIds()));
         applyLoads(saved, request.loads(), sprintIndex);
-        applyAllocations(saved, request.allocations(), sprintIndex);
+        loadRecalcSprintIds.addAll(applyAllocations(saved, request.allocations(), sprintIndex));
+        recalcLoads(saved, loadRecalcSprintIds, sprintIndex);
         TaskHistorySnapshot createdSnapshot = snapshotTask(saved);
         List<TaskHistoryChangeDto> changes = buildTaskUpdateChanges(emptyTaskHistorySnapshot(), createdSnapshot);
         if (!changes.isEmpty()) {
@@ -285,15 +433,17 @@ public class TaskService {
         }
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         Map<UUID, SprintEntity> sprintIndex = indexSprints(sprints);
+        Set<UUID> loadRecalcSprintIds = new LinkedHashSet<>();
         if (request.participantIds() != null) {
-            updateParticipants(teamKey, entity, request.participantIds(), sprints);
+            loadRecalcSprintIds.addAll(updateParticipants(teamKey, entity, request.participantIds()));
         }
         if (request.loads() != null) {
             applyLoads(entity, request.loads(), sprintIndex);
         }
         if (request.allocations() != null) {
-            applyAllocations(entity, request.allocations(), sprintIndex);
+            loadRecalcSprintIds.addAll(applyAllocations(entity, request.allocations(), sprintIndex));
         }
+        recalcLoads(entity, loadRecalcSprintIds, sprintIndex);
         if (request.order() != null) {
             reorderTask(teamKey, entity, request.order());
         }
@@ -800,7 +950,7 @@ public class TaskService {
         return sprint.getId() != null ? sprint.getId().toString() : "Спринт";
     }
 
-    private void updateParticipants(String teamKey, TaskEntity entity, List<String> participantIds, List<SprintEntity> sprints) {
+    private Set<UUID> updateParticipants(String teamKey, TaskEntity entity, List<String> participantIds) {
         List<UUID> orderedIds = participantIds != null
             ? participantIds.stream().filter(id -> id != null && !id.isBlank()).map(UUID::fromString).toList()
             : List.of();
@@ -811,6 +961,10 @@ public class TaskService {
             .collect(Collectors.toSet());
         Set<UUID> removedIds = new HashSet<>(existingIds);
         removedIds.removeAll(newIds);
+        Set<UUID> affectedSprintIds = entity.getAllocations().stream()
+            .filter(allocation -> removedIds.contains(allocation.getParticipant().getId()))
+            .map(allocation -> allocation.getSprint().getId())
+            .collect(Collectors.toCollection(LinkedHashSet::new));
 
         entity.getParticipants().removeIf(tp -> !newIds.contains(tp.getParticipant().getId()));
 
@@ -835,8 +989,8 @@ public class TaskService {
         if (!removedIds.isEmpty()) {
             taskJiraIssueRepository.deleteAllByTeamKeyAndTaskIdAndParticipantIdIn(teamKey, entity.getId(), removedIds);
             entity.getAllocations().removeIf(allocation -> removedIds.contains(allocation.getParticipant().getId()));
-            recalcAllLoads(entity, sprints);
         }
+        return affectedSprintIds;
     }
 
     private void applyLoads(TaskEntity entity, Map<String, BigDecimal> loads, Map<UUID, SprintEntity> sprints) {
@@ -862,10 +1016,11 @@ public class TaskService {
         }
     }
 
-    private void applyAllocations(TaskEntity entity, Map<String, Map<String, BigDecimal>> allocations,
+    private Set<UUID> applyAllocations(TaskEntity entity, Map<String, Map<String, BigDecimal>> allocations,
         Map<UUID, SprintEntity> sprints) {
+        Set<UUID> affectedSprintIds = new LinkedHashSet<>();
         if (allocations == null) {
-            return;
+            return affectedSprintIds;
         }
         for (Map.Entry<String, Map<String, BigDecimal>> participantEntry : allocations.entrySet()) {
             if (participantEntry.getValue() == null) {
@@ -875,6 +1030,7 @@ public class TaskService {
                 .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
             for (Map.Entry<String, BigDecimal> sprintEntry : participantEntry.getValue().entrySet()) {
                 SprintEntity sprint = resolveSprint(entity.getTeamKey(), sprints, sprintEntry.getKey());
+                affectedSprintIds.add(sprint.getId());
                 TaskAllocationId id = new TaskAllocationId(entity.getId(), participant.getId(), sprint.getId());
                 BigDecimal nextDays = normalizeHalfDays(sprintEntry.getValue());
                 TaskAllocationEntity allocation = taskAllocationRepository.findById(id).orElse(null);
@@ -884,16 +1040,15 @@ public class TaskService {
                             isSameAllocation(existing, participant.getId(), sprint.getId()));
                         taskAllocationRepository.delete(allocation);
                     }
-                    recalcLoad(entity, sprint);
                     continue;
                 }
                 if (allocation == null) {
                     allocation = createTaskAllocation(entity, participant, sprint, entity.getTeamKey());
                 }
                 allocation.setDays(nextDays);
-                recalcLoad(entity, sprint);
             }
         }
+        return affectedSprintIds;
     }
 
     private String normalizeStatus(String status) {
@@ -1056,6 +1211,15 @@ public class TaskService {
     private void recalcAllLoads(TaskEntity task, List<SprintEntity> sprints) {
         for (SprintEntity sprint : sprints) {
             recalcLoad(task, sprint);
+        }
+    }
+
+    private void recalcLoads(TaskEntity task, Set<UUID> sprintIds, Map<UUID, SprintEntity> sprints) {
+        for (UUID sprintId : sprintIds) {
+            SprintEntity sprint = sprints.get(sprintId);
+            if (sprint != null) {
+                recalcLoad(task, sprint);
+            }
         }
     }
 

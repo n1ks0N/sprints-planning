@@ -137,6 +137,23 @@ export type Allocations = Record<
   Record<string, Record<string, number>>
 >;
 
+export type ParticipantWorkloadTask = {
+  id: string;
+  title: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  streams: string[];
+  leaderId?: string | null;
+  allocations: Record<string, number>;
+};
+
+export type ParticipantWorkloadParticipant = Pick<Participant, "id" | "fullName" | "role">;
+
+export type ParticipantWorkloadRow = {
+  participant: ParticipantWorkloadParticipant;
+  tasks: ParticipantWorkloadTask[];
+};
+
 export type PageInfo = {
   size: number;
   number: number;

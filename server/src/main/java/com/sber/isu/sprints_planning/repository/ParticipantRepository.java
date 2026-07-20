@@ -6,7 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface ParticipantRepository extends JpaRepository<ParticipantEntity, UUID> {
+public interface ParticipantRepository extends JpaRepository<ParticipantEntity, UUID>, ParticipantRepositoryCustom {
     List<ParticipantEntity> findAllByTeamKeyOrderByDisplayOrderAsc(String teamKey);
 
     Optional<ParticipantEntity> findByIdAndTeamKey(UUID id, String teamKey);

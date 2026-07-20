@@ -19,6 +19,7 @@ import type {
   PlanningWorkbenchItem,
   PlanningDemand,
   JiraSprintOption,
+  ParticipantWorkloadRow,
 } from "../types";
 import { DEFAULT_TEAM_KEY } from "../teams";
 import { selectCurrentTeamKey } from "./teamSlice";
@@ -261,6 +262,37 @@ const applyPatches = <Args>(
   );
 
 type TasksPage = Page<BacklogItem>;
+type TasksQueryArgs = {
+  quarterIds?: string[];
+  withoutQuarter?: boolean;
+  withoutStream?: boolean;
+  withoutCustomer?: boolean;
+  priority?: number[];
+  statuses?: string[];
+  releaseDateId?: string;
+  streams?: string[];
+  customers?: string[];
+  search?: string;
+  participantIds?: string[];
+  roles?: string[];
+  userStreams?: string[];
+  pinnedId?: string;
+  sortBy?: string;
+  sortDirection?: string;
+  page?: number;
+  size?: number;
+};
+type ParticipantWorkloadQueryArgs = {
+  quarterIds: string[];
+  priority?: number[];
+  streams?: string[];
+  participantIds?: string[];
+  roles?: string[];
+  userStreams?: string[];
+  page?: number;
+  size?: number;
+};
+type ParticipantWorkloadPage = Page<ParticipantWorkloadRow>;
 type PlanningWorkbenchBacklogPage = Page<PlanningWorkbenchItem>;
 
 type PlanningWorkbenchBacklogArgs = {
@@ -545,6 +577,7 @@ export const api = createApi({
     "Participant",
     "Capacity",
     "Task",
+    "ParticipantWorkload",
     "PlanningItem",
     "Release",
     "History",
@@ -812,6 +845,7 @@ export const api = createApi({
       invalidatesTags: (result) => [
         listTag("Participant"),
         listTag("Capacity"),
+        listTag("ParticipantWorkload"),
         ...(result ? [entityTag("Participant", result.id)] : []),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
@@ -858,6 +892,7 @@ export const api = createApi({
         entityTag("Participant", arg.id),
         listTag("Participant"),
         listTag("Capacity"),
+        listTag("ParticipantWorkload"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const patch = dispatch(
@@ -906,6 +941,7 @@ export const api = createApi({
         listTag("Participant"),
         listTag("Capacity"),
         listTag("Task"),
+        listTag("ParticipantWorkload"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const patch = dispatch(
@@ -928,7 +964,7 @@ export const api = createApi({
       { orders: { id: string; order: number }[] }
     >({
       query: (body) => ({ url: "/participants/reorder", method: "POST", body }),
-      invalidatesTags: [listTag("Participant")],
+      invalidatesTags: [listTag("Participant"), listTag("ParticipantWorkload")],
       async onQueryStarted({ orders }, { dispatch, queryFulfilled }) {
         const orderMap = new Map<string, number>();
         for (const o of orders) orderMap.set(o.id, o.order);
@@ -993,30 +1029,58 @@ export const api = createApi({
       },
     }),
 
+    getParticipantWorkload: b.query<ParticipantWorkloadPage, ParticipantWorkloadQueryArgs>({
+      query: (arg) => {
+        const params: Record<string, string> = {};
+        const joinOrUndefined = (values?: string[] | number[]) => {
+          if (!values || values.length === 0) return undefined;
+          return values.join(",");
+        };
+
+        const quarters = joinOrUndefined(arg.quarterIds);
+        if (quarters) params.quarterId = quarters;
+
+        const priorities = joinOrUndefined(arg.priority);
+        if (priorities) params.priority = priorities;
+
+        const streams = joinOrUndefined(arg.streams);
+        if (streams) params.stream = streams;
+
+        const participantIds = joinOrUndefined(arg.participantIds);
+        if (participantIds) params.participantId = participantIds;
+
+        const roles = joinOrUndefined(arg.roles);
+        if (roles) params.role = roles;
+
+        const userStreams = joinOrUndefined(arg.userStreams);
+        if (userStreams) params.userStream = userStreams;
+
+        if (typeof arg.page === "number") params.page = String(arg.page);
+        if (typeof arg.size === "number") params.size = String(arg.size);
+
+        return {
+          url: "/participant-workload",
+          method: "GET",
+          params,
+        };
+      },
+      transformResponse: (response: unknown) =>
+        normalizePageResponse<ParticipantWorkloadRow>(response),
+      providesTags: (result) =>
+        result
+          ? [
+              listTag("ParticipantWorkload"),
+              ...result.content.flatMap((row) =>
+                row.tasks.map((task) => entityTag("Task", task.id))
+              ),
+            ]
+          : [listTag("ParticipantWorkload")],
+    }),
+
     // ---- Backlog ----
     getTasks: b.query<
       TasksPage,
-      | void
-      | {
-          quarterIds?: string[];
-          withoutQuarter?: boolean;
-          withoutStream?: boolean;
-          withoutCustomer?: boolean;
-          priority?: number[];
-          statuses?: string[];
-          releaseDateId?: string;
-          streams?: string[];
-          customers?: string[];
-          search?: string;
-          participantIds?: string[];
-          roles?: string[];
-          userStreams?: string[];
-          pinnedId?: string;
-          sortBy?: string;
-          sortDirection?: string;
-          page?: number;
-          size?: number;
-        }
+      void | TasksQueryArgs
     >({
       query: (arg) => {
         const params: Record<string, string> = {};
@@ -1382,6 +1446,7 @@ export const api = createApi({
         { type: "Task" as const, id: "LIST" as const },
         { type: "PlanningItem" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
+        { type: "ParticipantWorkload" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { queryFulfilled }) {
         try {
@@ -1461,6 +1526,7 @@ export const api = createApi({
         listTag("Task"),
         ...(result ? [entityTag("Task", result.id)] : []),
         listTag("Capacity"),
+        listTag("ParticipantWorkload"),
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         const now = new Date().toISOString().slice(0, 10);
@@ -1534,6 +1600,7 @@ export const api = createApi({
             ? [{ type: "Task" as const, id: "LIST" as const }]
             : []),
           { type: "Capacity" as const, id: "LIST" as const },
+          { type: "ParticipantWorkload" as const, id: "LIST" as const },
         ],
         async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
           const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
@@ -1597,6 +1664,7 @@ export const api = createApi({
       invalidatesTags: (result, error, arg) => [
         { type: "Task" as const, id: arg.taskId },
         { type: "Task" as const, id: "LIST" as const },
+        { type: "ParticipantWorkload" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         try {
@@ -1633,6 +1701,7 @@ export const api = createApi({
         { type: "Task" as const, id: arg.id },
         { type: "Task" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
+        { type: "ParticipantWorkload" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
         const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
@@ -1678,6 +1747,7 @@ export const api = createApi({
       invalidatesTags: [
         { type: "Task" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
+        { type: "ParticipantWorkload" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const detailPatch = dispatch(
@@ -1712,6 +1782,7 @@ export const api = createApi({
       invalidatesTags: [
         { type: "Task" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
+        { type: "ParticipantWorkload" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const detailPatch = dispatch(
@@ -1746,6 +1817,7 @@ export const api = createApi({
       invalidatesTags: [
         { type: "Task" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
+        { type: "ParticipantWorkload" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const detailPatch = dispatch(
@@ -1783,6 +1855,7 @@ export const api = createApi({
       invalidatesTags: [
         { type: "Task" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
+        { type: "ParticipantWorkload" as const, id: "LIST" as const },
       ],
       async onQueryStarted(arg, { dispatch, queryFulfilled }) {
         const detailPatch = dispatch(
@@ -2083,6 +2156,7 @@ export const {
   useGetTaskQuery,
   useGetTaskHistoryQuery,
   useGetTasksQuery,
+  useGetParticipantWorkloadQuery,
   useGetPlanningWorkbenchBacklogQuery,
   useAddPlanningWorkbenchItemMutation,
   useUpdatePlanningWorkbenchItemMutation,

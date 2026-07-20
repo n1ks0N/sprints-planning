@@ -1,4 +1,5 @@
 import * as React from "react";
+import { skipToken } from "@reduxjs/toolkit/query";
 import {
   Paper,
   Typography,
@@ -11,19 +12,23 @@ import {
   TableCell,
   TableContainer,
   Tooltip,
+  TablePagination,
 } from "@mui/material";
 import {
   useGetParticipantsQuery,
   useGetQuartersQuery,
   useGetSprintsQuery,
   useGetCapacityQuery,
+  useGetFiltersQuery,
+  useGetParticipantWorkloadQuery,
   useUpsertTaskAllocationMutation,
 } from "../app/api";
 import EditableNumberCell from "../components/EditableNumberCell";
 import type {
   Sprint,
   Quarter,
-  BacklogItem,
+  ParticipantWorkloadRow,
+  ParticipantWorkloadTask,
   Allocations,
   CapacityCell,
 } from "../types";
@@ -32,10 +37,6 @@ import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import { selectCurrentTeamKey } from "../app/teamSlice";
 import { normalizeDayAmount } from "../utils/dayAmount";
-
-type TasksPage = {
-  content?: BacklogItem[];
-};
 
 function byStart(a: Sprint, b: Sprint) {
   return a.startDate.localeCompare(b.startDate);
@@ -71,55 +72,19 @@ function getCurrentQuarterId(quarters: Quarter[]) {
   return quarters.find((quarter) => quarter.startDate <= today && today <= quarter.endDate)?.id || "";
 }
 
-function buildTasksSearchParams(arg: {
-  quarterIds?: string[];
-  priority?: number[];
-  participantIds?: string[];
-  roles?: string[];
-  userStreams?: string[];
-  streams?: string[];
-}) {
-  const params = new URLSearchParams();
-  const joinOrUndefined = (values?: string[] | number[]) => {
-    const normalized = (values || [])
-      .map((value) => String(value).trim())
-      .filter(Boolean);
-    return normalized.length > 0 ? normalized.join(",") : undefined;
-  };
-
-  const quarters = joinOrUndefined(arg.quarterIds);
-  if (quarters) params.set("quarterId", quarters);
-
-  const priorities = joinOrUndefined(arg.priority);
-  if (priorities) params.set("priority", priorities);
-
-  const participantIds = joinOrUndefined(arg.participantIds);
-  if (participantIds) params.set("participantId", participantIds);
-
-  const roles = joinOrUndefined(arg.roles);
-  if (roles) params.set("role", roles);
-
-  const userStreams = joinOrUndefined(arg.userStreams);
-  if (userStreams) params.set("userStream", userStreams);
-
-  const streams = joinOrUndefined(arg.streams);
-  if (streams) params.set("stream", streams);
-
-  return params;
-}
-
 export default function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
   const currentTeamKey = useAppSelector(selectCurrentTeamKey);
   const ui = useAppSelector((s) => s.ui.participantWorkload);
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
   const [allocations, setAllocations] = React.useState<Allocations>({});
-  const [tasks, setTasks] = React.useState<BacklogItem[]>([]);
-  const [tasksError, setTasksError] = React.useState("");
+  const [participantPageNumber, setParticipantPageNumber] = React.useState(0);
+  const [participantPageSize, setParticipantPageSize] = React.useState(10);
 
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: participants = [] } = useGetParticipantsQuery();
   const { data: sprintsData = [] } = useGetSprintsQuery(undefined);
+  const { data: filtersData } = useGetFiltersQuery();
   const allSprints = sprintsData;
 
   React.useEffect(() => {
@@ -132,56 +97,63 @@ export default function ParticipantWorkloadPage() {
     }
   }, [dispatch, quarters, ui.selectedQuarterIds]);
 
+  const workloadFiltersSignature = React.useMemo(
+    () =>
+      JSON.stringify({
+        quarterIds: ui.selectedQuarterIds,
+        participantIds: ui.selectedParticipantIds,
+        roles: ui.rolesFilter,
+        userStreams: ui.userStreamsFilter,
+        priority: ui.priorityFilter,
+        taskStream: ui.taskStreamFilter,
+      }),
+    [
+      ui.priorityFilter,
+      ui.rolesFilter,
+      ui.selectedParticipantIds,
+      ui.selectedQuarterIds,
+      ui.taskStreamFilter,
+      ui.userStreamsFilter,
+    ]
+  );
+
   React.useEffect(() => {
-    let cancelled = false;
+    setParticipantPageNumber(0);
+  }, [workloadFiltersSignature]);
 
-    const loadTasks = async () => {
-      try {
-        setTasksError("");
-        const baseUrl = process.env.API_URL || "/api/v1/sprints-planning";
-        const params = buildTasksSearchParams({
-          quarterIds: ui.selectedQuarterIds,
-          participantIds: ui.selectedParticipantIds,
-          roles: ui.rolesFilter,
-          userStreams: ui.userStreamsFilter,
-          priority: ui.priorityFilter,
-          streams: ui.taskStreamFilter ? [ui.taskStreamFilter] : undefined,
-        });
-        const query = params.toString();
-        const response = await fetch(
-          `${baseUrl}/${currentTeamKey}/tasks${query ? `?${query}` : ""}`
-        );
-        if (!response.ok) {
-          throw new Error("Не удалось загрузить задачи");
-        }
-        const data = (await response.json()) as TasksPage;
-
-        if (!cancelled) {
-          setTasks(Array.isArray(data.content) ? data.content : []);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          console.error("Не удалось загрузить все задачи для страницы по сотрудникам", error);
-          setTasks([]);
-          setTasksError("Не удалось загрузить задачи по текущим фильтрам");
-        }
-      }
-    };
-
-    void loadTasks();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    currentTeamKey,
-    ui.priorityFilter,
-    ui.rolesFilter,
-    ui.selectedParticipantIds,
-    ui.selectedQuarterIds,
-    ui.taskStreamFilter,
-    ui.userStreamsFilter,
-  ]);
+  const workloadQueryArgs = React.useMemo(
+    () => ({
+      quarterIds: ui.selectedQuarterIds,
+      participantIds: ui.selectedParticipantIds.length
+        ? ui.selectedParticipantIds
+        : undefined,
+      roles: ui.rolesFilter.length ? ui.rolesFilter : undefined,
+      userStreams: ui.userStreamsFilter.length ? ui.userStreamsFilter : undefined,
+      priority: ui.priorityFilter,
+      streams: ui.taskStreamFilter ? [ui.taskStreamFilter] : undefined,
+      page: participantPageNumber,
+      size: participantPageSize,
+    }),
+    [
+      participantPageNumber,
+      participantPageSize,
+      ui.priorityFilter,
+      ui.rolesFilter,
+      ui.selectedParticipantIds,
+      ui.selectedQuarterIds,
+      ui.taskStreamFilter,
+      ui.userStreamsFilter,
+    ]
+  );
+  const {
+    data: workloadPage,
+    isError: isWorkloadError,
+  } = useGetParticipantWorkloadQuery(
+    quarters.length > 0 && ui.selectedQuarterIds.length > 0
+      ? workloadQueryArgs
+      : skipToken
+  );
+  const workloadRows = workloadPage?.content ?? [];
 
   const sprintsInScope = React.useMemo(() => {
     const selected = new Set(ui.selectedQuarterIds);
@@ -232,17 +204,10 @@ export default function ParticipantWorkloadPage() {
     return Array.from(new Set(streams)).sort();
   }, [participants]);
 
-  const taskStreamOptions = React.useMemo(() => {
-    const streamsSet = new Set<string>();
-    for (const t of tasks) {
-      if (t.streams) {
-        for (const s of t.streams) {
-          if (s?.trim()) streamsSet.add(s.trim());
-        }
-      }
-    }
-    return Array.from(streamsSet).sort();
-  }, [tasks]);
+  const taskStreamOptions = React.useMemo(
+    () => (filtersData?.streams || []).slice().sort(),
+    [filtersData?.streams]
+  );
 
   const handleTaskStreamFilterChange = React.useCallback(
     (value: string) => {
@@ -284,38 +249,16 @@ export default function ParticipantWorkloadPage() {
     [dispatch, ui.priorityFilter]
   );
 
-  const selectedParticipants = React.useMemo(
-    () => participants.filter((p) => ui.selectedParticipantIds.includes(p.id)),
-    [participants, ui.selectedParticipantIds]
+  const pageParticipantIds = React.useMemo(
+    () => workloadRows.map((row) => row.participant.id),
+    [workloadRows]
   );
-
-  const participantsInScope = React.useMemo(() => {
-    let list = selectedParticipants.length ? selectedParticipants : participants;
-    if (ui.rolesFilter.length) {
-      const rset = new Set(ui.rolesFilter);
-      list = list.filter((p) => rset.has(p.role));
-    }
-    if (ui.userStreamsFilter.length) {
-      const streamSet = new Set(ui.userStreamsFilter.map((s) => s.trim()));
-      list = list.filter((p) =>
-        (p.userStreams || []).some((stream) => streamSet.has(stream.trim()))
-      );
-    }
-    return list;
-  }, [
-    participants,
-    selectedParticipants,
-    ui.rolesFilter,
-    ui.userStreamsFilter,
-  ]);
 
   const { data: capacityRows = [] } = useGetCapacityQuery({
     quarterIds: ui.selectedQuarterIds.length ? ui.selectedQuarterIds : undefined,
-    participantIds: ui.selectedParticipantIds.length
-      ? ui.selectedParticipantIds
-      : undefined,
-    roles: ui.rolesFilter.length ? ui.rolesFilter : undefined,
-    userStreams: ui.userStreamsFilter.length ? ui.userStreamsFilter : undefined,
+    participantIds: pageParticipantIds,
+  }, {
+    skip: ui.selectedQuarterIds.length === 0 || pageParticipantIds.length === 0,
   });
 
   const capacityCellMap = React.useMemo(() => {
@@ -347,52 +290,31 @@ export default function ParticipantWorkloadPage() {
 
   React.useEffect(() => {
     setAllocations((prev) => {
-      const next: Allocations = { ...prev };
-      let changed = false;
-      const taskIdSet = new Set(tasks.map((t) => t.id));
-
-      Object.keys(next).forEach((taskId) => {
-        if (!taskIdSet.has(taskId)) {
-          delete next[taskId];
-          changed = true;
-        }
-      });
-
-      for (const t of tasks) {
-        if (!next[t.id]) {
-          next[t.id] = {};
-          changed = true;
-        }
-        const taskAllocations = next[t.id];
-        const pids = t.participantIds || [];
-
-        Object.keys(taskAllocations).forEach((pid) => {
-          if (!pids.includes(pid)) {
-            delete taskAllocations[pid];
-            changed = true;
-          }
-        });
-
-        for (const pid of pids) {
-          if (!taskAllocations[pid]) {
-            taskAllocations[pid] = {};
-            changed = true;
-          }
-          const participantAllocations = taskAllocations[pid];
+      const next: Allocations = {};
+      let changed = Object.keys(prev).length > 0;
+      for (const row of workloadRows) {
+        const pid = row.participant.id;
+        for (const t of row.tasks) {
+          const participantAllocations: Record<string, number> = {};
           for (const s of sprintsInScope) {
-            const existing = participantAllocations[s.id];
-            const incoming = t.allocations?.[pid]?.[s.id];
-            const value = Number(incoming ?? existing ?? 0) || 0;
-            if (participantAllocations[s.id] !== value) {
-              participantAllocations[s.id] = value;
+            const value = Number(t.allocations?.[s.id] ?? 0) || 0;
+            participantAllocations[s.id] = value;
+            if (prev[t.id]?.[pid]?.[s.id] !== value) {
               changed = true;
             }
+          }
+          next[t.id] = {
+            ...(next[t.id] || {}),
+            [pid]: participantAllocations,
+          };
+          if (!prev[t.id]?.[pid]) {
+            changed = true;
           }
         }
       }
       return changed ? next : prev;
     });
-  }, [tasks, sprintsInScope]);
+  }, [sprintsInScope, workloadRows]);
 
   const handleAllocChange = React.useCallback(
     (
@@ -435,25 +357,21 @@ export default function ParticipantWorkloadPage() {
     [upsertTaskAllocation]
   );
 
-  const getRowsForParticipant = (pid: string) => {
-    const rows = tasks
-      .filter(
-        (t) =>
-          t.participantIds.includes(pid) &&
-          ui.priorityFilter.includes(t.priority) &&
-          t.status !== "backlog"
-      )
+  const getRowsForParticipant = (row: ParticipantWorkloadRow) => {
+    const pid = row.participant.id;
+    const rows = row.tasks
+      .filter((t) => ui.priorityFilter.includes(t.priority) && t.status !== "backlog")
       .map((t) => ({
         task: t,
         perSprint: sprintsInScope.map((s) =>
           normalizeDayAmount(
             allocations[t.id]?.[pid]?.[s.id] ??
-              t.allocations?.[pid]?.[s.id] ??
+              t.allocations?.[s.id] ??
               0
           )
         ),
       }));
-    return rows as { task: BacklogItem; perSprint: number[] }[];
+    return rows as { task: ParticipantWorkloadTask; perSprint: number[] }[];
   };
 
   return (
@@ -564,11 +482,30 @@ export default function ParticipantWorkloadPage() {
       />
 
       <Stack spacing={2}>
-        {tasksError && (
-          <Typography sx={{ color: "error.main" }}>{tasksError}</Typography>
+        {isWorkloadError && (
+          <Typography sx={{ color: "error.main" }}>
+            Не удалось загрузить задачи по текущим фильтрам
+          </Typography>
         )}
-        {participantsInScope.map((p) => {
-          const rows = getRowsForParticipant(p.id);
+        <TablePagination
+          component="div"
+          count={workloadPage?.page?.totalElements ?? 0}
+          page={participantPageNumber}
+          rowsPerPage={participantPageSize}
+          rowsPerPageOptions={[5, 10, 20, 50]}
+          labelRowsPerPage="Сотрудников на странице"
+          labelDisplayedRows={({ from, to, count }) =>
+            `${from}-${to} из ${count === -1 ? `больше ${to}` : count}`
+          }
+          onPageChange={(_, nextPage) => setParticipantPageNumber(nextPage)}
+          onRowsPerPageChange={(event) => {
+            setParticipantPageSize(Number(event.target.value));
+            setParticipantPageNumber(0);
+          }}
+        />
+        {workloadRows.map((workloadRow) => {
+          const p = workloadRow.participant;
+          const rows = getRowsForParticipant(workloadRow);
           const totalsBySprint = sprintsInScope.map((_, idx) =>
             rows.reduce((sum, r) => sum + r.perSprint[idx], 0)
           );
@@ -762,7 +699,7 @@ export default function ParticipantWorkloadPage() {
           );
         })}
 
-        {!participantsInScope.length && (
+        {!workloadRows.length && (
           <Typography sx={{ color: "text.secondary" }}>
             Нет участников по выбранным фильтрам
           </Typography>

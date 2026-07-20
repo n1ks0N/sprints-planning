@@ -10,6 +10,7 @@ import com.sber.isu.sprints_planning.model.TaskStreamEntity;
 import com.sber.isu.sprints_planning.service.TaskFilter;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.Tuple;
 import jakarta.persistence.TypedQuery;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
@@ -60,6 +61,73 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
     @Override
     public Page<TaskEntity> findFilteredPageWithDetails(String teamKey, TaskFilter filter, int page, int size) {
         return findFilteredPageWithDetails(teamKey, filter, page, size, null, null);
+    }
+
+    @Override
+    public List<ParticipantWorkloadTaskFlatRow> findParticipantWorkloadRows(
+        String teamKey,
+        TaskFilter filter,
+        Set<UUID> participantIds
+    ) {
+        if (participantIds.isEmpty()) {
+            return List.of();
+        }
+
+        TaskFilter effectiveFilter = Objects.requireNonNullElseGet(filter, TaskFilter::empty);
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Tuple> query = cb.createTupleQuery();
+        Root<TaskEntity> task = query.from(TaskEntity.class);
+        Join<TaskEntity, TaskParticipantEntity> taskParticipant = task.join("participants", JoinType.INNER);
+        Join<TaskParticipantEntity, ParticipantEntity> participant = taskParticipant.join("participant", JoinType.INNER);
+        Join<TaskEntity, ParticipantEntity> leader = task.join("leaderParticipant", JoinType.LEFT);
+        Join<TaskEntity, TaskStreamEntity> stream = task.join("streams", JoinType.LEFT);
+        Join<TaskEntity, TaskAllocationEntity> allocation = task.join("allocations", JoinType.LEFT);
+        allocation.on(
+            cb.equal(allocation.get("participant").get("id"), participant.get("id")),
+            allocation.get("sprint").get("quarter").get("id").in(effectiveFilter.quarterIds()),
+            cb.greaterThan(cb.coalesce(allocation.get("days"), BigDecimal.ZERO), BigDecimal.ZERO)
+        );
+
+        query.multiselect(
+                participant.get("id").alias("participantId"),
+                task.get("id").alias("taskId"),
+                task.get("title").alias("title"),
+                task.get("priority").alias("priority"),
+                task.get("status").alias("status"),
+                leader.get("id").alias("leaderId"),
+                stream.get("name").alias("stream"),
+                allocation.get("sprint").get("id").alias("sprintId"),
+                allocation.get("days").alias("days")
+            )
+            .where(
+                cb.and(
+                    buildPredicate(teamKey, effectiveFilter, cb, query, task),
+                    participant.get("id").in(participantIds)
+                )
+            )
+            .orderBy(
+                cb.asc(task.get("displayOrder")),
+                cb.asc(task.get("createdAt")),
+                cb.asc(task.get("id")),
+                cb.asc(participant.get("displayOrder")),
+                cb.asc(participant.get("id")),
+                cb.asc(stream.get("name")),
+                cb.asc(allocation.get("sprint").get("startDate"))
+            );
+
+        return entityManager.createQuery(query).getResultStream()
+            .map(row -> new ParticipantWorkloadTaskFlatRow(
+                row.get("participantId", UUID.class),
+                row.get("taskId", UUID.class),
+                row.get("title", String.class),
+                row.get("priority", Short.class),
+                row.get("status", String.class),
+                row.get("leaderId", UUID.class),
+                row.get("stream", String.class),
+                row.get("sprintId", UUID.class),
+                row.get("days", BigDecimal.class)
+            ))
+            .toList();
     }
 
     @Override

@@ -15,7 +15,7 @@ const setPlanningSort = async (
   fieldName: string,
   direction: "asc" | "desc"
 ) => {
-  await page.getByLabel("Поле").click();
+  await page.getByLabel("Сортировка").click();
   await page.getByRole("option", { name: fieldName }).click();
   const directionButton = page.getByRole("button", {
     name: direction === "asc" ? "По убыванию" : "По возрастанию",
@@ -30,6 +30,15 @@ const editAllocation = async (page: Page, testId: string, value: string) => {
   await page.getByTestId(testId).fill(value);
   await page.getByTestId(testId).blur();
   await expect(page.getByTestId(testId)).toHaveText(value);
+};
+
+const clearPlanningQuarterFilter = async (page: Page) => {
+  await page.getByLabel("Фильтр по кварталу").click();
+  const clearButton = page.getByRole("button", { name: "Clear" });
+  if (await clearButton.isVisible()) {
+    await clearButton.click();
+  }
+  await page.keyboard.press("Escape");
 };
 
 const openPreview = async (page: Page, scenario = {}) => {
@@ -144,6 +153,7 @@ test.describe("Planning Workbench", () => {
     await page.goto(urls.planning);
 
     const availableCards = page.locator('[data-testid^="planning-item-"]');
+    await clearPlanningQuarterFilter(page);
     await expect(availableCards).toHaveCount(3);
 
     await page.getByLabel("Фильтр по кварталу").click();
@@ -153,13 +163,13 @@ test.describe("Planning Workbench", () => {
     await expect(availableCards).toHaveCount(1);
     await expect(availableCards.first()).toContainText("Future Q3");
 
-    await page.reload();
+    await clearPlanningQuarterFilter(page);
     await expect(page.getByTestId("planning-backlog-count")).toHaveText("3");
 
     await setPlanningSort(page, "Нагрузка", "desc");
     await expect(availableCards.first()).toContainText("Heavy Q2");
 
-    await setPlanningSort(page, "Дата реализации", "asc");
+    await setPlanningSort(page, "Дата релиза", "asc");
     await expect(availableCards.first()).toContainText("Heavy Q2");
 
     await setPlanningSort(page, "Приоритет", "asc");

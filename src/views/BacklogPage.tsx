@@ -2392,7 +2392,11 @@ export default function BacklogPage() {
       const ids = sprintsGlobalOrdered.map((s) => s.id);
       if (!ids.length) return;
 
-      const next: Record<string, number> = {};
+      const next = ids.reduce<Record<string, number>>((acc, sprintId) => {
+        acc[sprintId] = 0;
+        return acc;
+      }, {});
+      let hasLoad = false;
 
       for (let i = 0; i < ids.length; i++) {
         const fromSid = ids[i];
@@ -2401,29 +2405,23 @@ export default function BacklogPage() {
           targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
         const val = Number(row[fromSid] || 0);
         if (val > 0) {
+          hasLoad = true;
           next[targetSid] = (next[targetSid] || 0) + val;
         }
       }
+      if (!hasLoad) return;
 
       setAllocations((prev) => {
         const prevTask = prev[taskId] || {};
         const nextTask = { ...prevTask };
-        if (Object.keys(next).length > 0) {
-          nextTask[participantId] = next;
-        } else {
-          delete nextTask[participantId];
-        }
-        if (Object.keys(nextTask).length === 0) {
-          const { [taskId]: _, ...rest } = prev;
-          return rest;
-        }
+        nextTask[participantId] = next;
         return { ...prev, [taskId]: nextTask };
       });
 
       (async () => {
         try {
-          const bulkAllocations = Object.entries(next).reduce<Record<string, number>>((acc, [sid, days]) => {
-            acc[sid] = normalizeDayAmount(Number(days) || 0);
+          const bulkAllocations = ids.reduce<Record<string, number>>((acc, sid) => {
+            acc[sid] = normalizeDayAmount(Number(next[sid] || 0));
             return acc;
           }, {});
           await upsertTaskAllocationMulti({
@@ -2450,7 +2448,11 @@ export default function BacklogPage() {
 
       for (const participantId of participantIds) {
         const row = taskAllocations[participantId] || {};
-        const nextRow: Record<string, number> = {};
+        const nextRow = ids.reduce<Record<string, number>>((acc, sprintId) => {
+          acc[sprintId] = 0;
+          return acc;
+        }, {});
+        let hasLoad = false;
 
         for (let i = 0; i < ids.length; i++) {
           const fromSid = ids[i];
@@ -2459,11 +2461,12 @@ export default function BacklogPage() {
             targetIdx >= 0 && targetIdx < ids.length ? ids[targetIdx] : fromSid;
           const val = Number(row[fromSid] || 0);
           if (val > 0) {
+            hasLoad = true;
             nextRow[targetSid] = (nextRow[targetSid] || 0) + val;
           }
         }
 
-        if (Object.keys(nextRow).length > 0) {
+        if (hasLoad) {
           nextTaskAllocations[participantId] = nextRow;
         }
       }
@@ -2471,10 +2474,9 @@ export default function BacklogPage() {
       if (!Object.keys(nextTaskAllocations).length) return;
 
       setAllocations((prev) => {
-        const prevTask = prev[task.id] || {};
         return {
           ...prev,
-          [task.id]: { ...prevTask, ...nextTaskAllocations },
+          [task.id]: nextTaskAllocations,
         };
       });
 
