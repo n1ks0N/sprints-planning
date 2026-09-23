@@ -7,6 +7,9 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface TaskJiraIssueRepository extends JpaRepository<TaskJiraIssueEntity, UUID> {
 
@@ -70,5 +73,18 @@ public interface TaskJiraIssueRepository extends JpaRepository<TaskJiraIssueEnti
         String teamKey,
         UUID taskId,
         Collection<UUID> participantIds
+    );
+
+    @Modifying
+    @Query("""
+        delete from TaskJiraIssueEntity issue
+        where issue.teamKey = :teamKey
+          and issue.task.id = :taskId
+          and issue.participant.id = :participantId
+        """)
+    int deleteForParticipant(
+        @Param("teamKey") String teamKey,
+        @Param("taskId") UUID taskId,
+        @Param("participantId") UUID participantId
     );
 }

@@ -13,13 +13,12 @@ import com.sber.isu.sprints_planning.repository.TeamRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -41,6 +40,7 @@ public class ApiHistoryService {
 
     private static final Logger logger = LoggerFactory.getLogger(ApiHistoryService.class);
     private static final String TASK_ENTITY_TYPE = "task";
+    private static final int MAX_ACTIONS_PER_SESSION = 200;
 
     private final ApiCallHistoryRepository historyRepository;
     private final ApiActionDescriptionResolver actionDescriptionResolver;
@@ -94,7 +94,7 @@ public class ApiHistoryService {
         ApiCallHistoryEntity entity = new ApiCallHistoryEntity();
         entity.setSessionId(entry.sessionId());
         entity.setUserName(entry.userName() == null || entry.userName().isBlank() ? "unknown" : entry.userName());
-        entity.setHttpMethod(entry.httpMethod());
+        entity.setHttpMethod(normalizeHttpMethod(entry.httpMethod()));
         entity.setPath(entry.path());
         entity.setAction(actionDescriptionResolver.resolve(entity.getHttpMethod(), entity.getPath()));
         entity.setStatusCode(entry.statusCode());
@@ -127,31 +127,29 @@ public class ApiHistoryService {
         int safePage = Math.max(0, page);
         int safeSize = Math.max(1, size);
         Pageable pageable = PageRequest.of(safePage, safeSize);
-        Page<ApiHistorySessionSummaryProjection> summaryPage = historyRepository.findActionSessionSummaries(teamKey, pageable);
-        if (summaryPage.isEmpty()) {
+        List<ApiHistorySessionSummaryProjection> summaries = historyRepository.findActionSessionSummaries(teamKey, pageable);
+        if (summaries.isEmpty()) {
             return List.of();
         }
 
         LinkedHashMap<String, SessionSummary> orderedSessions = new LinkedHashMap<>();
-        for (ApiHistorySessionSummaryProjection summary : summaryPage.getContent()) {
-            orderedSessions.put(sessionKey(summary.getSessionId(), summary.getUserName()), new SessionSummary(
-                summary.getSessionId(),
-                summary.getUserName(),
-                toOffsetDateTime(summary.getLatestCreatedAt())
+        for (ApiHistorySessionSummaryProjection summary : summaries) {
+            orderedSessions.put(sessionKey(summary.sessionId(), summary.userName()), new SessionSummary(
+                summary.sessionId(),
+                summary.userName(),
+                summary.latestCreatedAt()
             ));
         }
-        List<ApiCallHistoryEntity> actions = historyRepository.findActionHistoryByTeamKeyAndSessionIds(
-            teamKey,
-            orderedSessions.values().stream().map(SessionSummary::sessionId).distinct().toList()
-        );
         Map<String, List<ApiCallHistoryEntity>> actionsBySession = new LinkedHashMap<>();
-        orderedSessions.keySet().forEach(key -> actionsBySession.put(key, new ArrayList<>()));
-        for (ApiCallHistoryEntity entity : actions) {
-            String key = sessionKey(entity.getSessionId(), entity.getUserName());
-            List<ApiCallHistoryEntity> sessionActions = actionsBySession.get(key);
-            if (sessionActions != null) {
-                sessionActions.add(entity);
-            }
+        Pageable actionsPageable = PageRequest.of(0, MAX_ACTIONS_PER_SESSION);
+        for (Map.Entry<String, SessionSummary> entry : orderedSessions.entrySet()) {
+            SessionSummary summary = entry.getValue();
+            actionsBySession.put(entry.getKey(), historyRepository.findActionHistoryByTeamKeyAndSession(
+                teamKey,
+                summary.sessionId(),
+                summary.userName(),
+                actionsPageable
+            ));
         }
 
         return orderedSessions.entrySet().stream()
@@ -192,7 +190,7 @@ public class ApiHistoryService {
         ApiCallHistoryEntity entity = new ApiCallHistoryEntity();
         entity.setSessionId(sessionId);
         entity.setUserName(userName == null || userName.isBlank() ? "unknown" : userName);
-        entity.setHttpMethod(request.getMethod());
+        entity.setHttpMethod(normalizeHttpMethod(request.getMethod()));
         String path = extractPath(request);
         entity.setPath(path);
         if (action != null && !action.isBlank()) {
@@ -238,7 +236,7 @@ public class ApiHistoryService {
         ApiCallHistoryEntity entity = new ApiCallHistoryEntity();
         entity.setSessionId(sessionId);
         entity.setUserName(userName == null || userName.isBlank() ? "unknown" : userName);
-        entity.setHttpMethod(httpMethod == null || httpMethod.isBlank() ? "SYSTEM" : httpMethod);
+        entity.setHttpMethod(normalizeHttpMethod(httpMethod));
         entity.setPath(path == null || path.isBlank() ? "/system" : path);
         entity.setAction(action == null || action.isBlank()
             ? actionDescriptionResolver.resolve(entity.getHttpMethod(), entity.getPath())
@@ -272,8 +270,10 @@ public class ApiHistoryService {
         }
     }
 
-    private OffsetDateTime toOffsetDateTime(Instant value) {
-        return value == null ? null : OffsetDateTime.ofInstant(value, ZoneOffset.UTC);
+    private String normalizeHttpMethod(String httpMethod) {
+        return httpMethod == null || httpMethod.isBlank()
+            ? "SYSTEM"
+            : httpMethod.trim().toUpperCase(Locale.ROOT);
     }
 
     private ApiSessionHistoryDto toSessionDto(SessionSummary summary, List<ApiCallHistoryEntity> entities) {

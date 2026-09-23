@@ -12,7 +12,6 @@ import com.sber.isu.sprints_planning.repository.ApiCallHistoryRepository;
 import com.sber.isu.sprints_planning.repository.ApiHistorySessionSummaryProjection;
 import com.sber.isu.sprints_planning.repository.TeamRepository;
 import com.sber.isu.sprints_planning.util.ApiActionDescriptionResolver;
-import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -22,7 +21,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
-import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
 class ApiHistoryServiceTest {
@@ -99,11 +97,11 @@ class ApiHistoryServiceTest {
     @Test
     void readsActionHistoryGroupedBySession() {
         OffsetDateTime latestAt = OffsetDateTime.parse("2026-01-02T10:15:30Z");
-        Instant latestInstant = latestAt.toInstant();
-        ApiHistorySessionSummaryProjection summary = Mockito.mock(ApiHistorySessionSummaryProjection.class);
-        when(summary.getSessionId()).thenReturn("session-1");
-        when(summary.getUserName()).thenReturn("user");
-        when(summary.getLatestCreatedAt()).thenReturn(latestInstant);
+        ApiHistorySessionSummaryProjection summary = new ApiHistorySessionSummaryProjection(
+            "session-1",
+            "user",
+            latestAt
+        );
 
         ApiCallHistoryEntity action = new ApiCallHistoryEntity();
         UUID actionId = UUID.randomUUID();
@@ -118,8 +116,8 @@ class ApiHistoryServiceTest {
         action.setTeamKey("team-a");
 
         when(historyRepository.findActionSessionSummaries(eq("team-a"), any(Pageable.class)))
-            .thenReturn(new PageImpl<>(List.of(summary)));
-        when(historyRepository.findActionHistoryByTeamKeyAndSessionIds(eq("team-a"), eq(List.of("session-1"))))
+            .thenReturn(List.of(summary));
+        when(historyRepository.findActionHistoryByTeamKeyAndSession(eq("team-a"), eq("session-1"), eq("user"), any(Pageable.class)))
             .thenReturn(List.of(action));
 
         var result = service.getHistory("team-a", 0, 10);
@@ -129,5 +127,14 @@ class ApiHistoryServiceTest {
         assertThat(result.get(0).lastActionAt()).isEqualTo(latestAt);
         assertThat(result.get(0).actions()).hasSize(1);
         assertThat(result.get(0).actions().get(0).id()).isEqualTo(actionId);
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(historyRepository).findActionHistoryByTeamKeyAndSession(
+            eq("team-a"),
+            eq("session-1"),
+            eq("user"),
+            pageableCaptor.capture()
+        );
+        assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(200);
     }
 }

@@ -13,32 +13,20 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface ApiCallHistoryRepository extends JpaRepository<ApiCallHistoryEntity, UUID> {
 
-    @Query(
-        value = """
-            SELECT
-                h.session_id AS sessionId,
-                h.user_name AS userName,
-                MAX(h.created_at) AS latestCreatedAt
-            FROM api_call_history h
-            WHERE h.team_key = :teamKey
-              AND UPPER(h.http_method) <> 'GET'
-              AND (h.entity_type IS NULL OR h.entity_type = '')
-            GROUP BY h.session_id, h.user_name
-            ORDER BY MAX(h.created_at) DESC
-            """,
-        countQuery = """
-            SELECT COUNT(*) FROM (
-                SELECT 1
-                FROM api_call_history h
-                WHERE h.team_key = :teamKey
-                  AND UPPER(h.http_method) <> 'GET'
-                  AND (h.entity_type IS NULL OR h.entity_type = '')
-                GROUP BY h.session_id, h.user_name
-            ) grouped_sessions
-            """,
-        nativeQuery = true
-    )
-    Page<ApiHistorySessionSummaryProjection> findActionSessionSummaries(
+    @Query("""
+        select new com.sber.isu.sprints_planning.repository.ApiHistorySessionSummaryProjection(
+            h.sessionId,
+            h.userName,
+            max(h.createdAt)
+        )
+        from ApiCallHistoryEntity h
+        where h.teamKey = :teamKey
+          and h.httpMethod <> 'GET'
+          and (h.entityType is null or h.entityType = '')
+        group by h.sessionId, h.userName
+        order by max(h.createdAt) desc
+        """)
+    List<ApiHistorySessionSummaryProjection> findActionSessionSummaries(
         @Param("teamKey") String teamKey,
         Pageable pageable
     );
@@ -47,14 +35,17 @@ public interface ApiCallHistoryRepository extends JpaRepository<ApiCallHistoryEn
         select h
         from ApiCallHistoryEntity h
         where h.teamKey = :teamKey
-          and h.sessionId in :sessionIds
-          and upper(h.httpMethod) <> 'GET'
+          and h.sessionId = :sessionId
+          and h.userName = :userName
+          and h.httpMethod <> 'GET'
           and (h.entityType is null or h.entityType = '')
         order by h.createdAt desc
         """)
-    List<ApiCallHistoryEntity> findActionHistoryByTeamKeyAndSessionIds(
+    List<ApiCallHistoryEntity> findActionHistoryByTeamKeyAndSession(
         @Param("teamKey") String teamKey,
-        @Param("sessionIds") List<String> sessionIds
+        @Param("sessionId") String sessionId,
+        @Param("userName") String userName,
+        Pageable pageable
     );
 
     Page<ApiCallHistoryEntity> findAllByTeamKeyAndEntityTypeAndEntityId(

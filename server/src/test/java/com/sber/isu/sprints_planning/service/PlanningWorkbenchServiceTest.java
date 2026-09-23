@@ -876,7 +876,7 @@ class PlanningWorkbenchServiceTest {
         private com.sber.isu.sprints_planning.dto.request.TaskCreateRequest lastCreateRequest;
 
         private CapturingTaskService() {
-            super(null, null, null, null, null, null, null, null, null, null, null);
+            super(null, null, null, null, null, null, null, null, null, null, null, null, null);
         }
 
         @Override

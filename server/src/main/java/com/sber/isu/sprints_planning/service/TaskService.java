@@ -1,7 +1,11 @@
 package com.sber.isu.sprints_planning.service;
 
 import com.sber.isu.sprints_planning.dto.TaskDto;
+import com.sber.isu.sprints_planning.dto.TaskAllocationCellDto;
+import com.sber.isu.sprints_planning.dto.TaskAllocationsUpdateDto;
 import com.sber.isu.sprints_planning.dto.TaskHistoryChangeDto;
+import com.sber.isu.sprints_planning.dto.TaskParticipantRemoveDto;
+import com.sber.isu.sprints_planning.dto.TaskParticipantsUpdateDto;
 import com.sber.isu.sprints_planning.dto.ParticipantWorkloadParticipantDto;
 import com.sber.isu.sprints_planning.dto.ParticipantWorkloadRowDto;
 import com.sber.isu.sprints_planning.dto.ParticipantWorkloadTaskDto;
@@ -9,9 +13,12 @@ import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationBulkRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationMultiRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskAllocationChangeRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskAllocationsSetRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskJiraLinksUpdateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskLoadRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskParticipantAddRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskParticipantJiraLinkUpdateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
 import com.sber.isu.sprints_planning.mapper.DtoMapper;
@@ -35,9 +42,12 @@ import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskAllocationRepository;
+import com.sber.isu.sprints_planning.repository.TaskAllocationBulkWriter;
 import com.sber.isu.sprints_planning.repository.TaskCustomerRepository;
 import com.sber.isu.sprints_planning.repository.TaskJiraIssueRepository;
 import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
+import com.sber.isu.sprints_planning.repository.TaskLoadValueProjection;
+import com.sber.isu.sprints_planning.repository.TaskParticipantRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
 import com.sber.isu.sprints_planning.repository.TaskStreamRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -88,8 +98,10 @@ public class TaskService {
         "backlog"
     );
     private final TaskRepository taskRepository;
+    private final TaskParticipantRepository taskParticipantRepository;
     private final TaskLoadRepository taskLoadRepository;
     private final TaskAllocationRepository taskAllocationRepository;
+    private final TaskAllocationBulkWriter taskAllocationBulkWriter;
     private final ParticipantRepository participantRepository;
     private final SprintRepository sprintRepository;
     private final QuarterRepository quarterRepository;
@@ -100,8 +112,10 @@ public class TaskService {
     private final ApiHistoryService apiHistoryService;
 
     public TaskService(TaskRepository taskRepository,
+        TaskParticipantRepository taskParticipantRepository,
         TaskLoadRepository taskLoadRepository,
         TaskAllocationRepository taskAllocationRepository,
+        TaskAllocationBulkWriter taskAllocationBulkWriter,
         ParticipantRepository participantRepository,
         SprintRepository sprintRepository,
         QuarterRepository quarterRepository,
@@ -111,8 +125,10 @@ public class TaskService {
         TaskJiraIssueRepository taskJiraIssueRepository,
         ApiHistoryService apiHistoryService) {
         this.taskRepository = taskRepository;
+        this.taskParticipantRepository = taskParticipantRepository;
         this.taskLoadRepository = taskLoadRepository;
         this.taskAllocationRepository = taskAllocationRepository;
+        this.taskAllocationBulkWriter = taskAllocationBulkWriter;
         this.participantRepository = participantRepository;
         this.sprintRepository = sprintRepository;
         this.quarterRepository = quarterRepository;
@@ -121,6 +137,244 @@ public class TaskService {
         this.taskCustomerRepository = taskCustomerRepository;
         this.taskJiraIssueRepository = taskJiraIssueRepository;
         this.apiHistoryService = apiHistoryService;
+    }
+
+    @Transactional
+    public TaskParticipantsUpdateDto addParticipant(
+        String teamKey,
+        UUID taskId,
+        TaskParticipantAddRequest request
+    ) {
+        UUID participantId = UUID.fromString(request.participantId());
+        TaskEntity task = taskRepository.findByIdAndTeamKeyForUpdate(taskId, teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Task not found"));
+
+        boolean added = taskParticipantRepository.insertIfAbsent(taskId, participantId, teamKey) > 0;
+        List<String> participantIds = taskParticipantRepository.findParticipantIds(taskId, teamKey).stream()
+            .map(UUID::toString)
+            .toList();
+
+        if (!added && !participantIds.contains(participantId.toString())) {
+            throw new EntityNotFoundException("Participant not found");
+        }
+
+        if (added) {
+            task.setUpdatedAt(LocalDate.now());
+            List<String> previousParticipantIds = participantIds.stream()
+                .filter(id -> !id.equals(participantId.toString()))
+                .toList();
+            apiHistoryService.logTaskChange(
+                teamKey,
+                taskId,
+                "task.update",
+                "Изменена задача",
+                List.of(new TaskHistoryChangeDto(
+                    "participantIds",
+                    "Участники",
+                    previousParticipantIds,
+                    participantIds
+                )),
+                Map.of(
+                    "source", "POST /tasks/{id}/participants",
+                    "changedFields", 1
+                )
+            );
+        }
+
+        return new TaskParticipantsUpdateDto(taskId.toString(), participantIds, added, task.getUpdatedAt());
+    }
+
+    @Transactional
+    public TaskParticipantRemoveDto removeParticipant(String teamKey, UUID taskId, UUID participantId) {
+        TaskEntity task = taskRepository.findByIdAndTeamKeyForUpdate(taskId, teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Task not found"));
+        List<String> previousParticipantIds = taskParticipantRepository.findParticipantIds(taskId, teamKey).stream()
+            .map(UUID::toString)
+            .toList();
+        String participantIdValue = participantId.toString();
+        String leaderId = task.getLeaderParticipant() == null
+            ? null
+            : task.getLeaderParticipant().getId().toString();
+
+        if (!previousParticipantIds.contains(participantIdValue)) {
+            return new TaskParticipantRemoveDto(
+                taskId.toString(),
+                previousParticipantIds,
+                List.of(),
+                Map.of(),
+                leaderId,
+                false,
+                task.getUpdatedAt()
+            );
+        }
+
+        List<UUID> affectedSprintIds = taskAllocationRepository.findSprintIdsForParticipant(
+            taskId,
+            participantId,
+            teamKey
+        );
+        taskJiraIssueRepository.deleteForParticipant(teamKey, taskId, participantId);
+        taskAllocationRepository.deleteForParticipant(taskId, participantId, teamKey);
+        taskParticipantRepository.deleteForParticipant(taskId, participantId, teamKey);
+
+        Map<String, BigDecimal> recalculatedLoads = Map.of();
+        if (!affectedSprintIds.isEmpty()) {
+            taskAllocationBulkWriter.rebuildLoads(taskId, teamKey, affectedSprintIds);
+            recalculatedLoads = taskLoadRepository.findValuesForSprints(taskId, teamKey, affectedSprintIds).stream()
+                .collect(Collectors.toMap(
+                    value -> value.getSprintId().toString(),
+                    TaskLoadValueProjection::getDays,
+                    (left, right) -> right,
+                    LinkedHashMap::new
+                ));
+        }
+
+        boolean leaderCleared = Objects.equals(leaderId, participantIdValue);
+        if (leaderCleared) {
+            task.setLeaderParticipant(null);
+            leaderId = null;
+        }
+        task.setUpdatedAt(LocalDate.now());
+
+        List<String> participantIds = previousParticipantIds.stream()
+            .filter(id -> !id.equals(participantIdValue))
+            .toList();
+        List<TaskHistoryChangeDto> changes = new ArrayList<>();
+        changes.add(new TaskHistoryChangeDto(
+            "participantIds",
+            "Участники",
+            previousParticipantIds,
+            participantIds
+        ));
+        if (leaderCleared) {
+            changes.add(new TaskHistoryChangeDto("leaderId", "Лидер", participantIdValue, null));
+        }
+        apiHistoryService.logTaskChange(
+            teamKey,
+            taskId,
+            "task.update",
+            "Изменена задача",
+            changes,
+            Map.of(
+                "source", "DELETE /tasks/{taskId}/participants/{participantId}",
+                "changedFields", changes.size()
+            )
+        );
+
+        return new TaskParticipantRemoveDto(
+            taskId.toString(),
+            participantIds,
+            affectedSprintIds.stream().map(UUID::toString).toList(),
+            recalculatedLoads,
+            leaderId,
+            true,
+            task.getUpdatedAt()
+        );
+    }
+
+    @Transactional
+    public TaskAllocationsUpdateDto setAllocations(
+        String teamKey,
+        UUID taskId,
+        TaskAllocationsSetRequest request
+    ) {
+        LinkedHashMap<AllocationCellKey, BigDecimal> requestedValues = new LinkedHashMap<>();
+        for (TaskAllocationChangeRequest change : request.changes()) {
+            AllocationCellKey key = new AllocationCellKey(
+                change.participantId(),
+                change.sprintId()
+            );
+            if (requestedValues.putIfAbsent(key, normalizeHalfDays(change.days())) != null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Duplicate allocation cell");
+            }
+        }
+
+        TaskEntity task = taskRepository.findByIdAndTeamKeyForUpdate(taskId, teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Task not found"));
+        Set<UUID> participantIds = requestedValues.keySet().stream()
+            .map(AllocationCellKey::participantId)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<UUID> sprintIds = requestedValues.keySet().stream()
+            .map(AllocationCellKey::sprintId)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        Set<UUID> assignedParticipantIds = new HashSet<>(
+            taskParticipantRepository.findAssignedParticipantIds(taskId, teamKey, participantIds)
+        );
+        if (!assignedParticipantIds.containsAll(participantIds)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Participant is not assigned to task");
+        }
+
+        Map<UUID, SprintEntity> sprints = sprintRepository.findByTeamKeyAndIdIn(teamKey, sprintIds).stream()
+            .collect(Collectors.toMap(SprintEntity::getId, Function.identity()));
+        if (sprints.size() != sprintIds.size()) {
+            throw new EntityNotFoundException("Sprint not found");
+        }
+        Map<UUID, ParticipantEntity> participants = participantRepository.findAllById(participantIds).stream()
+            .collect(Collectors.toMap(ParticipantEntity::getId, Function.identity()));
+
+        Map<AllocationCellKey, BigDecimal> previousValues = taskAllocationRepository.findValuesForCells(
+            taskId,
+            teamKey,
+            participantIds,
+            sprintIds
+        ).stream().collect(Collectors.toMap(
+            value -> new AllocationCellKey(value.getParticipantId(), value.getSprintId()),
+            value -> maxOrZero(value.getDays())
+        ));
+
+        List<TaskHistoryChangeDto> changes = new ArrayList<>();
+        requestedValues.forEach((key, days) -> {
+            BigDecimal before = previousValues.getOrDefault(key, BigDecimal.ZERO);
+            if (before.compareTo(days) != 0) {
+                addAllocationHistoryChange(
+                    changes,
+                    participants.get(key.participantId()),
+                    sprints.get(key.sprintId()),
+                    before,
+                    days
+                );
+            }
+        });
+
+        if (!changes.isEmpty()) {
+            List<TaskAllocationBulkWriter.AllocationValue> values = requestedValues.entrySet().stream()
+                .map(entry -> new TaskAllocationBulkWriter.AllocationValue(
+                    taskId,
+                    entry.getKey().participantId(),
+                    entry.getKey().sprintId(),
+                    entry.getValue(),
+                    teamKey
+                ))
+                .toList();
+            taskAllocationBulkWriter.apply(values);
+            taskAllocationBulkWriter.rebuildLoads(taskId, teamKey, new ArrayList<>(sprintIds));
+            task.setUpdatedAt(LocalDate.now());
+            apiHistoryService.logTaskChange(
+                teamKey,
+                taskId,
+                "task.allocations.update",
+                "Изменена нагрузка задачи",
+                changes,
+                Map.of(
+                    "source", "PUT /tasks/{taskId}/allocations",
+                    "changedFields", changes.size()
+                )
+            );
+        }
+
+        Map<String, BigDecimal> loads = new LinkedHashMap<>();
+        sprintIds.forEach(sprintId -> loads.put(sprintId.toString(), BigDecimal.ZERO));
+        taskLoadRepository.findValuesForSprints(taskId, teamKey, new ArrayList<>(sprintIds))
+            .forEach(value -> loads.put(value.getSprintId().toString(), value.getDays()));
+        List<TaskAllocationCellDto> cells = requestedValues.entrySet().stream()
+            .map(entry -> new TaskAllocationCellDto(
+                entry.getKey().participantId().toString(),
+                entry.getKey().sprintId().toString(),
+                entry.getValue()
+            ))
+            .toList();
+        return new TaskAllocationsUpdateDto(taskId.toString(), cells, loads, task.getUpdatedAt());
     }
 
     @Transactional
@@ -378,7 +632,10 @@ public class TaskService {
 
     @Transactional
     public TaskDto update(String teamKey, TaskUpdateRequest request) {
-        TaskEntity entity = taskRepository.findWithDetailsById(UUID.fromString(request.id()), teamKey);
+        UUID taskId = UUID.fromString(request.id());
+        taskRepository.findByIdAndTeamKeyForUpdate(taskId, teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Task not found"));
+        TaskEntity entity = taskRepository.findWithDetailsById(taskId, teamKey);
         if (entity == null) {
             throw new EntityNotFoundException("Task not found");
         }
@@ -639,7 +896,7 @@ public class TaskService {
 
     @Transactional
     public TaskDto upsertAllocation(String teamKey, TaskAllocationRequest request) {
-        TaskEntity task = taskRepository.findByIdAndTeamKey(UUID.fromString(request.taskId()), teamKey)
+        TaskEntity task = taskRepository.findByIdAndTeamKeyForUpdate(UUID.fromString(request.taskId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         ParticipantEntity participant = participantRepository.findByIdAndTeamKey(UUID.fromString(request.participantId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
@@ -718,7 +975,7 @@ public class TaskService {
 
     @Transactional
     public TaskDto upsertAllocations(String teamKey, TaskAllocationBulkRequest request) {
-        TaskEntity task = taskRepository.findByIdAndTeamKey(UUID.fromString(request.taskId()), teamKey)
+        TaskEntity task = taskRepository.findByIdAndTeamKeyForUpdate(UUID.fromString(request.taskId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         ParticipantEntity participant = participantRepository.findByIdAndTeamKey(UUID.fromString(request.participantId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
@@ -767,7 +1024,7 @@ public class TaskService {
 
     @Transactional
     public TaskDto upsertAllocationsMulti(String teamKey, TaskAllocationMultiRequest request) {
-        TaskEntity task = taskRepository.findByIdAndTeamKey(UUID.fromString(request.taskId()), teamKey)
+        TaskEntity task = taskRepository.findByIdAndTeamKeyForUpdate(UUID.fromString(request.taskId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         Map<String, Map<String, BigDecimal>> allocationsByParticipant = request.allocations();
         if (allocationsByParticipant == null || allocationsByParticipant.isEmpty()) {
@@ -830,7 +1087,7 @@ public class TaskService {
 
     @Transactional
     public TaskDto upsertLoad(String teamKey, TaskLoadRequest request) {
-        TaskEntity task = taskRepository.findByIdAndTeamKey(UUID.fromString(request.taskId()), teamKey)
+        TaskEntity task = taskRepository.findByIdAndTeamKeyForUpdate(UUID.fromString(request.taskId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         if (!task.getParticipants().isEmpty() || !task.getAllocations().isEmpty()) {
             throw new org.springframework.web.server.ResponseStatusException(
@@ -1649,6 +1906,9 @@ public class TaskService {
         Integer displayOrder,
         Map<String, String> notes
     ) {
+    }
+
+    private record AllocationCellKey(UUID participantId, UUID sprintId) {
     }
 
 }

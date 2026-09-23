@@ -3,9 +3,12 @@ package com.sber.isu.sprints_planning.controller;
 import com.sber.isu.sprints_planning.dto.ParticipantWorkloadRowDto;
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.TaskHistoryItemDto;
+import com.sber.isu.sprints_planning.dto.TaskParticipantRemoveDto;
+import com.sber.isu.sprints_planning.dto.TaskParticipantsUpdateDto;
 import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskJiraLinksUpdateRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskParticipantAddRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
 import com.sber.isu.sprints_planning.service.ApiHistoryService;
 import com.sber.isu.sprints_planning.service.TaskFilter;
@@ -15,6 +18,7 @@ import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import java.util.UUID;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -134,6 +138,26 @@ public class TaskController {
     public TaskDto updateTask(@PathVariable String teamKey, @RequestBody @Valid TaskUpdateRequest request) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
         return taskService.update(normalizedTeamKey, request);
+    }
+
+    @PostMapping("/tasks/{id:" + UUID_PATTERN + "}/participants")
+    public TaskParticipantsUpdateDto addTaskParticipant(
+        @PathVariable String teamKey,
+        @PathVariable UUID id,
+        @RequestBody @Valid TaskParticipantAddRequest request
+    ) {
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.addParticipant(normalizedTeamKey, id, request);
+    }
+
+    @DeleteMapping("/tasks/{taskId:" + UUID_PATTERN + "}/participants/{participantId:" + UUID_PATTERN + "}")
+    public TaskParticipantRemoveDto removeTaskParticipant(
+        @PathVariable String teamKey,
+        @PathVariable UUID taskId,
+        @PathVariable UUID participantId
+    ) {
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.removeParticipant(normalizedTeamKey, taskId, participantId);
     }
 
     @PostMapping("/tasks/delete")

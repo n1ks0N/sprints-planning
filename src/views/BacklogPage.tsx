@@ -60,6 +60,8 @@ import {
   useGetTasksQuery,
   useAddTaskMutation,
   useUpdateTaskMutation,
+  useAddTaskParticipantMutation,
+  useRemoveTaskParticipantMutation,
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
   useUpsertTaskAllocationBulkMutation,
@@ -2021,6 +2023,8 @@ export default function BacklogPage() {
 
   const [addTask] = useAddTaskMutation();
   const [updateTask] = useUpdateTaskMutation();
+  const [addTaskParticipant] = useAddTaskParticipantMutation();
+  const [removeTaskParticipant] = useRemoveTaskParticipantMutation();
   const [updateTaskJiraLinks] = useUpdateTaskJiraLinksMutation();
   const [deleteTask] = useDeleteTaskMutation();
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
@@ -2283,14 +2287,18 @@ export default function BacklogPage() {
       if (!pid) return;
       if (task.participantIds?.includes(pid)) return;
 
-      updateField(task, { participantIds: [...task.participantIds, pid] });
+      void addTaskParticipant({ taskId: task.id, participantId: pid })
+        .unwrap()
+        .catch((error) => {
+          console.error("Failed to add task participant", error);
+        });
 
       setParticipantOrders((prev) => ({
         ...prev,
         [task.id]: [...(prev[task.id] || task.participantIds), pid],
       }));
     },
-    [updateField]
+    [addTaskParticipant]
   );
 
   const removeParticipantFromTask = React.useCallback(
@@ -2310,20 +2318,13 @@ export default function BacklogPage() {
         return next;
       });
 
-      const patch: Partial<BacklogItem> = {
-        participantIds: task.participantIds.filter((x) => x !== pid),
-      };
-      if ((task as any).leaderId === pid) {
-        (patch as any).leaderId = "";
-      }
-
       try {
-        await updateField(task, patch);
+        await removeTaskParticipant({ taskId: task.id, participantId: pid }).unwrap();
       } catch (error) {
         console.error("Failed to remove participant from task", error);
       }
     },
-    [updateField]
+    [removeTaskParticipant]
   );
 
   const replaceParticipantInTask = React.useCallback(
@@ -2421,9 +2422,12 @@ export default function BacklogPage() {
       (async () => {
         try {
           const bulkAllocations = ids.reduce<Record<string, number>>((acc, sid) => {
-            acc[sid] = normalizeDayAmount(Number(next[sid] || 0));
+            const before = normalizeDayAmount(Number(row[sid] || 0));
+            const after = normalizeDayAmount(Number(next[sid] || 0));
+            if (before !== after) acc[sid] = after;
             return acc;
           }, {});
+          if (!Object.keys(bulkAllocations).length) return;
           await upsertTaskAllocationMulti({
             taskId,
             allocations: {
@@ -2485,15 +2489,20 @@ export default function BacklogPage() {
           const bulkAllocations = Object.entries(nextTaskAllocations).reduce<
             Record<string, Record<string, number>>
           >((acc, [participantId, row]) => {
-            acc[participantId] = ids.reduce<Record<string, number>>(
+            const currentRow = taskAllocations[participantId] || {};
+            const changes = ids.reduce<Record<string, number>>(
               (inner, sid) => {
-                inner[sid] = normalizeDayAmount(Number(row[sid] || 0));
+                const before = normalizeDayAmount(Number(currentRow[sid] || 0));
+                const after = normalizeDayAmount(Number(row[sid] || 0));
+                if (before !== after) inner[sid] = after;
                 return inner;
               },
               {}
             );
+            if (Object.keys(changes).length) acc[participantId] = changes;
             return acc;
           }, {});
+          if (!Object.keys(bulkAllocations).length) return;
           await upsertTaskAllocationMulti({
             taskId: task.id,
             allocations: bulkAllocations,
@@ -2562,9 +2571,12 @@ export default function BacklogPage() {
           const bulkAllocations = Object.entries(nextRow).reduce<
             Record<string, number>
           >((acc, [sid, days]) => {
-            acc[sid] = normalizeDayAmount(Number(days) || 0);
+            const before = normalizeDayAmount(Number(row[sid] || 0));
+            const after = normalizeDayAmount(Number(days) || 0);
+            if (before !== after) acc[sid] = after;
             return acc;
           }, {});
+          if (!Object.keys(bulkAllocations).length) return;
           await upsertTaskAllocationBulk({
             taskId,
             participantId,

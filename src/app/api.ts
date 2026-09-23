@@ -262,6 +262,32 @@ const applyPatches = <Args>(
   );
 
 type TasksPage = Page<BacklogItem>;
+type TaskParticipantsUpdateResponse = {
+  taskId: string;
+  participantIds: string[];
+  added: boolean;
+  updatedAt: string;
+};
+type TaskParticipantRemoveResponse = {
+  taskId: string;
+  participantIds: string[];
+  affectedSprintIds: string[];
+  loads: Record<string, number>;
+  leaderId: string | null;
+  removed: boolean;
+  updatedAt: string;
+};
+type TaskAllocationChange = {
+  participantId: string;
+  sprintId: string;
+  days: number;
+};
+type TaskAllocationsUpdateResponse = {
+  taskId: string;
+  cells: TaskAllocationChange[];
+  loads: Record<string, number>;
+  updatedAt: string;
+};
 type TasksQueryArgs = {
   quarterIds?: string[];
   withoutQuarter?: boolean;
@@ -528,13 +554,68 @@ const applyAllocation = (
   task.updatedAt = new Date().toISOString().slice(0, 10);
 };
 
-const applyBulkAllocation = (
-  task: BacklogItem,
-  participantId: string,
-  allocations: Record<string, number>
+const runAllocationUpdate = async (
+  taskId: string,
+  changes: TaskAllocationChange[],
+  lifecycle: {
+    dispatch: any;
+    getState: () => AnyState;
+    queryFulfilled: Promise<{ data: TaskAllocationsUpdateResponse }>;
+  }
 ) => {
-  for (const [sprintId, days] of Object.entries(allocations || {})) {
-    applyAllocation(task, participantId, sprintId, days);
+  const { dispatch, getState, queryFulfilled } = lifecycle;
+  const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
+    getState,
+    "getTasks",
+    [{ type: "Task", id: taskId }]
+  );
+  const applyChanges = (task: BacklogItem, values: TaskAllocationChange[]) => {
+    values.forEach((cell) =>
+      applyAllocation(task, cell.participantId, cell.sprintId, cell.days)
+    );
+  };
+  const patches = applyPatches(
+    dispatch,
+    "getTasks",
+    cachedArgs,
+    (draft: TasksPage) => {
+      updateTasksDraft(draft, (tasks) => {
+        const task = tasks.find((item) => item.id === taskId);
+        if (task) applyChanges(task, changes);
+      });
+    }
+  );
+  const detailPatch = dispatch(
+    api.util.updateQueryData("getTask", taskId, (draft) => {
+      updateTaskDetailDraft(draft, (task) => applyChanges(task, changes));
+    })
+  );
+
+  try {
+    const { data } = await queryFulfilled;
+    const applyServerResult = (task: BacklogItem) => {
+      applyChanges(task, data.cells);
+      Object.entries(data.loads).forEach(([sprintId, days]) => {
+        if (days > 0) task.loads[sprintId] = days;
+        else delete task.loads[sprintId];
+      });
+      task.updatedAt = data.updatedAt;
+    };
+    applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
+      updateTasksDraft(draft, (tasks) => {
+        const task = tasks.find((item) => item.id === data.taskId);
+        if (task) applyServerResult(task);
+      });
+    });
+    dispatch(
+      api.util.updateQueryData("getTask", data.taskId, (draft) => {
+        updateTaskDetailDraft(draft, applyServerResult);
+      })
+    );
+  } catch (error) {
+    patches.forEach((patch) => patch.undo());
+    detailPatch.undo();
+    notifyError("Не удалось сохранить распределение задачи", error);
   }
 };
 
@@ -1655,6 +1736,159 @@ export const api = createApi({
         },
       }
     ),
+    addTaskParticipant: b.mutation<
+      TaskParticipantsUpdateResponse,
+      { taskId: string; participantId: string }
+    >({
+      query: ({ taskId, participantId }) => ({
+        url: `/tasks/${taskId}/participants`,
+        method: "POST",
+        body: { participantId },
+      }),
+      invalidatesTags: (result) =>
+        result
+          ? [{ type: "ParticipantWorkload" as const, id: "LIST" as const }]
+          : [],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
+          getState,
+          "getTasks",
+          [{ type: "Task", id: arg.taskId }]
+        );
+
+        const appendParticipant = (task: BacklogItem) => {
+          if (!task.participantIds.includes(arg.participantId)) {
+            task.participantIds.push(arg.participantId);
+          }
+        };
+        const patches = applyPatches(
+          dispatch,
+          "getTasks",
+          cachedArgs,
+          (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const task = tasks.find((item) => item.id === arg.taskId);
+              if (task) appendParticipant(task);
+            });
+          }
+        );
+        const detailPatch = dispatch(
+          api.util.updateQueryData("getTask", arg.taskId, (draft) => {
+            updateTaskDetailDraft(draft, appendParticipant);
+          })
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          const applyServerResult = (task: BacklogItem) => {
+            const pendingIds = task.participantIds.filter(
+              (id) => !data.participantIds.includes(id)
+            );
+            task.participantIds = [...data.participantIds, ...pendingIds];
+            task.updatedAt = data.updatedAt;
+          };
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const task = tasks.find((item) => item.id === data.taskId);
+              if (task) applyServerResult(task);
+            });
+          });
+          dispatch(
+            api.util.updateQueryData("getTask", data.taskId, (draft) => {
+              updateTaskDetailDraft(draft, applyServerResult);
+            })
+          );
+        } catch (error) {
+          patches.forEach((patch) => patch.undo());
+          detailPatch.undo();
+          notifyError("Не удалось добавить участника", error);
+        }
+      },
+    }),
+    removeTaskParticipant: b.mutation<
+      TaskParticipantRemoveResponse,
+      { taskId: string; participantId: string }
+    >({
+      query: ({ taskId, participantId }) => ({
+        url: `/tasks/${taskId}/participants/${participantId}`,
+        method: "DELETE",
+      }),
+      invalidatesTags: (result) =>
+        result?.removed
+          ? [
+              { type: "Capacity" as const, id: "LIST" as const },
+              { type: "ParticipantWorkload" as const, id: "LIST" as const },
+            ]
+          : [],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
+          getState,
+          "getTasks",
+          [{ type: "Task", id: arg.taskId }]
+        );
+
+        const applyOptimisticRemoval = (task: BacklogItem) => {
+          const removedAllocations = task.allocations?.[arg.participantId] || {};
+          task.participantIds = task.participantIds.filter(
+            (id) => id !== arg.participantId
+          );
+          if (task.leaderId === arg.participantId) task.leaderId = null;
+          if (task.allocations) delete task.allocations[arg.participantId];
+          if (task.jiraIssues) delete task.jiraIssues[arg.participantId];
+          for (const [sprintId, days] of Object.entries(removedAllocations)) {
+            const nextLoad = (task.loads[sprintId] || 0) - days;
+            if (nextLoad > 0) task.loads[sprintId] = nextLoad;
+            else delete task.loads[sprintId];
+          }
+        };
+        const patches = applyPatches(
+          dispatch,
+          "getTasks",
+          cachedArgs,
+          (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const task = tasks.find((item) => item.id === arg.taskId);
+              if (task) applyOptimisticRemoval(task);
+            });
+          }
+        );
+        const detailPatch = dispatch(
+          api.util.updateQueryData("getTask", arg.taskId, (draft) => {
+            updateTaskDetailDraft(draft, applyOptimisticRemoval);
+          })
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          const applyServerResult = (task: BacklogItem) => {
+            task.participantIds = data.participantIds.slice();
+            task.leaderId = data.leaderId;
+            if (task.allocations) delete task.allocations[arg.participantId];
+            if (task.jiraIssues) delete task.jiraIssues[arg.participantId];
+            for (const sprintId of data.affectedSprintIds) {
+              delete task.loads[sprintId];
+            }
+            Object.assign(task.loads, data.loads);
+            task.updatedAt = data.updatedAt;
+          };
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const task = tasks.find((item) => item.id === data.taskId);
+              if (task) applyServerResult(task);
+            });
+          });
+          dispatch(
+            api.util.updateQueryData("getTask", data.taskId, (draft) => {
+              updateTaskDetailDraft(draft, applyServerResult);
+            })
+          );
+        } catch (error) {
+          patches.forEach((patch) => patch.undo());
+          detailPatch.undo();
+          notifyError("Не удалось удалить участника", error);
+        }
+      },
+    }),
     updateTaskJiraLinks: b.mutation<BacklogItem, TaskJiraLinksUpdateArgs>({
       query: ({ taskId, storyUrl, participantLinks }) => ({
         url: `/tasks/${taskId}/jira-links`,
@@ -1740,109 +1974,74 @@ export const api = createApi({
 
     // Новый (детализация по участникам)
     upsertTaskAllocation: b.mutation<
-      BacklogItem,
+      TaskAllocationsUpdateResponse,
       { taskId: string; participantId: string; sprintId: string; days: number }
     >({
-      query: (body) => ({ url: "/taskalloc", method: "POST", body }),
+      query: ({ taskId, participantId, sprintId, days }) => ({
+        url: `/tasks/${taskId}/allocations`,
+        method: "PUT",
+        body: { changes: [{ participantId, sprintId, days }] },
+      }),
       invalidatesTags: [
-        { type: "Task" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
         { type: "ParticipantWorkload" as const, id: "LIST" as const },
       ],
-      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
-        const detailPatch = dispatch(
-          api.util.updateQueryData("getTask", arg.taskId, (draft) => {
-            updateTaskDetailDraft(draft, (task) =>
-              applyAllocation(task, arg.participantId, arg.sprintId, arg.days)
-            );
-          })
-        );
-
-        try {
-          const { data } = await queryFulfilled;
-          dispatch(
-            api.util.updateQueryData("getTask", data.id, (draft) => {
-              updateTaskDetailDraft(draft, (task) => {
-                Object.assign(task, data);
-              });
-            })
-          );
-        } catch (error) {
-          detailPatch.undo();
-          notifyError("Не удалось сохранить распределение задачи", error);
-        }
+      onQueryStarted(arg, lifecycle) {
+        return runAllocationUpdate(arg.taskId, [arg], lifecycle);
       },
     }),
 
     upsertTaskAllocationBulk: b.mutation<
-      BacklogItem,
+      TaskAllocationsUpdateResponse,
       { taskId: string; participantId: string; allocations: Record<string, number> }
     >({
-      query: (body) => ({ url: "/taskalloc/bulk", method: "POST", body }),
+      query: ({ taskId, participantId, allocations }) => ({
+        url: `/tasks/${taskId}/allocations`,
+        method: "PUT",
+        body: {
+          changes: Object.entries(allocations).map(([sprintId, days]) => ({
+            participantId,
+            sprintId,
+            days,
+          })),
+        },
+      }),
       invalidatesTags: [
-        { type: "Task" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
         { type: "ParticipantWorkload" as const, id: "LIST" as const },
       ],
-      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
-        const detailPatch = dispatch(
-          api.util.updateQueryData("getTask", arg.taskId, (draft) => {
-            updateTaskDetailDraft(draft, (task) =>
-              applyBulkAllocation(task, arg.participantId, arg.allocations)
-            );
-          })
-        );
-
-        try {
-          const { data } = await queryFulfilled;
-          dispatch(
-            api.util.updateQueryData("getTask", data.id, (draft) => {
-              updateTaskDetailDraft(draft, (task) => {
-                Object.assign(task, data);
-              });
-            })
-          );
-        } catch (error) {
-          detailPatch.undo();
-          notifyError("Не удалось сохранить распределение по спринтам", error);
-        }
+      onQueryStarted(arg, lifecycle) {
+        const changes = Object.entries(arg.allocations).map(([sprintId, days]) => ({
+          participantId: arg.participantId,
+          sprintId,
+          days,
+        }));
+        return runAllocationUpdate(arg.taskId, changes, lifecycle);
       },
     }),
 
     upsertTaskAllocationMulti: b.mutation<
-      BacklogItem,
+      TaskAllocationsUpdateResponse,
       { taskId: string; allocations: Record<string, Record<string, number>> }
     >({
-      query: (body) => ({ url: "/taskalloc/bulk/multi", method: "POST", body }),
+      query: ({ taskId, allocations }) => ({
+        url: `/tasks/${taskId}/allocations`,
+        method: "PUT",
+        body: {
+          changes: Object.entries(allocations).flatMap(([participantId, row]) =>
+            Object.entries(row).map(([sprintId, days]) => ({ participantId, sprintId, days }))
+          ),
+        },
+      }),
       invalidatesTags: [
-        { type: "Task" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
         { type: "ParticipantWorkload" as const, id: "LIST" as const },
       ],
-      async onQueryStarted(arg, { dispatch, queryFulfilled }) {
-        const detailPatch = dispatch(
-          api.util.updateQueryData("getTask", arg.taskId, (draft) => {
-            updateTaskDetailDraft(draft, (task) => {
-              Object.entries(arg.allocations).forEach(([participantId, row]) =>
-                applyBulkAllocation(task, participantId, row)
-              );
-            });
-          })
+      onQueryStarted(arg, lifecycle) {
+        const changes = Object.entries(arg.allocations).flatMap(([participantId, row]) =>
+          Object.entries(row).map(([sprintId, days]) => ({ participantId, sprintId, days }))
         );
-
-        try {
-          const { data } = await queryFulfilled;
-          dispatch(
-            api.util.updateQueryData("getTask", data.id, (draft) => {
-              updateTaskDetailDraft(draft, (task) => {
-                Object.assign(task, data);
-              });
-            })
-          );
-        } catch (error) {
-          detailPatch.undo();
-          notifyError("Не удалось сохранить распределение по спринтам", error);
-        }
+        return runAllocationUpdate(arg.taskId, changes, lifecycle);
       },
     }),
 
@@ -2170,6 +2369,8 @@ export const {
   useConfirmJiraIssueNotCreatedMutation,
   useAddTaskMutation,
   useUpdateTaskMutation,
+  useAddTaskParticipantMutation,
+  useRemoveTaskParticipantMutation,
   useUpdateTaskJiraLinksMutation,
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,

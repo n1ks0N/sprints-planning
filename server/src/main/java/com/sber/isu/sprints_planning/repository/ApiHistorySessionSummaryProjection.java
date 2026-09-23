@@ -1,12 +1,10 @@
 package com.sber.isu.sprints_planning.repository;
 
-import java.time.Instant;
+import java.time.OffsetDateTime;
 
-public interface ApiHistorySessionSummaryProjection {
-
-    String getSessionId();
-
-    String getUserName();
-
-    Instant getLatestCreatedAt();
+public record ApiHistorySessionSummaryProjection(
+    String sessionId,
+    String userName,
+    OffsetDateTime latestCreatedAt
+) {
 }

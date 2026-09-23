@@ -7,11 +7,14 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.sber.isu.sprints_planning.dto.ParticipantWorkloadRowDto;
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskAllocationChangeRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskAllocationsSetRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskJiraLinksUpdateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskParticipantJiraLinkUpdateRequest;
@@ -33,10 +36,14 @@ import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TeamRepository;
 import com.sber.isu.sprints_planning.repository.TaskAllocationRepository;
+import com.sber.isu.sprints_planning.repository.TaskAllocationBulkWriter;
+import com.sber.isu.sprints_planning.repository.TaskAllocationValueProjection;
 import com.sber.isu.sprints_planning.repository.ApiCallHistoryRepository;
 import com.sber.isu.sprints_planning.repository.TaskCustomerRepository;
 import com.sber.isu.sprints_planning.repository.TaskJiraIssueRepository;
 import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
+import com.sber.isu.sprints_planning.repository.TaskLoadValueProjection;
+import com.sber.isu.sprints_planning.repository.TaskParticipantRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
 import com.sber.isu.sprints_planning.repository.TaskStreamRepository;
 import com.sber.isu.sprints_planning.repository.ParticipantWorkloadTaskFlatRow;
@@ -68,9 +75,13 @@ class TaskServiceAllocationTest {
     @Mock
     private TaskRepository taskRepository;
     @Mock
+    private TaskParticipantRepository taskParticipantRepository;
+    @Mock
     private TaskLoadRepository taskLoadRepository;
     @Mock
     private TaskAllocationRepository taskAllocationRepository;
+    @Mock
+    private TaskAllocationBulkWriter taskAllocationBulkWriter;
     @Mock
     private ParticipantRepository participantRepository;
     @Mock
@@ -96,8 +107,10 @@ class TaskServiceAllocationTest {
     void setUp() {
         taskService = new TaskService(
             taskRepository,
+            taskParticipantRepository,
             taskLoadRepository,
             taskAllocationRepository,
+            taskAllocationBulkWriter,
             participantRepository,
             sprintRepository,
             quarterRepository,
@@ -112,6 +125,97 @@ class TaskServiceAllocationTest {
                 Runnable::run
             )
         );
+    }
+
+    @Test
+    void setAllocationsUpdatesOnlyRequestedCellsAndAffectedSprintLoads() {
+        TaskEntity task = task("11111111-1111-1111-1111-111111111111");
+        ParticipantEntity participant = participant("22222222-2222-2222-2222-222222222222");
+        SprintEntity sprint = sprint("33333333-3333-3333-3333-333333333333");
+        Set<UUID> participantIds = Set.of(participant.getId());
+        Set<UUID> sprintIds = Set.of(sprint.getId());
+
+        when(taskRepository.findByIdAndTeamKeyForUpdate(task.getId(), "team-a"))
+            .thenReturn(Optional.of(task));
+        when(taskParticipantRepository.findAssignedParticipantIds(task.getId(), "team-a", participantIds))
+            .thenReturn(List.of(participant.getId()));
+        when(sprintRepository.findByTeamKeyAndIdIn("team-a", sprintIds)).thenReturn(List.of(sprint));
+        when(participantRepository.findAllById(participantIds)).thenReturn(List.of(participant));
+        when(taskAllocationRepository.findValuesForCells(
+            task.getId(), "team-a", participantIds, sprintIds
+        )).thenReturn(List.of(allocationValue(participant.getId(), sprint.getId(), "1.0")));
+        when(taskLoadRepository.findValuesForSprints(task.getId(), "team-a", List.of(sprint.getId())))
+            .thenReturn(List.of(loadValue(sprint.getId(), "2.5")));
+
+        var result = taskService.setAllocations(
+            "team-a",
+            task.getId(),
+            new TaskAllocationsSetRequest(List.of(new TaskAllocationChangeRequest(
+                participant.getId(),
+                sprint.getId(),
+                new BigDecimal("2.5")
+            )))
+        );
+
+        assertThat(result.taskId()).isEqualTo(task.getId().toString());
+        assertThat(result.cells()).singleElement().satisfies(cell -> {
+            assertThat(cell.participantId()).isEqualTo(participant.getId().toString());
+            assertThat(cell.sprintId()).isEqualTo(sprint.getId().toString());
+            assertThat(cell.days()).isEqualByComparingTo("2.5");
+        });
+        assertThat(result.loads()).containsExactlyEntriesOf(
+            Map.of(sprint.getId().toString(), new BigDecimal("2.5"))
+        );
+        assertThat(task.getUpdatedAt()).isEqualTo(LocalDate.now());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TaskAllocationBulkWriter.AllocationValue>> valuesCaptor =
+            ArgumentCaptor.forClass(List.class);
+        verify(taskAllocationBulkWriter).apply(valuesCaptor.capture());
+        assertThat(valuesCaptor.getValue()).singleElement().satisfies(value -> {
+            assertThat(value.taskId()).isEqualTo(task.getId());
+            assertThat(value.participantId()).isEqualTo(participant.getId());
+            assertThat(value.sprintId()).isEqualTo(sprint.getId());
+            assertThat(value.days()).isEqualByComparingTo("2.5");
+            assertThat(value.teamKey()).isEqualTo("team-a");
+        });
+        verify(taskAllocationBulkWriter).rebuildLoads(task.getId(), "team-a", List.of(sprint.getId()));
+        verify(taskRepository, never()).findWithDetailsById(any(), any());
+        verify(sprintRepository, never()).findByTeamKeyOrderByQuarterAndOrder(any());
+    }
+
+    @Test
+    void setAllocationsSkipsWritesWhenValueDidNotChange() {
+        TaskEntity task = task("11111111-1111-1111-1111-111111111111");
+        ParticipantEntity participant = participant("22222222-2222-2222-2222-222222222222");
+        SprintEntity sprint = sprint("33333333-3333-3333-3333-333333333333");
+        Set<UUID> participantIds = Set.of(participant.getId());
+        Set<UUID> sprintIds = Set.of(sprint.getId());
+
+        when(taskRepository.findByIdAndTeamKeyForUpdate(task.getId(), "team-a"))
+            .thenReturn(Optional.of(task));
+        when(taskParticipantRepository.findAssignedParticipantIds(task.getId(), "team-a", participantIds))
+            .thenReturn(List.of(participant.getId()));
+        when(sprintRepository.findByTeamKeyAndIdIn("team-a", sprintIds)).thenReturn(List.of(sprint));
+        when(participantRepository.findAllById(participantIds)).thenReturn(List.of(participant));
+        when(taskAllocationRepository.findValuesForCells(
+            task.getId(), "team-a", participantIds, sprintIds
+        )).thenReturn(List.of(allocationValue(participant.getId(), sprint.getId(), "2.5")));
+        when(taskLoadRepository.findValuesForSprints(task.getId(), "team-a", List.of(sprint.getId())))
+            .thenReturn(List.of(loadValue(sprint.getId(), "2.5")));
+
+        var result = taskService.setAllocations(
+            "team-a",
+            task.getId(),
+            new TaskAllocationsSetRequest(List.of(new TaskAllocationChangeRequest(
+                participant.getId(),
+                sprint.getId(),
+                new BigDecimal("2.5")
+            )))
+        );
+
+        assertThat(result.updatedAt()).isEqualTo(LocalDate.of(2026, 1, 1));
+        verifyNoInteractions(taskAllocationBulkWriter);
     }
 
     @Test
@@ -185,6 +289,7 @@ class TaskServiceAllocationTest {
         task.getLoads().add(taskLoad(task, sprint, new BigDecimal("3.0")));
 
         when(taskRepository.findWithDetailsById(task.getId(), "team-a")).thenReturn(task);
+        when(taskRepository.findByIdAndTeamKeyForUpdate(task.getId(), "team-a")).thenReturn(Optional.of(task));
         when(sprintRepository.findByTeamKeyOrderByQuarterAndOrder("team-a")).thenReturn(List.of(sprint));
         when(participantRepository.findByIdAndTeamKey(newParticipant.getId(), "team-a")).thenReturn(Optional.of(newParticipant));
         when(taskAllocationRepository.findById(newAllocationId)).thenAnswer(invocation -> findAllocation(task, newAllocationId));
@@ -310,7 +415,7 @@ class TaskServiceAllocationTest {
         TaskEntity task = task("11111111-1111-1111-1111-111111111111");
         ParticipantEntity participant = participant("22222222-2222-2222-2222-222222222222");
         task.getParticipants().add(participantLink(task, participant, "team-a"));
-        when(taskRepository.findByIdAndTeamKey(task.getId(), "team-a")).thenReturn(Optional.of(task));
+        when(taskRepository.findByIdAndTeamKeyForUpdate(task.getId(), "team-a")).thenReturn(Optional.of(task));
 
         assertThatThrownBy(() -> taskService.upsertLoad(
             "team-a",
@@ -447,7 +552,7 @@ class TaskServiceAllocationTest {
     }
 
     private void commonTaskStubs(TaskEntity task, SprintEntity sprint) {
-        when(taskRepository.findByIdAndTeamKey(task.getId(), "team-a")).thenReturn(Optional.of(task));
+        when(taskRepository.findByIdAndTeamKeyForUpdate(task.getId(), "team-a")).thenReturn(Optional.of(task));
         when(sprintRepository.findByTeamKeyOrderByQuarterAndOrder("team-a")).thenReturn(List.of(sprint));
         lenient().when(taskJiraIssueRepository.findAllByTeamKeyAndTaskIdIn("team-a", Set.of(task.getId()))).thenReturn(List.of());
     }
@@ -545,5 +650,38 @@ class TaskServiceAllocationTest {
         sprint.setOrder(1);
         sprint.setTeamKey("team-a");
         return sprint;
+    }
+
+    private TaskAllocationValueProjection allocationValue(UUID participantId, UUID sprintId, String days) {
+        return new TaskAllocationValueProjection() {
+            @Override
+            public UUID getParticipantId() {
+                return participantId;
+            }
+
+            @Override
+            public UUID getSprintId() {
+                return sprintId;
+            }
+
+            @Override
+            public BigDecimal getDays() {
+                return new BigDecimal(days);
+            }
+        };
+    }
+
+    private TaskLoadValueProjection loadValue(UUID sprintId, String days) {
+        return new TaskLoadValueProjection() {
+            @Override
+            public UUID getSprintId() {
+                return sprintId;
+            }
+
+            @Override
+            public BigDecimal getDays() {
+                return new BigDecimal(days);
+            }
+        };
     }
 }

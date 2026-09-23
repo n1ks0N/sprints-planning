@@ -1,14 +1,18 @@
 package com.sber.isu.sprints_planning.controller;
 
 import com.sber.isu.sprints_planning.dto.TaskDto;
+import com.sber.isu.sprints_planning.dto.TaskAllocationsUpdateDto;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationBulkRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationMultiRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskAllocationRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskAllocationsSetRequest;
 import com.sber.isu.sprints_planning.service.TaskService;
 import com.sber.isu.sprints_planning.util.TeamKeyNormalizer;
 import jakarta.validation.Valid;
+import java.util.UUID;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -21,6 +25,15 @@ public class TaskAllocationController {
 
     public TaskAllocationController(TaskService taskService) {
         this.taskService = taskService;
+    }
+
+    @PutMapping("/tasks/{taskId}/allocations")
+    public TaskAllocationsUpdateDto setAllocations(
+        @PathVariable String teamKey,
+        @PathVariable UUID taskId,
+        @RequestBody @Valid TaskAllocationsSetRequest request
+    ) {
+        return taskService.setAllocations(TeamKeyNormalizer.normalize(teamKey), taskId, request);
     }
 
     @PostMapping("/taskalloc")

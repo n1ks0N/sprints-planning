@@ -1419,7 +1419,7 @@ public class JiraIssueExportService {
         return RestClient.builder()
             .baseUrl(baseUrl)
             .requestFactory(requestFactory)
-            .defaultHeader(HttpHeaders.AUTHORIZATION, "Basic " + token)
+            .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
             .build();
     }
