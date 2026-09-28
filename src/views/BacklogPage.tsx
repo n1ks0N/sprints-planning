@@ -62,6 +62,7 @@ import {
   useUpdateTaskMutation,
   useAddTaskParticipantMutation,
   useRemoveTaskParticipantMutation,
+  useReplaceTaskParticipantMutation,
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,
   useUpsertTaskAllocationBulkMutation,
@@ -2025,6 +2026,7 @@ export default function BacklogPage() {
   const [updateTask] = useUpdateTaskMutation();
   const [addTaskParticipant] = useAddTaskParticipantMutation();
   const [removeTaskParticipant] = useRemoveTaskParticipantMutation();
+  const [replaceTaskParticipant] = useReplaceTaskParticipantMutation();
   const [updateTaskJiraLinks] = useUpdateTaskJiraLinksMutation();
   const [deleteTask] = useDeleteTaskMutation();
   const [upsertTaskAllocation] = useUpsertTaskAllocationMutation();
@@ -2282,27 +2284,48 @@ export default function BacklogPage() {
     []
   );
 
+  const restoreTaskAllocations = React.useCallback(
+    (
+      taskId: string,
+      snapshot: Record<string, Record<string, number>> | undefined
+    ) => {
+      setAllocations((prev) => {
+        const next = { ...prev };
+        if (snapshot) next[taskId] = snapshot;
+        else delete next[taskId];
+        return next;
+      });
+    },
+    []
+  );
+
   const addParticipantToTask = React.useCallback(
-    (task: BacklogItem, pid: string) => {
+    async (task: BacklogItem, pid: string) => {
       if (!pid) return;
       if (task.participantIds?.includes(pid)) return;
 
-      void addTaskParticipant({ taskId: task.id, participantId: pid })
-        .unwrap()
-        .catch((error) => {
-          console.error("Failed to add task participant", error);
-        });
+      const previousOrder = (participantOrders[task.id] || task.participantIds).slice();
 
       setParticipantOrders((prev) => ({
         ...prev,
-        [task.id]: [...(prev[task.id] || task.participantIds), pid],
+        [task.id]: [...previousOrder, pid],
       }));
+
+      try {
+        await addTaskParticipant({ taskId: task.id, participantId: pid }).unwrap();
+      } catch (error) {
+        setParticipantOrders((prev) => ({ ...prev, [task.id]: previousOrder }));
+        console.error("Failed to add task participant", error);
+      }
     },
-    [addTaskParticipant]
+    [addTaskParticipant, participantOrders]
   );
 
   const removeParticipantFromTask = React.useCallback(
     async (task: BacklogItem, pid: string) => {
+      const previousTaskAllocations = allocations[task.id];
+      const previousOrder = (participantOrders[task.id] || task.participantIds).slice();
+
       setAllocations((prev) => {
         const prevTask = prev[task.id];
         if (!prevTask || !prevTask[pid]) return prev;
@@ -2321,10 +2344,12 @@ export default function BacklogPage() {
       try {
         await removeTaskParticipant({ taskId: task.id, participantId: pid }).unwrap();
       } catch (error) {
+        restoreTaskAllocations(task.id, previousTaskAllocations);
+        setParticipantOrders((prev) => ({ ...prev, [task.id]: previousOrder }));
         console.error("Failed to remove participant from task", error);
       }
     },
-    [removeTaskParticipant]
+    [allocations, participantOrders, removeTaskParticipant, restoreTaskAllocations]
   );
 
   const replaceParticipantInTask = React.useCallback(
@@ -2333,21 +2358,10 @@ export default function BacklogPage() {
       if (!task.participantIds.includes(fromPid)) return;
       if (task.participantIds.includes(toPid)) return;
 
-      const participantIds = task.participantIds.map((id) =>
-        id === fromPid ? toPid : id
-      );
-      const taskAllocations = allocations[task.id] || {};
+      const previousTaskAllocations = allocations[task.id];
+      const previousOrder = (participantOrders[task.id] || task.participantIds).slice();
+      const taskAllocations = previousTaskAllocations || {};
       const rowToMove = taskAllocations[fromPid] || {};
-      const nextAllocations = Object.entries(taskAllocations).reduce<
-        Record<string, Record<string, number>>
-      >((acc, [pid, row]) => {
-        if (pid === fromPid) return acc;
-        acc[pid] = { ...row };
-        return acc;
-      }, {});
-
-      nextAllocations[toPid] = { ...rowToMove };
-
       setAllocations((prev) => {
         const prevTask = prev[task.id] || {};
         const movedRow = prevTask[fromPid] || rowToMove;
@@ -2369,22 +2383,24 @@ export default function BacklogPage() {
         };
       });
 
-      const patch: Partial<BacklogItem> = {
-        participantIds,
-        allocations: nextAllocations,
-      };
-
-      if ((task as any).leaderId === fromPid) {
-        (patch as any).leaderId = toPid;
-      }
-
       try {
-        await updateField(task, patch);
+        await replaceTaskParticipant({
+          taskId: task.id,
+          fromParticipantId: fromPid,
+          toParticipantId: toPid,
+        }).unwrap();
       } catch (error) {
+        restoreTaskAllocations(task.id, previousTaskAllocations);
+        setParticipantOrders((prev) => ({ ...prev, [task.id]: previousOrder }));
         console.error("Failed to replace participant", error);
       }
     },
-    [allocations, updateField]
+    [
+      allocations,
+      participantOrders,
+      replaceTaskParticipant,
+      restoreTaskAllocations,
+    ]
   );
 
   const shiftRow = React.useCallback(

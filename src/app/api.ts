@@ -277,6 +277,15 @@ type TaskParticipantRemoveResponse = {
   removed: boolean;
   updatedAt: string;
 };
+type TaskParticipantReplaceResponse = {
+  taskId: string;
+  participantIds: string[];
+  fromParticipantId: string;
+  toParticipantId: string;
+  leaderId: string | null;
+  replaced: boolean;
+  updatedAt: string;
+};
 type TaskAllocationChange = {
   participantId: string;
   sprintId: string;
@@ -1889,6 +1898,98 @@ export const api = createApi({
         }
       },
     }),
+    replaceTaskParticipant: b.mutation<
+      TaskParticipantReplaceResponse,
+      { taskId: string; fromParticipantId: string; toParticipantId: string }
+    >({
+      query: ({ taskId, fromParticipantId, toParticipantId }) => ({
+        url: `/tasks/${taskId}/participants/${fromParticipantId}`,
+        method: "PUT",
+        body: { participantId: toParticipantId },
+      }),
+      invalidatesTags: (result) =>
+        result?.replaced
+          ? [
+              { type: "Capacity" as const, id: "LIST" as const },
+              { type: "ParticipantWorkload" as const, id: "LIST" as const },
+            ]
+          : [],
+      async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
+        const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
+          getState,
+          "getTasks",
+          [{ type: "Task", id: arg.taskId }]
+        );
+        const applyReplacement = (
+          task: BacklogItem,
+          participantIds: string[],
+          leaderId: string | null,
+          updatedAt?: string
+        ) => {
+          task.participantIds = participantIds.slice();
+          const movedAllocations = task.allocations?.[arg.fromParticipantId];
+          if (task.allocations) {
+            delete task.allocations[arg.fromParticipantId];
+            if (movedAllocations) {
+              task.allocations[arg.toParticipantId] = movedAllocations;
+            }
+          }
+          if (task.jiraIssues) delete task.jiraIssues[arg.fromParticipantId];
+          task.leaderId = leaderId;
+          if (updatedAt) task.updatedAt = updatedAt;
+        };
+        const optimisticParticipantIds = (task: BacklogItem) =>
+          task.participantIds.map((id) =>
+            id === arg.fromParticipantId ? arg.toParticipantId : id
+          );
+        const applyOptimisticReplacement = (task: BacklogItem) => {
+          applyReplacement(
+            task,
+            optimisticParticipantIds(task),
+            task.leaderId === arg.fromParticipantId
+              ? arg.toParticipantId
+              : task.leaderId ?? null
+          );
+        };
+        const patches = applyPatches(
+          dispatch,
+          "getTasks",
+          cachedArgs,
+          (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const task = tasks.find((item) => item.id === arg.taskId);
+              if (task) applyOptimisticReplacement(task);
+            });
+          }
+        );
+        const detailPatch = dispatch(
+          api.util.updateQueryData("getTask", arg.taskId, (draft) => {
+            updateTaskDetailDraft(draft, applyOptimisticReplacement);
+          })
+        );
+
+        try {
+          const { data } = await queryFulfilled;
+          const applyServerResult = (task: BacklogItem) =>
+            applyReplacement(task, data.participantIds, data.leaderId, data.updatedAt);
+          applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
+            updateTasksDraft(draft, (tasks) => {
+              const task = tasks.find((item) => item.id === data.taskId);
+              if (task) applyServerResult(task);
+            });
+          });
+          dispatch(
+            api.util.updateQueryData("getTask", data.taskId, (draft) => {
+              updateTaskDetailDraft(draft, applyServerResult);
+            })
+          );
+        } catch (error) {
+          patches.forEach((patch) => patch.undo());
+          detailPatch.undo();
+          notifyError("Не удалось заменить участника", error);
+        }
+      },
+    }),
     updateTaskJiraLinks: b.mutation<BacklogItem, TaskJiraLinksUpdateArgs>({
       query: ({ taskId, storyUrl, participantLinks }) => ({
         url: `/tasks/${taskId}/jira-links`,
@@ -2371,6 +2472,7 @@ export const {
   useUpdateTaskMutation,
   useAddTaskParticipantMutation,
   useRemoveTaskParticipantMutation,
+  useReplaceTaskParticipantMutation,
   useUpdateTaskJiraLinksMutation,
   useDeleteTaskMutation,
   useUpsertTaskAllocationMutation,

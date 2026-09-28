@@ -36,8 +36,6 @@ import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TeamRepository;
 import com.sber.isu.sprints_planning.repository.TaskAllocationRepository;
-import com.sber.isu.sprints_planning.repository.TaskAllocationBulkWriter;
-import com.sber.isu.sprints_planning.repository.TaskAllocationValueProjection;
 import com.sber.isu.sprints_planning.repository.ApiCallHistoryRepository;
 import com.sber.isu.sprints_planning.repository.TaskCustomerRepository;
 import com.sber.isu.sprints_planning.repository.TaskJiraIssueRepository;
@@ -48,6 +46,7 @@ import com.sber.isu.sprints_planning.repository.TaskRepository;
 import com.sber.isu.sprints_planning.repository.TaskStreamRepository;
 import com.sber.isu.sprints_planning.repository.ParticipantWorkloadTaskFlatRow;
 import com.sber.isu.sprints_planning.util.ApiActionDescriptionResolver;
+import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -81,7 +80,7 @@ class TaskServiceAllocationTest {
     @Mock
     private TaskAllocationRepository taskAllocationRepository;
     @Mock
-    private TaskAllocationBulkWriter taskAllocationBulkWriter;
+    private EntityManager entityManager;
     @Mock
     private ParticipantRepository participantRepository;
     @Mock
@@ -110,7 +109,7 @@ class TaskServiceAllocationTest {
             taskParticipantRepository,
             taskLoadRepository,
             taskAllocationRepository,
-            taskAllocationBulkWriter,
+            entityManager,
             participantRepository,
             sprintRepository,
             quarterRepository,
@@ -140,10 +139,14 @@ class TaskServiceAllocationTest {
         when(taskParticipantRepository.findAssignedParticipantIds(task.getId(), "team-a", participantIds))
             .thenReturn(List.of(participant.getId()));
         when(sprintRepository.findByTeamKeyAndIdIn("team-a", sprintIds)).thenReturn(List.of(sprint));
-        when(participantRepository.findAllById(participantIds)).thenReturn(List.of(participant));
-        when(taskAllocationRepository.findValuesForCells(
-            task.getId(), "team-a", participantIds, sprintIds
-        )).thenReturn(List.of(allocationValue(participant.getId(), sprint.getId(), "1.0")));
+        when(participantRepository.findByTeamKeyAndIdIn("team-a", participantIds)).thenReturn(List.of(participant));
+        TaskAllocationEntity existingAllocation = taskAllocation(task, participant, sprint, new BigDecimal("1.0"));
+        when(taskAllocationRepository.findEntitiesForCells(task.getId(), "team-a", participantIds, sprintIds))
+            .thenReturn(List.of(existingAllocation));
+        when(taskAllocationRepository.sumDaysByTaskAndSprints(task.getId(), "team-a", sprintIds))
+            .thenReturn(List.of(loadValue(sprint.getId(), "2.5")));
+        when(taskLoadRepository.findEntitiesForSprints(task.getId(), "team-a", sprintIds))
+            .thenReturn(List.of());
         when(taskLoadRepository.findValuesForSprints(task.getId(), "team-a", List.of(sprint.getId())))
             .thenReturn(List.of(loadValue(sprint.getId(), "2.5")));
 
@@ -168,18 +171,10 @@ class TaskServiceAllocationTest {
         );
         assertThat(task.getUpdatedAt()).isEqualTo(LocalDate.now());
 
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<TaskAllocationBulkWriter.AllocationValue>> valuesCaptor =
-            ArgumentCaptor.forClass(List.class);
-        verify(taskAllocationBulkWriter).apply(valuesCaptor.capture());
-        assertThat(valuesCaptor.getValue()).singleElement().satisfies(value -> {
-            assertThat(value.taskId()).isEqualTo(task.getId());
-            assertThat(value.participantId()).isEqualTo(participant.getId());
-            assertThat(value.sprintId()).isEqualTo(sprint.getId());
-            assertThat(value.days()).isEqualByComparingTo("2.5");
-            assertThat(value.teamKey()).isEqualTo("team-a");
-        });
-        verify(taskAllocationBulkWriter).rebuildLoads(task.getId(), "team-a", List.of(sprint.getId()));
+        assertThat(existingAllocation.getDays()).isEqualByComparingTo("2.5");
+        verify(taskAllocationRepository, never()).saveAll(any());
+        verify(taskAllocationRepository).sumDaysByTaskAndSprints(task.getId(), "team-a", sprintIds);
+        verify(entityManager).persist(any(TaskLoadEntity.class));
         verify(taskRepository, never()).findWithDetailsById(any(), any());
         verify(sprintRepository, never()).findByTeamKeyOrderByQuarterAndOrder(any());
     }
@@ -197,10 +192,12 @@ class TaskServiceAllocationTest {
         when(taskParticipantRepository.findAssignedParticipantIds(task.getId(), "team-a", participantIds))
             .thenReturn(List.of(participant.getId()));
         when(sprintRepository.findByTeamKeyAndIdIn("team-a", sprintIds)).thenReturn(List.of(sprint));
-        when(participantRepository.findAllById(participantIds)).thenReturn(List.of(participant));
-        when(taskAllocationRepository.findValuesForCells(
-            task.getId(), "team-a", participantIds, sprintIds
-        )).thenReturn(List.of(allocationValue(participant.getId(), sprint.getId(), "2.5")));
+        when(participantRepository.findByTeamKeyAndIdIn("team-a", participantIds)).thenReturn(List.of(participant));
+        TaskAllocationEntity existingAllocation = taskAllocation(
+            task, participant, sprint, new BigDecimal("2.5")
+        );
+        when(taskAllocationRepository.findEntitiesForCells(task.getId(), "team-a", participantIds, sprintIds))
+            .thenReturn(List.of(existingAllocation));
         when(taskLoadRepository.findValuesForSprints(task.getId(), "team-a", List.of(sprint.getId())))
             .thenReturn(List.of(loadValue(sprint.getId(), "2.5")));
 
@@ -215,7 +212,9 @@ class TaskServiceAllocationTest {
         );
 
         assertThat(result.updatedAt()).isEqualTo(LocalDate.of(2026, 1, 1));
-        verifyNoInteractions(taskAllocationBulkWriter);
+        verify(taskAllocationRepository, never()).saveAll(any());
+        verify(taskAllocationRepository, never()).deleteAll(any());
+        verify(taskAllocationRepository, never()).sumDaysByTaskAndSprints(any(), any(), any());
     }
 
     @Test
@@ -650,25 +649,6 @@ class TaskServiceAllocationTest {
         sprint.setOrder(1);
         sprint.setTeamKey("team-a");
         return sprint;
-    }
-
-    private TaskAllocationValueProjection allocationValue(UUID participantId, UUID sprintId, String days) {
-        return new TaskAllocationValueProjection() {
-            @Override
-            public UUID getParticipantId() {
-                return participantId;
-            }
-
-            @Override
-            public UUID getSprintId() {
-                return sprintId;
-            }
-
-            @Override
-            public BigDecimal getDays() {
-                return new BigDecimal(days);
-            }
-        };
     }
 
     private TaskLoadValueProjection loadValue(UUID sprintId, String days) {

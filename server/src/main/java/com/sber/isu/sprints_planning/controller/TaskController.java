@@ -4,11 +4,13 @@ import com.sber.isu.sprints_planning.dto.ParticipantWorkloadRowDto;
 import com.sber.isu.sprints_planning.dto.TaskDto;
 import com.sber.isu.sprints_planning.dto.TaskHistoryItemDto;
 import com.sber.isu.sprints_planning.dto.TaskParticipantRemoveDto;
+import com.sber.isu.sprints_planning.dto.TaskParticipantReplaceDto;
 import com.sber.isu.sprints_planning.dto.TaskParticipantsUpdateDto;
 import com.sber.isu.sprints_planning.dto.request.IdRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskCreateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskJiraLinksUpdateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskParticipantAddRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskParticipantReplaceRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
 import com.sber.isu.sprints_planning.service.ApiHistoryService;
 import com.sber.isu.sprints_planning.service.TaskFilter;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -158,6 +161,17 @@ public class TaskController {
     ) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
         return taskService.removeParticipant(normalizedTeamKey, taskId, participantId);
+    }
+
+    @PutMapping("/tasks/{taskId:" + UUID_PATTERN + "}/participants/{participantId:" + UUID_PATTERN + "}")
+    public TaskParticipantReplaceDto replaceTaskParticipant(
+        @PathVariable String teamKey,
+        @PathVariable UUID taskId,
+        @PathVariable UUID participantId,
+        @RequestBody @Valid TaskParticipantReplaceRequest request
+    ) {
+        String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);
+        return taskService.replaceParticipant(normalizedTeamKey, taskId, participantId, request);
     }
 
     @PostMapping("/tasks/delete")

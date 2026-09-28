@@ -1,6 +1,7 @@
 package com.sber.isu.sprints_planning.repository;
 
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -10,5 +11,7 @@ public interface ParticipantRepository extends JpaRepository<ParticipantEntity, 
     List<ParticipantEntity> findAllByTeamKeyOrderByDisplayOrderAsc(String teamKey);
 
     Optional<ParticipantEntity> findByIdAndTeamKey(UUID id, String teamKey);
+
+    List<ParticipantEntity> findByTeamKeyAndIdIn(String teamKey, Collection<UUID> ids);
 
 }

@@ -9,15 +9,21 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.sber.isu.sprints_planning.dto.request.TaskParticipantAddRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskParticipantReplaceRequest;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
+import com.sber.isu.sprints_planning.model.SprintEntity;
+import com.sber.isu.sprints_planning.model.TaskAllocationEntity;
+import com.sber.isu.sprints_planning.model.TaskAllocationId;
 import com.sber.isu.sprints_planning.model.TaskEntity;
+import com.sber.isu.sprints_planning.model.TaskLoadEntity;
+import com.sber.isu.sprints_planning.model.TaskParticipantEntity;
+import com.sber.isu.sprints_planning.model.TaskParticipantId;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
 import com.sber.isu.sprints_planning.repository.ApiCallHistoryRepository;
 import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskAllocationRepository;
-import com.sber.isu.sprints_planning.repository.TaskAllocationBulkWriter;
 import com.sber.isu.sprints_planning.repository.TaskCustomerRepository;
 import com.sber.isu.sprints_planning.repository.TaskJiraIssueRepository;
 import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
@@ -27,6 +33,7 @@ import com.sber.isu.sprints_planning.repository.TaskRepository;
 import com.sber.isu.sprints_planning.repository.TaskStreamRepository;
 import com.sber.isu.sprints_planning.repository.TeamRepository;
 import com.sber.isu.sprints_planning.util.ApiActionDescriptionResolver;
+import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -53,7 +60,7 @@ class TaskServiceParticipantTest {
     @Mock private TaskParticipantRepository taskParticipantRepository;
     @Mock private TaskLoadRepository taskLoadRepository;
     @Mock private TaskAllocationRepository taskAllocationRepository;
-    @Mock private TaskAllocationBulkWriter taskAllocationBulkWriter;
+    @Mock private EntityManager entityManager;
     @Mock private ParticipantRepository participantRepository;
     @Mock private SprintRepository sprintRepository;
     @Mock private QuarterRepository quarterRepository;
@@ -73,7 +80,7 @@ class TaskServiceParticipantTest {
             taskParticipantRepository,
             taskLoadRepository,
             taskAllocationRepository,
-            taskAllocationBulkWriter,
+            entityManager,
             participantRepository,
             sprintRepository,
             quarterRepository,
@@ -93,10 +100,13 @@ class TaskServiceParticipantTest {
     @Test
     void addParticipantUsesOnlyLightweightQueriesAndReturnsCanonicalOrder() {
         TaskEntity task = task();
+        ParticipantEntity participant = participant(PARTICIPANT_ID);
         when(taskRepository.findByIdAndTeamKeyForUpdate(TASK_ID, TEAM_KEY)).thenReturn(Optional.of(task));
-        when(taskParticipantRepository.insertIfAbsent(TASK_ID, PARTICIPANT_ID, TEAM_KEY)).thenReturn(1);
         when(taskParticipantRepository.findParticipantIds(TASK_ID, TEAM_KEY))
-            .thenReturn(List.of(EXISTING_PARTICIPANT_ID, PARTICIPANT_ID));
+            .thenReturn(List.of(EXISTING_PARTICIPANT_ID));
+        when(participantRepository.findByIdAndTeamKey(PARTICIPANT_ID, TEAM_KEY))
+            .thenReturn(Optional.of(participant));
+        when(taskParticipantRepository.findMaxDisplayOrder(TASK_ID, TEAM_KEY)).thenReturn(0);
 
         var result = taskService.addParticipant(
             TEAM_KEY,
@@ -112,7 +122,8 @@ class TaskServiceParticipantTest {
         assertThat(result.added()).isTrue();
         assertThat(result.updatedAt()).isEqualTo(LocalDate.now());
         assertThat(task.getUpdatedAt()).isEqualTo(LocalDate.now());
-        verifyNoHeavyTaskGraphQueries();
+        verify(taskParticipantRepository).save(any(TaskParticipantEntity.class));
+        verify(taskRepository, never()).findWithDetailsById(any(), any());
     }
 
     @Test
@@ -120,7 +131,6 @@ class TaskServiceParticipantTest {
         TaskEntity task = task();
         LocalDate originalUpdatedAt = task.getUpdatedAt();
         when(taskRepository.findByIdAndTeamKeyForUpdate(TASK_ID, TEAM_KEY)).thenReturn(Optional.of(task));
-        when(taskParticipantRepository.insertIfAbsent(TASK_ID, PARTICIPANT_ID, TEAM_KEY)).thenReturn(0);
         when(taskParticipantRepository.findParticipantIds(TASK_ID, TEAM_KEY))
             .thenReturn(List.of(EXISTING_PARTICIPANT_ID, PARTICIPANT_ID));
 
@@ -137,15 +147,17 @@ class TaskServiceParticipantTest {
         );
         assertThat(task.getUpdatedAt()).isEqualTo(originalUpdatedAt);
         assertThat(result.updatedAt()).isEqualTo(originalUpdatedAt);
-        verifyNoHeavyTaskGraphQueries();
+        verify(taskParticipantRepository, never()).save(any());
+        verifyNoInteractions(participantRepository);
+        verify(taskRepository, never()).findWithDetailsById(any(), any());
     }
 
     @Test
     void addParticipantRejectsParticipantFromAnotherTeamOrMissingParticipant() {
         when(taskRepository.findByIdAndTeamKeyForUpdate(TASK_ID, TEAM_KEY)).thenReturn(Optional.of(task()));
-        when(taskParticipantRepository.insertIfAbsent(TASK_ID, PARTICIPANT_ID, TEAM_KEY)).thenReturn(0);
         when(taskParticipantRepository.findParticipantIds(TASK_ID, TEAM_KEY))
             .thenReturn(List.of(EXISTING_PARTICIPANT_ID));
+        when(participantRepository.findByIdAndTeamKey(PARTICIPANT_ID, TEAM_KEY)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> taskService.addParticipant(
             TEAM_KEY,
@@ -154,13 +166,16 @@ class TaskServiceParticipantTest {
         )).isInstanceOf(EntityNotFoundException.class)
             .hasMessage("Participant not found");
 
-        verifyNoHeavyTaskGraphQueries();
+        verify(taskParticipantRepository, never()).save(any());
+        verify(taskRepository, never()).findWithDetailsById(any(), any());
     }
 
     @Test
     void removeParticipantCleansDependenciesAndReturnsOnlyAffectedLoads() {
         UUID firstSprintId = UUID.fromString("44444444-4444-4444-4444-444444444444");
         UUID secondSprintId = UUID.fromString("55555555-5555-5555-5555-555555555555");
+        SprintEntity firstSprint = sprint(firstSprintId);
+        SprintEntity secondSprint = sprint(secondSprintId);
         TaskEntity task = task();
         ParticipantEntity leader = new ParticipantEntity();
         leader.setId(PARTICIPANT_ID);
@@ -170,11 +185,16 @@ class TaskServiceParticipantTest {
             .thenReturn(List.of(EXISTING_PARTICIPANT_ID, PARTICIPANT_ID));
         when(taskAllocationRepository.findSprintIdsForParticipant(TASK_ID, PARTICIPANT_ID, TEAM_KEY))
             .thenReturn(List.of(firstSprintId, secondSprintId));
-        when(taskLoadRepository.findValuesForSprints(
-            TASK_ID,
+        when(sprintRepository.findByTeamKeyAndIdIn(
             TEAM_KEY,
-            List.of(firstSprintId, secondSprintId)
+            new java.util.LinkedHashSet<>(List.of(firstSprintId, secondSprintId))
+        )).thenReturn(List.of(firstSprint, secondSprint));
+        when(taskAllocationRepository.sumDaysByTaskAndSprints(
+            TASK_ID, TEAM_KEY, List.of(firstSprintId, secondSprintId)
         )).thenReturn(List.of(loadValue(firstSprintId, "2.5")));
+        when(taskLoadRepository.findEntitiesForSprints(
+            TASK_ID, TEAM_KEY, List.of(firstSprintId, secondSprintId)
+        )).thenReturn(List.of());
 
         var result = taskService.removeParticipant(TEAM_KEY, TASK_ID, PARTICIPANT_ID);
 
@@ -194,22 +214,50 @@ class TaskServiceParticipantTest {
         verify(taskJiraIssueRepository).deleteForParticipant(TEAM_KEY, TASK_ID, PARTICIPANT_ID);
         verify(taskAllocationRepository).deleteForParticipant(TASK_ID, PARTICIPANT_ID, TEAM_KEY);
         verify(taskParticipantRepository).deleteForParticipant(TASK_ID, PARTICIPANT_ID, TEAM_KEY);
-        verify(taskAllocationBulkWriter).rebuildLoads(
-            TASK_ID,
-            TEAM_KEY,
-            List.of(firstSprintId, secondSprintId)
-        );
+        verify(entityManager).persist(any(TaskLoadEntity.class));
         verify(taskRepository, never()).findWithDetailsById(any(), any());
-        verifyNoInteractions(
-            participantRepository,
-            sprintRepository,
-            quarterRepository,
-            releaseRepository,
-            taskStreamRepository,
-            taskCustomerRepository,
-            apiCallHistoryRepository,
-            teamRepository
+        verifyNoInteractions(participantRepository, quarterRepository, releaseRepository,
+            taskStreamRepository, taskCustomerRepository, apiCallHistoryRepository, teamRepository);
+    }
+
+    @Test
+    void replaceParticipantMovesAllocationsWithoutRecalculatingLoads() {
+        UUID sprintId = UUID.fromString("44444444-4444-4444-4444-444444444444");
+        TaskEntity task = task();
+        ParticipantEntity previous = participant(PARTICIPANT_ID);
+        ParticipantEntity replacement = participant(UUID.fromString("66666666-6666-6666-6666-666666666666"));
+        SprintEntity sprint = sprint(sprintId);
+        TaskParticipantEntity previousLink = participantLink(task, previous, 3);
+        TaskAllocationEntity allocation = allocation(task, previous, sprint, "2.5");
+        task.setLeaderParticipant(previous);
+
+        when(taskRepository.findByIdAndTeamKeyForUpdate(TASK_ID, TEAM_KEY)).thenReturn(Optional.of(task));
+        when(taskParticipantRepository.findParticipantIds(TASK_ID, TEAM_KEY))
+            .thenReturn(List.of(EXISTING_PARTICIPANT_ID, PARTICIPANT_ID));
+        when(participantRepository.findByIdAndTeamKey(replacement.getId(), TEAM_KEY))
+            .thenReturn(Optional.of(replacement));
+        when(taskParticipantRepository.findById(new TaskParticipantId(TASK_ID, PARTICIPANT_ID)))
+            .thenReturn(Optional.of(previousLink));
+        when(taskAllocationRepository.findEntitiesForParticipant(TASK_ID, PARTICIPANT_ID, TEAM_KEY))
+            .thenReturn(List.of(allocation));
+
+        var result = taskService.replaceParticipant(
+            TEAM_KEY,
+            TASK_ID,
+            PARTICIPANT_ID,
+            new TaskParticipantReplaceRequest(replacement.getId().toString())
         );
+
+        assertThat(result.replaced()).isTrue();
+        assertThat(result.participantIds()).containsExactly(
+            EXISTING_PARTICIPANT_ID.toString(),
+            replacement.getId().toString()
+        );
+        assertThat(result.leaderId()).isEqualTo(replacement.getId().toString());
+        verify(taskAllocationRepository).deleteForParticipant(TASK_ID, PARTICIPANT_ID, TEAM_KEY);
+        verify(entityManager).persist(any(TaskAllocationEntity.class));
+        verify(taskJiraIssueRepository).deleteForParticipant(TEAM_KEY, TASK_ID, PARTICIPANT_ID);
+        verifyNoInteractions(taskLoadRepository);
     }
 
     @Test
@@ -255,20 +303,45 @@ class TaskServiceParticipantTest {
         };
     }
 
-    private void verifyNoHeavyTaskGraphQueries() {
-        verify(taskRepository, never()).findWithDetailsById(any(), any());
-        verifyNoInteractions(
-            taskLoadRepository,
-            taskAllocationRepository,
-            participantRepository,
-            sprintRepository,
-            quarterRepository,
-            releaseRepository,
-            taskStreamRepository,
-            taskCustomerRepository,
-            taskJiraIssueRepository,
-            apiCallHistoryRepository,
-            teamRepository
-        );
+    private ParticipantEntity participant(UUID id) {
+        ParticipantEntity participant = new ParticipantEntity();
+        participant.setId(id);
+        participant.setTeamKey(TEAM_KEY);
+        participant.setFullName("Participant");
+        return participant;
+    }
+
+    private SprintEntity sprint(UUID id) {
+        SprintEntity sprint = new SprintEntity();
+        sprint.setId(id);
+        sprint.setTeamKey(TEAM_KEY);
+        sprint.setName("Sprint");
+        return sprint;
+    }
+
+    private TaskParticipantEntity participantLink(TaskEntity task, ParticipantEntity participant, int order) {
+        TaskParticipantEntity link = new TaskParticipantEntity();
+        link.setId(new TaskParticipantId(task.getId(), participant.getId()));
+        link.setTask(task);
+        link.setParticipant(participant);
+        link.setDisplayOrder(order);
+        link.setTeamKey(TEAM_KEY);
+        return link;
+    }
+
+    private TaskAllocationEntity allocation(
+        TaskEntity task,
+        ParticipantEntity participant,
+        SprintEntity sprint,
+        String days
+    ) {
+        TaskAllocationEntity allocation = new TaskAllocationEntity();
+        allocation.setId(new TaskAllocationId(task.getId(), participant.getId(), sprint.getId()));
+        allocation.setTask(task);
+        allocation.setParticipant(participant);
+        allocation.setSprint(sprint);
+        allocation.setDays(new BigDecimal(days));
+        allocation.setTeamKey(TEAM_KEY);
+        return allocation;
     }
 }

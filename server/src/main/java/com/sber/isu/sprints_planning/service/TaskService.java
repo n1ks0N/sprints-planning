@@ -5,6 +5,7 @@ import com.sber.isu.sprints_planning.dto.TaskAllocationCellDto;
 import com.sber.isu.sprints_planning.dto.TaskAllocationsUpdateDto;
 import com.sber.isu.sprints_planning.dto.TaskHistoryChangeDto;
 import com.sber.isu.sprints_planning.dto.TaskParticipantRemoveDto;
+import com.sber.isu.sprints_planning.dto.TaskParticipantReplaceDto;
 import com.sber.isu.sprints_planning.dto.TaskParticipantsUpdateDto;
 import com.sber.isu.sprints_planning.dto.ParticipantWorkloadParticipantDto;
 import com.sber.isu.sprints_planning.dto.ParticipantWorkloadRowDto;
@@ -20,6 +21,7 @@ import com.sber.isu.sprints_planning.dto.request.TaskJiraLinksUpdateRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskLoadRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskParticipantAddRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskParticipantJiraLinkUpdateRequest;
+import com.sber.isu.sprints_planning.dto.request.TaskParticipantReplaceRequest;
 import com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest;
 import com.sber.isu.sprints_planning.mapper.DtoMapper;
 import com.sber.isu.sprints_planning.model.ParticipantEntity;
@@ -42,7 +44,6 @@ import com.sber.isu.sprints_planning.repository.QuarterRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
 import com.sber.isu.sprints_planning.repository.TaskAllocationRepository;
-import com.sber.isu.sprints_planning.repository.TaskAllocationBulkWriter;
 import com.sber.isu.sprints_planning.repository.TaskCustomerRepository;
 import com.sber.isu.sprints_planning.repository.TaskJiraIssueRepository;
 import com.sber.isu.sprints_planning.repository.TaskLoadRepository;
@@ -50,6 +51,7 @@ import com.sber.isu.sprints_planning.repository.TaskLoadValueProjection;
 import com.sber.isu.sprints_planning.repository.TaskParticipantRepository;
 import com.sber.isu.sprints_planning.repository.TaskRepository;
 import com.sber.isu.sprints_planning.repository.TaskStreamRepository;
+import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
@@ -60,6 +62,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -101,7 +104,7 @@ public class TaskService {
     private final TaskParticipantRepository taskParticipantRepository;
     private final TaskLoadRepository taskLoadRepository;
     private final TaskAllocationRepository taskAllocationRepository;
-    private final TaskAllocationBulkWriter taskAllocationBulkWriter;
+    private final EntityManager entityManager;
     private final ParticipantRepository participantRepository;
     private final SprintRepository sprintRepository;
     private final QuarterRepository quarterRepository;
@@ -115,7 +118,7 @@ public class TaskService {
         TaskParticipantRepository taskParticipantRepository,
         TaskLoadRepository taskLoadRepository,
         TaskAllocationRepository taskAllocationRepository,
-        TaskAllocationBulkWriter taskAllocationBulkWriter,
+        EntityManager entityManager,
         ParticipantRepository participantRepository,
         SprintRepository sprintRepository,
         QuarterRepository quarterRepository,
@@ -128,7 +131,7 @@ public class TaskService {
         this.taskParticipantRepository = taskParticipantRepository;
         this.taskLoadRepository = taskLoadRepository;
         this.taskAllocationRepository = taskAllocationRepository;
-        this.taskAllocationBulkWriter = taskAllocationBulkWriter;
+        this.entityManager = entityManager;
         this.participantRepository = participantRepository;
         this.sprintRepository = sprintRepository;
         this.quarterRepository = quarterRepository;
@@ -148,40 +151,48 @@ public class TaskService {
         UUID participantId = UUID.fromString(request.participantId());
         TaskEntity task = taskRepository.findByIdAndTeamKeyForUpdate(taskId, teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Task not found"));
-
-        boolean added = taskParticipantRepository.insertIfAbsent(taskId, participantId, teamKey) > 0;
-        List<String> participantIds = taskParticipantRepository.findParticipantIds(taskId, teamKey).stream()
-            .map(UUID::toString)
-            .toList();
-
-        if (!added && !participantIds.contains(participantId.toString())) {
-            throw new EntityNotFoundException("Participant not found");
-        }
-
-        if (added) {
-            task.setUpdatedAt(LocalDate.now());
-            List<String> previousParticipantIds = participantIds.stream()
-                .filter(id -> !id.equals(participantId.toString()))
-                .toList();
-            apiHistoryService.logTaskChange(
-                teamKey,
-                taskId,
-                "task.update",
-                "Изменена задача",
-                List.of(new TaskHistoryChangeDto(
-                    "participantIds",
-                    "Участники",
-                    previousParticipantIds,
-                    participantIds
-                )),
-                Map.of(
-                    "source", "POST /tasks/{id}/participants",
-                    "changedFields", 1
-                )
+        List<UUID> previousParticipantIds = taskParticipantRepository.findParticipantIds(taskId, teamKey);
+        if (previousParticipantIds.contains(participantId)) {
+            return new TaskParticipantsUpdateDto(
+                taskId.toString(),
+                previousParticipantIds.stream().map(UUID::toString).toList(),
+                false,
+                task.getUpdatedAt()
             );
         }
 
-        return new TaskParticipantsUpdateDto(taskId.toString(), participantIds, added, task.getUpdatedAt());
+        ParticipantEntity participant = participantRepository.findByIdAndTeamKey(participantId, teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
+        TaskParticipantEntity link = new TaskParticipantEntity();
+        link.setId(new TaskParticipantId(taskId, participantId));
+        link.setTask(task);
+        link.setParticipant(participant);
+        link.setDisplayOrder(taskParticipantRepository.findMaxDisplayOrder(taskId, teamKey) + 1);
+        link.setTeamKey(teamKey);
+        taskParticipantRepository.save(link);
+
+        List<String> participantIds = new ArrayList<>(previousParticipantIds.size() + 1);
+        previousParticipantIds.stream().map(UUID::toString).forEach(participantIds::add);
+        participantIds.add(participantId.toString());
+        task.setUpdatedAt(LocalDate.now());
+        apiHistoryService.logTaskChange(
+            teamKey,
+            taskId,
+            "task.update",
+            "Изменена задача",
+            List.of(new TaskHistoryChangeDto(
+                "participantIds",
+                "Участники",
+                previousParticipantIds.stream().map(UUID::toString).toList(),
+                participantIds
+            )),
+            Map.of(
+                "source", "POST /tasks/{id}/participants",
+                "changedFields", 1
+            )
+        );
+
+        return new TaskParticipantsUpdateDto(taskId.toString(), participantIds, true, task.getUpdatedAt());
     }
 
     @Transactional
@@ -219,14 +230,11 @@ public class TaskService {
 
         Map<String, BigDecimal> recalculatedLoads = Map.of();
         if (!affectedSprintIds.isEmpty()) {
-            taskAllocationBulkWriter.rebuildLoads(taskId, teamKey, affectedSprintIds);
-            recalculatedLoads = taskLoadRepository.findValuesForSprints(taskId, teamKey, affectedSprintIds).stream()
-                .collect(Collectors.toMap(
-                    value -> value.getSprintId().toString(),
-                    TaskLoadValueProjection::getDays,
-                    (left, right) -> right,
-                    LinkedHashMap::new
-                ));
+            Map<UUID, SprintEntity> affectedSprints = fetchSprintsByIds(
+                teamKey,
+                new LinkedHashSet<>(affectedSprintIds)
+            );
+            recalculatedLoads = rebuildLoadsWithJpa(task, teamKey, affectedSprintIds, affectedSprints);
         }
 
         boolean leaderCleared = Objects.equals(leaderId, participantIdValue);
@@ -273,6 +281,140 @@ public class TaskService {
     }
 
     @Transactional
+    public TaskParticipantReplaceDto replaceParticipant(
+        String teamKey,
+        UUID taskId,
+        UUID fromParticipantId,
+        TaskParticipantReplaceRequest request
+    ) {
+        UUID toParticipantId = UUID.fromString(request.participantId());
+        TaskEntity task = taskRepository.findByIdAndTeamKeyForUpdate(taskId, teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Task not found"));
+        List<UUID> previousParticipantIds = taskParticipantRepository.findParticipantIds(taskId, teamKey);
+        String leaderId = task.getLeaderParticipant() == null
+            ? null
+            : task.getLeaderParticipant().getId().toString();
+
+        if (!previousParticipantIds.contains(fromParticipantId)) {
+            return new TaskParticipantReplaceDto(
+                taskId.toString(),
+                previousParticipantIds.stream().map(UUID::toString).toList(),
+                fromParticipantId.toString(),
+                toParticipantId.toString(),
+                leaderId,
+                false,
+                task.getUpdatedAt()
+            );
+        }
+        if (fromParticipantId.equals(toParticipantId)) {
+            return new TaskParticipantReplaceDto(
+                taskId.toString(),
+                previousParticipantIds.stream().map(UUID::toString).toList(),
+                fromParticipantId.toString(),
+                toParticipantId.toString(),
+                leaderId,
+                false,
+                task.getUpdatedAt()
+            );
+        }
+        if (previousParticipantIds.contains(toParticipantId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Participant is already assigned to task");
+        }
+
+        ParticipantEntity replacement = participantRepository.findByIdAndTeamKey(toParticipantId, teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
+        TaskParticipantEntity previousLink = taskParticipantRepository.findById(
+            new TaskParticipantId(taskId, fromParticipantId)
+        ).orElseThrow(() -> new EntityNotFoundException("Task participant not found"));
+        List<TaskAllocationEntity> previousAllocations = taskAllocationRepository.findEntitiesForParticipant(
+            taskId,
+            fromParticipantId,
+            teamKey
+        );
+        if (taskAllocationRepository.existsByTaskIdAndParticipantIdAndTeamKey(
+            taskId,
+            toParticipantId,
+            teamKey
+        )) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Replacement participant already has task allocations");
+        }
+
+        taskJiraIssueRepository.deleteForParticipant(teamKey, taskId, fromParticipantId);
+        if (!previousAllocations.isEmpty()) {
+            taskAllocationRepository.deleteForParticipant(taskId, fromParticipantId, teamKey);
+        }
+        taskParticipantRepository.delete(previousLink);
+        taskParticipantRepository.flush();
+
+        TaskParticipantEntity replacementLink = new TaskParticipantEntity();
+        replacementLink.setId(new TaskParticipantId(taskId, toParticipantId));
+        replacementLink.setTask(task);
+        replacementLink.setParticipant(replacement);
+        replacementLink.setDisplayOrder(previousLink.getDisplayOrder());
+        replacementLink.setTeamKey(teamKey);
+        taskParticipantRepository.save(replacementLink);
+
+        if (!previousAllocations.isEmpty()) {
+            previousAllocations.stream()
+                .map(allocation -> newTaskAllocation(
+                    task,
+                    replacement,
+                    allocation.getSprint(),
+                    allocation.getDays(),
+                    teamKey
+                ))
+                .forEach(entityManager::persist);
+        }
+
+        boolean leaderReplaced = Objects.equals(leaderId, fromParticipantId.toString());
+        if (leaderReplaced) {
+            task.setLeaderParticipant(replacement);
+            leaderId = toParticipantId.toString();
+        }
+        task.setUpdatedAt(LocalDate.now());
+
+        List<String> participantIds = previousParticipantIds.stream()
+            .map(id -> id.equals(fromParticipantId) ? toParticipantId.toString() : id.toString())
+            .toList();
+        List<TaskHistoryChangeDto> changes = new ArrayList<>();
+        changes.add(new TaskHistoryChangeDto(
+            "participantIds",
+            "Участники",
+            previousParticipantIds.stream().map(UUID::toString).toList(),
+            participantIds
+        ));
+        if (leaderReplaced) {
+            changes.add(new TaskHistoryChangeDto(
+                "leaderId",
+                "Лидер",
+                fromParticipantId.toString(),
+                toParticipantId.toString()
+            ));
+        }
+        apiHistoryService.logTaskChange(
+            teamKey,
+            taskId,
+            "task.update",
+            "Изменена задача",
+            changes,
+            Map.of(
+                "source", "PUT /tasks/{taskId}/participants/{participantId}",
+                "changedFields", changes.size()
+            )
+        );
+
+        return new TaskParticipantReplaceDto(
+            taskId.toString(),
+            participantIds,
+            fromParticipantId.toString(),
+            toParticipantId.toString(),
+            leaderId,
+            true,
+            task.getUpdatedAt()
+        );
+    }
+
+    @Transactional
     public TaskAllocationsUpdateDto setAllocations(
         String teamKey,
         UUID taskId,
@@ -310,22 +452,28 @@ public class TaskService {
         if (sprints.size() != sprintIds.size()) {
             throw new EntityNotFoundException("Sprint not found");
         }
-        Map<UUID, ParticipantEntity> participants = participantRepository.findAllById(participantIds).stream()
+        Map<UUID, ParticipantEntity> participants = participantRepository.findByTeamKeyAndIdIn(teamKey, participantIds).stream()
             .collect(Collectors.toMap(ParticipantEntity::getId, Function.identity()));
+        if (participants.size() != participantIds.size()) {
+            throw new EntityNotFoundException("Participant not found");
+        }
 
-        Map<AllocationCellKey, BigDecimal> previousValues = taskAllocationRepository.findValuesForCells(
-            taskId,
-            teamKey,
-            participantIds,
-            sprintIds
-        ).stream().collect(Collectors.toMap(
-            value -> new AllocationCellKey(value.getParticipantId(), value.getSprintId()),
-            value -> maxOrZero(value.getDays())
-        ));
+        Map<AllocationCellKey, TaskAllocationEntity> existingAllocations = taskAllocationRepository
+            .findEntitiesForCells(taskId, teamKey, participantIds, sprintIds)
+            .stream()
+            .filter(value -> requestedValues.containsKey(new AllocationCellKey(
+                value.getId().getParticipantId(),
+                value.getId().getSprintId()
+            )))
+            .collect(Collectors.toMap(
+                value -> new AllocationCellKey(value.getId().getParticipantId(), value.getId().getSprintId()),
+                Function.identity()
+            ));
 
         List<TaskHistoryChangeDto> changes = new ArrayList<>();
         requestedValues.forEach((key, days) -> {
-            BigDecimal before = previousValues.getOrDefault(key, BigDecimal.ZERO);
+            TaskAllocationEntity existing = existingAllocations.get(key);
+            BigDecimal before = existing == null ? BigDecimal.ZERO : maxOrZero(existing.getDays());
             if (before.compareTo(days) != 0) {
                 addAllocationHistoryChange(
                     changes,
@@ -338,17 +486,39 @@ public class TaskService {
         });
 
         if (!changes.isEmpty()) {
-            List<TaskAllocationBulkWriter.AllocationValue> values = requestedValues.entrySet().stream()
-                .map(entry -> new TaskAllocationBulkWriter.AllocationValue(
-                    taskId,
-                    entry.getKey().participantId(),
-                    entry.getKey().sprintId(),
-                    entry.getValue(),
-                    teamKey
-                ))
-                .toList();
-            taskAllocationBulkWriter.apply(values);
-            taskAllocationBulkWriter.rebuildLoads(taskId, teamKey, new ArrayList<>(sprintIds));
+            List<TaskAllocationEntity> toPersist = new ArrayList<>();
+            List<TaskAllocationEntity> toDelete = new ArrayList<>();
+            requestedValues.forEach((key, days) -> {
+                TaskAllocationEntity allocation = existingAllocations.get(key);
+                BigDecimal before = allocation == null ? BigDecimal.ZERO : maxOrZero(allocation.getDays());
+                if (before.compareTo(days) == 0) {
+                    return;
+                }
+                if (days.signum() == 0) {
+                    if (allocation != null) {
+                        toDelete.add(allocation);
+                    }
+                    return;
+                }
+                if (allocation == null) {
+                    allocation = newTaskAllocation(
+                        task,
+                        participants.get(key.participantId()),
+                        sprints.get(key.sprintId()),
+                        days,
+                        teamKey
+                    );
+                    toPersist.add(allocation);
+                } else {
+                    allocation.setDays(days);
+                }
+            });
+            if (!toDelete.isEmpty()) {
+                taskAllocationRepository.deleteAll(toDelete);
+            }
+            toPersist.forEach(entityManager::persist);
+            taskAllocationRepository.flush();
+            rebuildLoadsWithJpa(task, teamKey, sprintIds, sprints);
             task.setUpdatedAt(LocalDate.now());
             apiHistoryService.logTaskChange(
                 teamKey,
@@ -1132,6 +1302,23 @@ public class TaskService {
         return created;
     }
 
+    private TaskAllocationEntity newTaskAllocation(
+        TaskEntity task,
+        ParticipantEntity participant,
+        SprintEntity sprint,
+        BigDecimal days,
+        String teamKey
+    ) {
+        TaskAllocationEntity created = new TaskAllocationEntity();
+        created.setId(new TaskAllocationId(task.getId(), participant.getId(), sprint.getId()));
+        created.setTask(task);
+        created.setParticipant(participant);
+        created.setSprint(sprint);
+        created.setDays(days);
+        created.setTeamKey(teamKey);
+        return created;
+    }
+
     private TaskLoadEntity createTaskLoad(TaskEntity task, SprintEntity sprint, String teamKey) {
         TaskLoadEntity created = new TaskLoadEntity();
         created.setId(new TaskLoadId(task.getId(), sprint.getId()));
@@ -1140,6 +1327,21 @@ public class TaskService {
         created.setDays(BigDecimal.ZERO);
         created.setTeamKey(teamKey);
         task.getLoads().add(created);
+        return created;
+    }
+
+    private TaskLoadEntity newTaskLoad(
+        TaskEntity task,
+        SprintEntity sprint,
+        BigDecimal days,
+        String teamKey
+    ) {
+        TaskLoadEntity created = new TaskLoadEntity();
+        created.setId(new TaskLoadId(task.getId(), sprint.getId()));
+        created.setTask(task);
+        created.setSprint(sprint);
+        created.setDays(days);
+        created.setTeamKey(teamKey);
         return created;
     }
 
@@ -1442,6 +1644,66 @@ public class TaskService {
             .sorted()
             .findFirst()
             .orElse("");
+    }
+
+    private Map<String, BigDecimal> rebuildLoadsWithJpa(
+        TaskEntity task,
+        String teamKey,
+        Collection<UUID> sprintIds,
+        Map<UUID, SprintEntity> sprints
+    ) {
+        if (sprintIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<UUID, BigDecimal> totals = taskAllocationRepository.sumDaysByTaskAndSprints(
+            task.getId(),
+            teamKey,
+            sprintIds
+        ).stream().collect(Collectors.toMap(
+            TaskLoadValueProjection::getSprintId,
+            value -> maxOrZero(value.getDays())
+        ));
+        Map<UUID, TaskLoadEntity> existingLoads = taskLoadRepository.findEntitiesForSprints(
+            task.getId(),
+            teamKey,
+            sprintIds
+        ).stream().collect(Collectors.toMap(
+            load -> load.getSprint().getId(),
+            Function.identity()
+        ));
+
+        List<TaskLoadEntity> toPersist = new ArrayList<>();
+        List<TaskLoadEntity> toDelete = new ArrayList<>();
+        Map<String, BigDecimal> result = new LinkedHashMap<>();
+        for (UUID sprintId : sprintIds) {
+            BigDecimal total = totals.getOrDefault(sprintId, BigDecimal.ZERO);
+            TaskLoadEntity load = existingLoads.get(sprintId);
+            if (total.signum() <= 0) {
+                if (load != null) {
+                    toDelete.add(load);
+                }
+                continue;
+            }
+            if (load == null) {
+                SprintEntity sprint = sprints.get(sprintId);
+                if (sprint == null) {
+                    throw new EntityNotFoundException("Sprint not found");
+                }
+                load = newTaskLoad(task, sprint, total, teamKey);
+                toPersist.add(load);
+            } else {
+                load.setDays(total);
+            }
+            result.put(sprintId.toString(), total);
+        }
+
+        if (!toDelete.isEmpty()) {
+            taskLoadRepository.deleteAll(toDelete);
+        }
+        toPersist.forEach(entityManager::persist);
+        taskLoadRepository.flush();
+        return result;
     }
 
     private void recalcLoad(TaskEntity task, SprintEntity sprint) {
