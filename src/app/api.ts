@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { createApi, fetchBaseQuery, BaseQueryFn } from "@reduxjs/toolkit/query/react";
 import type { FetchBaseQueryError } from "@reduxjs/toolkit/query";
 import type {
@@ -317,6 +318,12 @@ type TasksQueryArgs = {
   page?: number;
   size?: number;
 };
+const tasksCacheKey = (arg: void | TasksQueryArgs, endpointName = "getTasks") => {
+  if (!arg) return endpointName;
+  const { page, size, ...filters } = arg;
+  return `${endpointName}-${JSON.stringify(filters)}`;
+};
+
 type ParticipantWorkloadQueryArgs = {
   quarterIds: string[];
   priority?: number[];
@@ -916,10 +923,12 @@ export const api = createApi({
 
     // ---- Participants ----
     getParticipants: b.query<Participant[], void>({
-      query: () => ({ url: "/participants", method: "GET" }),
+      // Keep inactive participants in the shared directory for historical task assignments.
+      query: () => ({ url: "/participants", method: "GET", params: { includeInactive: "true" } }),
       transformResponse: (response: Participant[]) =>
         response.map((p) => ({
           ...p,
+          active: p.active ?? true,
           userStreams: normalizeUserStreams(p.userStreams),
         })),
       providesTags: (result) =>
@@ -946,6 +955,7 @@ export const api = createApi({
           rate: arg.rate ?? 1,
           userStreams: normalizeUserStreams(arg.userStreams),
           jiraLogin: arg.jiraLogin ?? null,
+          active: true,
         } as Participant;
 
         const patch = dispatch(
@@ -1037,15 +1047,19 @@ export const api = createApi({
         const patch = dispatch(
           api.util.updateQueryData("getParticipants", undefined, (draft) => {
             const idx = draft.findIndex((p) => p.id === arg.id);
-            if (idx >= 0) draft.splice(idx, 1);
+            if (idx >= 0) draft[idx].active = false;
           })
         );
 
         try {
-          await queryFulfilled;
+          const { data } = await queryFulfilled;
+          dispatch(api.util.updateQueryData("getParticipants", undefined, (draft) => {
+            const participant = draft.find((p) => p.id === arg.id);
+            if (participant) Object.assign(participant, data);
+          }));
         } catch (error) {
           patch.undo();
-          notifyError("Не удалось удалить участника", error);
+          notifyError("Не удалось деактивировать участника", error);
         }
       },
     }),
@@ -1172,7 +1186,7 @@ export const api = createApi({
       TasksPage,
       void | TasksQueryArgs
     >({
-      query: (arg) => {
+      async queryFn(arg, queryApi, extraOptions, fetchWithBaseQuery) {
         const params: Record<string, string> = {};
 
         const joinOrUndefined = (values?: string[] | number[]) => {
@@ -1222,28 +1236,47 @@ export const api = createApi({
         const sortDirection = (arg?.sortDirection || "").trim();
         if (sortDirection) params.sortDirection = sortDirection;
 
-        if (typeof arg?.page === "number") params.page = String(arg.page);
         if (typeof arg?.size === "number") params.size = String(arg.size);
 
-        return {
-          url: "/tasks",
-          method: "GET",
-          params: Object.keys(params).length ? params : undefined,
-        };
+        // Invalidation refetches the last requested page. Refresh the whole loaded
+        // prefix so insertion and reordering cannot leave earlier pages stale.
+        const cached = (queryApi.getState() as {
+          api: { queries: Record<string, { data?: TasksPage } | undefined> };
+        }).api.queries[tasksCacheKey(arg)]?.data;
+        const requestedPage = Math.max(0, arg?.page ?? 0);
+        const refreshPrefix = !cached || requestedPage <= cached.page.number;
+        const pageSize = Math.max(1, arg?.size ?? cached?.page.size ?? 20);
+        // A newly inserted row can move beyond the end of the loaded prefix.
+        const lastPage = refreshPrefix
+          ? Math.max(requestedPage, Math.ceil((cached?.content.length ?? 0) / pageSize) - 1)
+          : requestedPage;
+        const firstPage = refreshPrefix ? 0 : requestedPage;
+        const content: BacklogItem[] = [];
+        let result: TasksPage | undefined;
+        for (let page = firstPage; page <= lastPage; page += 1) {
+          const response = await fetchWithBaseQuery({
+            url: "/tasks",
+            method: "GET",
+            params: { ...params, page: String(page) },
+          });
+          if (response.error) return { error: response.error };
+          result = normalizePageResponse<BacklogItem>(response.data);
+          content.push(...result.content);
+          if (page + 1 >= result.page.totalPages) break;
+        }
+        const data = result!;
+        data.content = Array.from(new Map(content.map((task) => [task.id, task])).values());
+        recalcPageMeta(data);
+        data.first = firstPage === 0;
+        return { data };
       },
-      transformResponse: (response: unknown) =>
-        normalizePageResponse<BacklogItem>(response),
-      serializeQueryArgs: ({ queryArgs, endpointName }) => {
-        if (!queryArgs || typeof queryArgs !== "object") return endpointName;
-        const { page, size, ...rest } = queryArgs as Record<string, unknown>;
-        return `${endpointName}-${JSON.stringify(rest)}`;
-      },
+      serializeQueryArgs: ({ queryArgs, endpointName }) => tasksCacheKey(queryArgs, endpointName),
       merge: (currentCache, newData, { arg }) => {
         if (!newData) return;
         if (!currentCache) {
           return newData;
         }
-        const shouldReset = !arg || typeof arg !== "object" || !("page" in arg) || (arg as any).page === 0;
+        const shouldReset = newData.first === true || !arg || typeof arg !== "object" || !("page" in arg) || (arg as any).page === 0;
         if (shouldReset) {
           Object.assign(currentCache, newData);
           recalcPageMeta(currentCache);
@@ -2322,6 +2355,7 @@ export const api = createApi({
       providesTags: [
         listTag("Quarter"),
         listTag("Release"),
+        listTag("Participant"),
       ],
     }),
 
@@ -2494,3 +2528,15 @@ export const {
 
   useGetFiltersQuery,
 } = api;
+
+const EMPTY_PARTICIPANTS: Participant[] = [];
+
+/** Active choices share the complete directory cache used by task cards. */
+export function useActiveParticipantsQuery() {
+  const result = useGetParticipantsQuery();
+  const data = useMemo(
+    () => result.data?.filter((participant) => participant.active !== false) ?? EMPTY_PARTICIPANTS,
+    [result.data]
+  );
+  return { ...result, data };
+}

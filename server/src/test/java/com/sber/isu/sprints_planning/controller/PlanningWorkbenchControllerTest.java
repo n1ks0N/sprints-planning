@@ -183,7 +183,7 @@ class PlanningWorkbenchControllerTest {
             List.of(),
             List.of(item("item-1")),
             List.of(new PlanningSessionParticipantLoadRowDto(
-                new ParticipantDto("participant-1", "Participant 1", "DEV", 1.0, List.of("Core"), null),
+                new ParticipantDto("participant-1", "Participant 1", "DEV", 1.0, List.of("Core"), null, true),
                 List.of(new PlanningSessionParticipantLoadCellDto(
                     "participant-1",
                     "sprint-1",

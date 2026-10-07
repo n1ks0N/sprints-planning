@@ -13,7 +13,7 @@ public class ApiActionDescriptionResolver {
         actions.put("GET /participants", "Получен список участников");
         actions.put("POST /participants", "Добавлен участник");
         actions.put("POST /participants/update", "Обновлен участник");
-        actions.put("POST /participants/delete", "Удален участник");
+        actions.put("POST /participants/delete", "Деактивирован участник");
         actions.put("POST /participants/reorder", "Изменен порядок участников");
 
         actions.put("GET /quarters", "Получен список кварталов");

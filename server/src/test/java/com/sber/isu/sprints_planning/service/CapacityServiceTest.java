@@ -93,6 +93,26 @@ class CapacityServiceTest {
         assertThat(result.get(0).participant().fullName()).isEqualTo("Developer");
     }
 
+    @Test
+    void calculateExcludesInactiveParticipantEvenWhenExplicitlySelected() {
+        ParticipantEntity inactive = participant("11111111-1111-1111-1111-111111111111", "Former", "DEV", 1.0, "Core");
+        inactive.setActive(false);
+        ParticipantEntity active = participant("33333333-3333-3333-3333-333333333333", "Current", "DEV", 1.0, "Core");
+        SprintEntity sprint = sprint("22222222-2222-2222-2222-222222222222", 10);
+        when(participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc("team-a")).thenReturn(List.of(inactive, active));
+        when(sprintRepository.findByTeamKeyOrderByQuarterAndOrder("team-a")).thenReturn(List.of(sprint));
+        when(taskAllocationRepository.aggregateWorkloadByParticipantAndSprint("team-a", List.of(sprint.getId())))
+            .thenReturn(List.of(new Aggregation(inactive.getId(), sprint.getId(), new BigDecimal("100"))));
+
+        var rows = capacityService.calculate("team-a", List.of(), List.of(), List.of(), List.of());
+        assertThat(rows).singleElement().satisfies(row -> {
+            assertThat(row.participant().id()).isEqualTo(active.getId().toString());
+            assertThat(row.totalQuarterWorkload()).isZero();
+            assertThat(row.totalQuarterAvailable()).isEqualTo(10);
+        });
+        assertThat(capacityService.calculate("team-a", List.of(), List.of(inactive.getId()), List.of(), List.of())).isEmpty();
+    }
+
     private ParticipantEntity participant(String id, String fullName, String role, double rate, String userStream) {
         ParticipantEntity entity = new ParticipantEntity();
         entity.setId(UUID.fromString(id));

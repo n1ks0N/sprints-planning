@@ -14,7 +14,17 @@ public interface ParticipantRoleValueRepository extends JpaRepository<Participan
 
     Optional<ParticipantRoleValueEntity> findByNameAndTeamKey(String name, String teamKey);
 
-    @Query("SELECT DISTINCT pr.name FROM ParticipantRoleValueEntity pr WHERE pr.teamKey = :teamKey ORDER BY pr.name")
+    @Query("""
+        SELECT DISTINCT pr.name
+        FROM ParticipantRoleValueEntity pr
+        WHERE pr.teamKey = :teamKey
+          AND EXISTS (
+            SELECT p.id
+            FROM ParticipantEntity p
+            WHERE p.teamKey = :teamKey AND p.active = true AND p.role = pr.name
+          )
+        ORDER BY pr.name
+        """)
     List<String> findAllNamesByTeamKey(@Param("teamKey") String teamKey);
 
     @Query("""

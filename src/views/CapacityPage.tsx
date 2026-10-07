@@ -11,7 +11,7 @@ import {
   useGetQuartersQuery,
   useGetSprintsQuery,
   useGetCapacityQuery,
-  useGetParticipantsQuery,
+  useActiveParticipantsQuery,
 } from "../app/api";
 import type { Quarter, Sprint } from "../types";
 import FiltersPanel from "../components/filters/FiltersPanel";
@@ -59,7 +59,7 @@ export default function CapacityPage() {
     useGetQuartersQuery();
   const { data: sprints = [], isLoading: isSprintsLoading } =
     useGetSprintsQuery(undefined);
-  const { data: participantList = [] } = useGetParticipantsQuery();
+  const { data: participantList = [] } = useActiveParticipantsQuery();
   const dispatch = useAppDispatch();
   const capacityFilters = useAppSelector((state) => state.ui.capacity);
   const {

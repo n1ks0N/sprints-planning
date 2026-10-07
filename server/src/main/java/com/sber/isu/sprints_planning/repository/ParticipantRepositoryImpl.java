@@ -65,6 +65,7 @@ public class ParticipantRepositoryImpl implements ParticipantRepositoryCustom {
     ) {
         List<Predicate> predicates = new ArrayList<>();
         predicates.add(cb.equal(participant.get("teamKey"), teamKey));
+        predicates.add(cb.isTrue(participant.get("active")));
 
         if (!filter.participantIds().isEmpty()) {
             predicates.add(participant.get("id").in(filter.participantIds()));

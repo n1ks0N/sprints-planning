@@ -11,6 +11,7 @@ public record ParticipantUpdateRequest(
     String role,
     @Min(0) @Max(1) Double rate,
     List<String> userStreams,
-    String jiraLogin
+    String jiraLogin,
+    Boolean active
 ) {
 }

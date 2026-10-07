@@ -48,8 +48,19 @@ public class ParticipantEntity {
     @Column(name = "team_key", nullable = false)
     private String teamKey;
 
+    @Column(nullable = false)
+    private boolean active = true;
+
     @Column(name = "jira_login")
     private String jiraLogin;
+
+    public boolean isActive() {
+        return active;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
+    }
 
     public UUID getId() {
         return id;

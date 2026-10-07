@@ -200,6 +200,26 @@ class PlanningWorkbenchServiceTest {
     }
 
     @Test
+    void previewExcludesInactiveParticipantsFromSolverAndCapacitySummary() {
+        PlanningBacklogItemEntity item = planningItem("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        item.setPlanningDemands(List.of(new TaskPlanningDemandValue("ROLE", "DEV", null, "Core", new BigDecimal("4"))));
+        SprintEntity sprint = sprint("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "Sprint 1");
+        item.setPlanningSprintIds(List.of(sprint.getId()));
+        items.put(item.getId(), item);
+        sprints.put(sprint.getId(), sprint);
+        ParticipantEntity active = participant("11111111-1111-1111-1111-111111111111", "Current");
+        ParticipantEntity inactive = participant("22222222-2222-2222-2222-222222222222", "Former");
+        inactive.setActive(false);
+        participants.addAll(List.of(active, inactive));
+
+        var preview = service.preview("team-a", new PlanningWorkbenchPreviewRequest("ALGORITHM", List.of(item.getId().toString())));
+
+        assertThat(planner.lastInput.participants()).containsExactly(active);
+        assertThat(preview.participantSummary()).singleElement().satisfies(row ->
+            assertThat(row.participant().id()).isEqualTo(active.getId().toString()));
+    }
+
+    @Test
     void previewSupportsHalfDayOnlyDemand() {
         PlanningBacklogItemEntity item = planningItem("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
         item.setPlanningDemands(List.of(new TaskPlanningDemandValue(

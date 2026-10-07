@@ -54,7 +54,9 @@ public class CapacityService {
 
         double normFactor = capacityProperties.normFactor();
         double capacityFactor = capacityProperties.capacityFactor();
-        List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
+        List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey).stream()
+            .filter(ParticipantEntity::isActive)
+            .toList();
         List<ParticipantEntity> filteredParticipants = filterParticipants(
             participants,
             participantIds,
@@ -98,7 +100,8 @@ public class CapacityService {
                     participant.getUserStreams() == null
                         ? java.util.List.of()
                         : participant.getUserStreams().stream().toList(),
-                    participant.getJiraLogin()
+                    participant.getJiraLogin(),
+                    participant.isActive()
                 ),
                 cells,
                 roundToOneDecimal(totalAvailable),

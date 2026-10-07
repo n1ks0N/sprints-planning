@@ -261,6 +261,10 @@ export default function PlanningWorkbenchPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { data: participants = [] } = useGetParticipantsQuery();
+  const activeParticipants = React.useMemo(
+    () => participants.filter((participant) => participant.active !== false),
+    [participants]
+  );
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: sprints = [] } = useGetSprintsQuery();
   const { data: releases = [] } = useGetReleasesQuery();
@@ -477,7 +481,8 @@ export default function PlanningWorkbenchPage() {
     [releases]
   );
   const participantNameById = React.useMemo(
-    () => new Map(participants.map((participant) => [participant.id, participant.fullName])),
+    () => new Map(participants.map((participant) => [participant.id,
+      participant.active === false ? `${participant.fullName} (неактивен)` : participant.fullName])),
     [participants]
   );
   const quarterOptions = React.useMemo(
@@ -1080,11 +1085,11 @@ export default function PlanningWorkbenchPage() {
         taskStreamOptions={filters?.streams || []}
         participantRoleOptions={Array.from(new Set([
           ...(filters?.participantRoles || []),
-          ...participants
+          ...activeParticipants
             .map((participant) => participant.role?.trim())
             .filter((value): value is string => Boolean(value)),
         ]))}
-        participantStreamOptions={Array.from(new Set([...(filters?.participantStreams || []), ...participants.flatMap((p) => p.userStreams || [])]))}
+        participantStreamOptions={Array.from(new Set([...(filters?.participantStreams || []), ...activeParticipants.flatMap((p) => p.userStreams || [])]))}
         submitting={isCreating || isUpdating}
         onClose={() => {
           setDialogOpen(false);

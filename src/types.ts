@@ -18,6 +18,7 @@ export type Sprint = {
 };
 
 export type Participant = {
+  active: boolean;
   id: string;
   fullName: string;
   role: string;

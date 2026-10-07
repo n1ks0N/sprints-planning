@@ -30,6 +30,7 @@ type PlanningMockItem = {
 };
 
 type PlanningMockParticipant = {
+  active?: boolean;
   id: string;
   fullName: string;
   role?: string | null;

@@ -244,7 +244,7 @@ export default function PlanningWorkbenchTaskDialog({
         value: `role:${role}`,
         label: `Роль: ${role}`,
       })),
-      ...participants.map((participant) => ({
+      ...participants.filter((participant) => participant.active !== false).map((participant) => ({
         value: `participant:${participant.id}`,
         label: participant.role
           ? `Участник: ${participant.fullName} (${participant.role})`
@@ -350,7 +350,8 @@ export default function PlanningWorkbenchTaskDialog({
   const addDemand = () => {
     setForm((prev) => {
       const last = prev.planningDemands[prev.planningDemands.length - 1];
-      const nextRow = last
+      const nextRow = last && (last.kind !== "PARTICIPANT"
+        || participantById.get(last.participantId)?.active !== false)
         ? createDemandRow({
             kind: last.kind,
             role: last.role,
@@ -512,6 +513,15 @@ export default function PlanningWorkbenchTaskDialog({
               ) : (
                 <Stack spacing={1.25}>
                   {form.planningDemands.map((demand) => {
+                    const assignedParticipant = demand.kind === "PARTICIPANT"
+                      ? participantById.get(demand.participantId || "")
+                      : undefined;
+                    const subjectOptions = assignedParticipant?.active === false
+                      ? [...demandSubjectOptions, {
+                          value: `participant:${assignedParticipant.id}`,
+                          label: `Участник: ${assignedParticipant.fullName} (неактивен)`,
+                        }]
+                      : demandSubjectOptions;
                     const baseStreamOptions =
                       demand.kind === "PARTICIPANT" && demand.participantId
                         ? (participantById.get(demand.participantId)
@@ -552,7 +562,7 @@ export default function PlanningWorkbenchTaskDialog({
                               stream: nextStream,
                             });
                           }}
-                          options={demandSubjectOptions}
+                          options={subjectOptions}
                           sortOptions={false}
                           sx={{ flex: 1.35 }}
                         />

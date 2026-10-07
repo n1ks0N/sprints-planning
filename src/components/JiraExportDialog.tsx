@@ -154,20 +154,22 @@ function participantOptionLabel(participantId: string, participantMap: Map<strin
 
 function participantIdsWithLoad(
   task: BacklogItem,
-  planningSprintId: string
+  planningSprintId: string,
+  participantMap: Map<string, Participant>
 ) {
   const participantIds = Array.isArray(task.participantIds) ? task.participantIds : [];
   return participantIds.filter((participantId) => {
     const storyPoints = Number(task.allocations?.[participantId]?.[planningSprintId] ?? 0);
-    return storyPoints > 0;
+    return storyPoints > 0 && participantMap.get(participantId)?.active !== false;
   });
 }
 
 function buildDefaultParticipantIds(
   task: BacklogItem,
-  planningSprintId: string
+  planningSprintId: string,
+  participantMap: Map<string, Participant>
 ) {
-  return participantIdsWithLoad(task, planningSprintId);
+  return participantIdsWithLoad(task, planningSprintId, participantMap);
 }
 
 function selectedStoryPoints(task: BacklogItem, planningSprintId: string, participantIds: string[]) {
@@ -382,9 +384,9 @@ export default function JiraExportDialog({
     setParticipantIdsByTaskId((prev) => {
       const next: Record<string, string[]> = {};
       for (const task of tasks) {
-        const validTaskParticipantIds = new Set(participantIdsWithLoad(task, planningSprintId));
+        const validTaskParticipantIds = new Set(participantIdsWithLoad(task, planningSprintId, participantMap));
         const previous = (prev[task.id] || []).filter((participantId) => validTaskParticipantIds.has(participantId));
-        next[task.id] = previous.length ? previous : buildDefaultParticipantIds(task, planningSprintId);
+        next[task.id] = previous.length ? previous : buildDefaultParticipantIds(task, planningSprintId, participantMap);
       }
       return next;
     });
@@ -406,7 +408,7 @@ export default function JiraExportDialog({
       }
       return next;
     });
-  }, [open, planningSprintId, releaseMap, tasks]);
+  }, [open, planningSprintId, releaseMap, tasks, participantMap]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -796,7 +798,7 @@ export default function JiraExportDialog({
                               size="small"
                               disableCloseOnSelect
                               limitTags={2}
-                              options={participantIdsWithLoad(task, planningSprintId)}
+                              options={participantIdsWithLoad(task, planningSprintId, participantMap)}
                               value={participantIdsByTaskId[task.id] || []}
                               onChange={(_event, value) => {
                                 setParticipantIdsByTaskId((prev) => ({

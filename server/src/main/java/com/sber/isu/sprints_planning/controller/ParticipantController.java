@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 
 @RestController
 @RequestMapping("/{teamKey}")
@@ -28,8 +29,11 @@ public class ParticipantController {
     }
 
     @GetMapping("/participants")
-    public List<ParticipantDto> getParticipants(@PathVariable String teamKey) {
-        return participantService.findAll(TeamKeyNormalizer.normalize(teamKey));
+    public List<ParticipantDto> getParticipants(
+        @PathVariable String teamKey,
+        @RequestParam(defaultValue = "false") boolean includeInactive
+    ) {
+        return participantService.findAll(TeamKeyNormalizer.normalize(teamKey), includeInactive);
     }
 
     @PostMapping("/participants")

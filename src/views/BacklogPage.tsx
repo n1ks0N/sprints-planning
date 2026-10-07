@@ -30,6 +30,7 @@ import {
   Menu,
   Alert,
   CircularProgress,
+  Snackbar,
 } from "@mui/material";
 import {
   Add,
@@ -1194,6 +1195,7 @@ export default function BacklogPage() {
   }, [tasksPageSize]);
   const normalizedSearch = React.useMemo(() => searchQuery.trim(), [searchQuery]);
   const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
+  const [duplicateNotice, setDuplicateNotice] = React.useState("");
   const [pinnedTaskId, setPinnedTaskId] = React.useState<string | null>(null);
   const [historyTask, setHistoryTask] = React.useState<BacklogItem | null>(null);
   const [isAddingAllToJira, setIsAddingAllToJira] = React.useState(false);
@@ -1390,14 +1392,14 @@ export default function BacklogPage() {
         if (!entry?.isIntersecting || !hasMoreTasks || isFetching) {
           return;
         }
-        loadNextTasksPage(effectiveTasksPageNumber);
+        loadNextTasksPage(fetchedTasksPage?.page.number ?? effectiveTasksPageNumber);
       },
       { root: null, rootMargin: LOAD_MORE_SENTINEL_ROOT_MARGIN, threshold: 0 }
     );
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [effectiveTasksPageNumber, hasMoreTasks, isFetching, loadNextTasksPage]);
+  }, [effectiveTasksPageNumber, hasMoreTasks, isFetching, loadNextTasksPage, fetchedTasksPage?.page.number]);
 
   const allTasks = fetchedTasks;
   React.useEffect(() => {
@@ -2164,10 +2166,12 @@ export default function BacklogPage() {
 
   const duplicateTask = React.useCallback(
     async (task: BacklogItem) => {
-      const taskAllocations = allocations[task.id] || {};
+      const activeParticipantIds = task.participantIds.filter((id) => participantMap.get(id)?.active !== false);
+      const taskAllocations = allocations[task.id] || task.allocations || {};
       const allocationsPayload = Object.entries(taskAllocations).reduce<
         Record<string, Record<string, number>>
       >((acc, [pid, row]) => {
+        if (!activeParticipantIds.includes(pid)) return acc;
         const positive = Object.entries(row)
           .map(([sid, value]) => [sid, normalizeDayAmount(Number(value) || 0)] as const)
           .filter(([, days]) => days > 0);
@@ -2188,28 +2192,35 @@ export default function BacklogPage() {
       const baseOrder = Number.isFinite(task.order)
         ? Number(task.order)
         : allTasks.length;
-      const copy = await addTask({
-        title: `${task.title} (копия)`,
-        description: (task as any).description,
-        dod: task.dod,
-        priority: task.priority,
-        status: task.status ?? "inprogress",
-        customers: task.customers?.slice() || [],
-        streams: task.streams?.slice() || [],
-        participantIds: task.participantIds.slice(),
-        releaseDateId: task.releaseDateId ?? null,
-        initialQuarterId: task.initialQuarterId ?? null,
-        leaderId: (task as any).leaderId ?? undefined,
-        order: baseOrder + 1,
-        loads: loadsPayload,
-        allocations: Object.keys(allocationsPayload).length
-          ? allocationsPayload
-          : undefined,
-      }).unwrap();
+      try {
+        const copy = await addTask({
+          title: `${task.title} (копия)`,
+          description: (task as any).description,
+          dod: task.dod,
+          priority: task.priority,
+          status: task.status ?? "inprogress",
+          customers: task.customers?.slice() || [],
+          streams: task.streams?.slice() || [],
+          participantIds: activeParticipantIds,
+          planningQuarterIds: task.planningQuarterIds?.slice(),
+          planningSprintIds: task.planningSprintIds?.slice(),
+          releaseDateId: task.releaseDateId ?? null,
+          initialQuarterId: task.initialQuarterId ?? null,
+          leaderId: task.leaderId && activeParticipantIds.includes(task.leaderId) ? task.leaderId : undefined,
+          order: baseOrder + 1,
+          loads: loadsPayload,
+          allocations: Object.keys(allocationsPayload).length
+            ? allocationsPayload
+            : undefined,
+        }).unwrap();
 
-      return copy;
+        setDuplicateNotice(`Создана задача «${copy.title}»`);
+        return copy;
+      } catch (error) {
+        console.error("Не удалось дублировать задачу", error);
+      }
     },
-    [addTask, allocations, allTasks.length]
+    [addTask, allocations, allTasks.length, participantMap]
   );
 
   const removeTask = React.useCallback(
@@ -2879,6 +2890,12 @@ export default function BacklogPage() {
         </Stack>
 
         {addAllToJiraError && <Alert severity="error">{addAllToJiraError}</Alert>}
+        <Snackbar
+          open={Boolean(duplicateNotice)}
+          message={duplicateNotice}
+          autoHideDuration={5000}
+          onClose={() => setDuplicateNotice("")}
+        />
         {/* Список задач с DnD */}
         <TaskCardsList
           tasks={filteredTasks}
@@ -2958,7 +2975,7 @@ export default function BacklogPage() {
             variant="outlined"
             onClick={() => {
               if (fetchedTasks.length >= totalTasksCount || isFetching) return;
-              loadNextTasksPage(effectiveTasksPageNumber);
+              loadNextTasksPage(fetchedTasksPage?.page.number ?? effectiveTasksPageNumber);
             }}
             disabled={fetchedTasks.length >= totalTasksCount || isFetching}
           >

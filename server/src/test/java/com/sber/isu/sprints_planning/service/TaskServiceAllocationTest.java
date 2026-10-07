@@ -127,6 +127,37 @@ class TaskServiceAllocationTest {
     }
 
     @Test
+    void updatingTaskKeepsInactiveAssigneeLeaderAndAllocations() {
+        TaskEntity task = task("11111111-1111-1111-1111-111111111111");
+        ParticipantEntity participant = participant("22222222-2222-2222-2222-222222222222");
+        participant.setActive(false);
+        SprintEntity sprint = sprint("33333333-3333-3333-3333-333333333333");
+        task.getParticipants().add(participantLink(task, participant, "team-a"));
+        task.setLeaderParticipant(participant);
+        task.getAllocations().add(taskAllocation(task, participant, sprint, new BigDecimal("3.0")));
+        task.getLoads().add(taskLoad(task, sprint, new BigDecimal("3.0")));
+        task.setNotes(Map.of(participant.getId(), "Historical note"));
+        when(taskRepository.findWithDetailsById(task.getId(), "team-a")).thenReturn(task);
+        when(taskRepository.findByIdAndTeamKeyForUpdate(task.getId(), "team-a")).thenReturn(Optional.of(task));
+        when(sprintRepository.findByTeamKeyOrderByQuarterAndOrder("team-a")).thenReturn(List.of(sprint));
+        when(participantRepository.findByIdAndTeamKey(participant.getId(), "team-a")).thenReturn(Optional.of(participant));
+
+        TaskDto result = taskService.update("team-a", new TaskUpdateRequest(
+            task.getId().toString(), "Updated title", null, null, null, null, null, null,
+            List.of(participant.getId().toString()), null, null, null, null, null, null, null,
+            participant.getId().toString(), null
+        ));
+
+        assertThat(result.title()).isEqualTo("Updated title");
+        assertThat(result.participantIds()).containsExactly(participant.getId().toString());
+        assertThat(result.leaderId()).isEqualTo(participant.getId().toString());
+        assertThat(result.allocations().get(participant.getId().toString()))
+            .containsEntry(sprint.getId().toString(), new BigDecimal("3.0"));
+        assertThat(result.notes()).containsEntry(participant.getId().toString(), "Historical note");
+        verify(taskJiraIssueRepository, never()).deleteAllByTeamKeyAndTaskIdAndParticipantIdIn(any(), any(), any());
+    }
+
+    @Test
     void setAllocationsUpdatesOnlyRequestedCellsAndAffectedSprintLoads() {
         TaskEntity task = task("11111111-1111-1111-1111-111111111111");
         ParticipantEntity participant = participant("22222222-2222-2222-2222-222222222222");

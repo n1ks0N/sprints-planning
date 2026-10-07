@@ -42,7 +42,7 @@ import org.springframework.transaction.support.SimpleTransactionStatus;
 class JiraIssueExportServiceTest {
 
     @Test
-    void startExportMergesCommonAndTaskLabelsIntoJiraRequestPreview() {
+    void startExportPrefixesEachParticipantRoleAndKeepsStoryTitleAndLabels() {
         TaskRepository taskRepository = mock(TaskRepository.class);
         TaskJiraIssueRepository taskJiraIssueRepository = mock(TaskJiraIssueRepository.class);
         SprintRepository sprintRepository = mock(SprintRepository.class);
@@ -64,9 +64,19 @@ class JiraIssueExportServiceTest {
 
         SprintEntity sprint = sprint(sprintId);
         ParticipantEntity participant = participant(participantId);
+        ParticipantEntity analyst = participant(UUID.fromString("44444444-4444-4444-4444-444444444444"));
+        analyst.setRole(" Аналитик ");
+        ParticipantEntity inactive = participant(UUID.fromString("55555555-5555-5555-5555-555555555555"));
+        inactive.setActive(false);
         TaskEntity task = task(taskId);
+        task.setTitle(" Task ");
         task.getParticipants().add(participantLink(task, participant));
+        task.getParticipants().add(participantLink(task, analyst));
+        task.getParticipants().add(participantLink(task, inactive));
         task.getAllocations().add(allocation(task, participant, sprint, new BigDecimal("5")));
+
+        task.getAllocations().add(allocation(task, analyst, sprint, new BigDecimal("3")));
+        task.getAllocations().add(allocation(task, inactive, sprint, new BigDecimal("100")));
 
         when(sprintRepository.findByIdAndTeamKey(sprintId, "team-a")).thenReturn(java.util.Optional.of(sprint));
         when(taskRepository.findAllByIdInAndTeamKey(List.of(taskId), "team-a")).thenReturn(List.of(task));
@@ -100,8 +110,8 @@ class JiraIssueExportServiceTest {
                 sprintId.toString(),
                 "12345",
                 "team",
-                Map.of(taskId.toString(), List.of(participantId.toString())),
-                Map.of(taskId.toString(), false),
+                Map.of(taskId.toString(), List.of(participantId.toString(), analyst.getId().toString(), inactive.getId().toString())),
+                Map.of(taskId.toString(), true),
                 List.of("common_label"),
                 Map.of(taskId.toString(), List.of("plan_release_20260627"))
             ),
@@ -110,7 +120,11 @@ class JiraIssueExportServiceTest {
         );
 
         assertThat(savedBatch.get()).isNotNull();
-        assertThat(savedBatch.get().getItemsJson()).hasSize(1);
+        assertThat(savedBatch.get().getItemsJson()).hasSize(3);
+
+        assertThat(savedBatch.get().getItemsJson())
+            .extracting(item -> asMap(asMap(asMap(item.get("jiraRequest")).get("body")).get("fields")).get("summary"))
+            .containsExactlyInAnyOrder("Task", "DEV: Task", "Аналитик: Task");
 
         Map<String, Object> item = savedBatch.get().getItemsJson().get(0);
         assertThat(item.get("labels")).asList()
@@ -119,6 +133,7 @@ class JiraIssueExportServiceTest {
         Map<String, Object> jiraRequest = asMap(item.get("jiraRequest"));
         Map<String, Object> body = asMap(jiraRequest.get("body"));
         Map<String, Object> fields = asMap(body.get("fields"));
+        assertThat(fields.get("summary")).isEqualTo("Task");
         assertThat(fields.get("labels")).asList()
             .containsExactly("common_label", "plan_release_20260627");
     }

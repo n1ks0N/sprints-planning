@@ -189,8 +189,16 @@ Participant metadata also has additive reference dictionaries:
 - `participant_stream_values`
 
 These dictionaries do not replace `participants.role` or `participant_user_streams` in the live model.
-They exist to provide centralized autocomplete option lists for filters and planning UI, and are cleaned up when no participant uses a value anymore.
+They provide autocomplete options for filters and planning UI based on active participants. Values used only by inactive participants remain stored for historical data, and disappear from active option lists. Unused values are cleaned up when no participant uses them.
 
 The product-level planning flow is documented in `docs/planning-workbench-overview.md`.
 The backend design and solver model are documented in `server/docs/task-auto-distribution-design.md`.
 The automated planning test contours are documented in `docs/planning-workbench-overview.md`.
+
+## Participant activity and backlog refresh
+
+Participants have an `active` flag, defaulting to `true`. `POST /participants/delete` deactivates the participant without deleting their row or task links, allocations, notes, leader references, or Jira links. `GET /participants` returns active participants by default; `includeInactive=true` returns the complete directory used to render existing task rows. Task cards label inactive participants, while team lists, new assignment options, capacity, participant workload and planning solvers use active participants. The backend rejects new inactive assignees, including planning drafts applied after deactivation; existing task assignments can still be edited and kept. Capacity and workload sheets omit inactive participants, while task details preserve them.
+
+Live backlog queries accumulate pages. On invalidation, they refresh the entire loaded prefix and replace the accumulated list so insertions and changes in order are visible immediately. If a new copy moves beyond the end of the prefix, the refresh loads an additional page. Duplicating a task copies its planning window and active assignees; existing assignments of inactive participants remain on the original task. Creation failures roll back the temporary row.
+
+Jira participant issues use `Participant role: Task title` as their summary. Story summaries continue to use the task title. Request previews and actual issue creation share these builders. Inactive participants are excluded from new Jira exports; stored Jira links remain on task rows.

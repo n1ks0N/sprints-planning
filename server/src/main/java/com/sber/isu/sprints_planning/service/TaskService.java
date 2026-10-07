@@ -163,6 +163,7 @@ public class TaskService {
 
         ParticipantEntity participant = participantRepository.findByIdAndTeamKey(participantId, teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
+        requireActiveParticipant(participant);
         TaskParticipantEntity link = new TaskParticipantEntity();
         link.setId(new TaskParticipantId(taskId, participantId));
         link.setTask(task);
@@ -323,6 +324,7 @@ public class TaskService {
 
         ParticipantEntity replacement = participantRepository.findByIdAndTeamKey(toParticipantId, teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
+        requireActiveParticipant(replacement);
         TaskParticipantEntity previousLink = taskParticipantRepository.findById(
             new TaskParticipantId(taskId, fromParticipantId)
         ).orElseThrow(() -> new EntityNotFoundException("Task participant not found"));
@@ -759,7 +761,9 @@ public class TaskService {
             entity.setInitialQuarter(resolveQuarter(teamKey, request.initialQuarterId()));
         }
         if (request.leaderId() != null && !request.leaderId().isBlank()) {
-            entity.setLeaderParticipant(fetchParticipant(teamKey, request.leaderId()));
+            ParticipantEntity leader = fetchParticipant(teamKey, request.leaderId());
+            requireActiveParticipant(leader);
+            entity.setLeaderParticipant(leader);
         }
         entity.setTeamKey(teamKey);
         entity.setDisplayOrder(resolveDisplayOrder(teamKey, request.order()));
@@ -855,7 +859,12 @@ public class TaskService {
             if (request.leaderId().isBlank()) {
                 entity.setLeaderParticipant(null);
             } else {
-                entity.setLeaderParticipant(fetchParticipant(teamKey, request.leaderId()));
+                ParticipantEntity leader = fetchParticipant(teamKey, request.leaderId());
+                if (entity.getLeaderParticipant() == null
+                    || !entity.getLeaderParticipant().getId().equals(leader.getId())) {
+                    requireActiveParticipant(leader);
+                }
+                entity.setLeaderParticipant(leader);
             }
         }
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
@@ -1291,6 +1300,10 @@ public class TaskService {
         SprintEntity sprint,
         String teamKey
     ) {
+        if (!participant.isActive() && task.getParticipants().stream()
+            .noneMatch(link -> link.getParticipant().getId().equals(participant.getId()))) {
+            requireActiveParticipant(participant);
+        }
         TaskAllocationEntity created = new TaskAllocationEntity();
         created.setId(new TaskAllocationId(task.getId(), participant.getId(), sprint.getId()));
         created.setTask(task);
@@ -1435,6 +1448,7 @@ public class TaskService {
             TaskParticipantEntity link = existing.get(id);
             if (link == null) {
                 ParticipantEntity participant = fetchParticipant(teamKey, id.toString());
+                requireActiveParticipant(participant);
                 link = new TaskParticipantEntity();
                 link.setId(new TaskParticipantId(entity.getId(), participant.getId()));
                 link.setTask(entity);
@@ -1807,6 +1821,12 @@ public class TaskService {
             throw new EntityNotFoundException("Sprint not found");
         }
         return indexSprints(sprints);
+    }
+
+    private void requireActiveParticipant(ParticipantEntity participant) {
+        if (!participant.isActive()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Нельзя назначить неактивного участника на новую задачу");
+        }
     }
 
     private ParticipantEntity fetchParticipant(String teamKey, String participantId) {

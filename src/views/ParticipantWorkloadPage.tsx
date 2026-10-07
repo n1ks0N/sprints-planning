@@ -15,7 +15,7 @@ import {
   TablePagination,
 } from "@mui/material";
 import {
-  useGetParticipantsQuery,
+  useActiveParticipantsQuery,
   useGetQuartersQuery,
   useGetSprintsQuery,
   useGetCapacityQuery,
@@ -82,7 +82,7 @@ export default function ParticipantWorkloadPage() {
   const [participantPageSize, setParticipantPageSize] = React.useState(10);
 
   const { data: quarters = [] } = useGetQuartersQuery();
-  const { data: participants = [] } = useGetParticipantsQuery();
+  const { data: participants = [] } = useActiveParticipantsQuery();
   const { data: sprintsData = [] } = useGetSprintsQuery(undefined);
   const { data: filtersData } = useGetFiltersQuery();
   const allSprints = sprintsData;

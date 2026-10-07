@@ -23,7 +23,7 @@ import { Delete, Edit, Save, Close, DragIndicator } from "@mui/icons-material";
 import {
   api,
   useGetFiltersQuery,
-  useGetParticipantsQuery,
+  useActiveParticipantsQuery,
   useAddParticipantMutation,
   useUpdateParticipantMutation,
   useDeleteParticipantMutation,
@@ -117,7 +117,7 @@ function SortableRow({
 }
 
 export default function TeamPage() {
-  const { data: participants = [] } = useGetParticipantsQuery();
+  const { data: participants = [] } = useActiveParticipantsQuery();
   const { data: filters } = useGetFiltersQuery();
   const [addParticipant] = useAddParticipantMutation();
   const [updateParticipant] = useUpdateParticipantMutation();
@@ -364,7 +364,7 @@ export default function TeamPage() {
   };
 
   const removeParticipant = async (id: string) => {
-    if (!window.confirm("Удалить участника?")) return;
+    if (!window.confirm("Деактивировать участника? Он останется в задачах, но больше не будет учитываться в нагрузке.")) return;
     try {
       await deleteParticipant({ id }).unwrap();
     } catch (e) {
@@ -481,7 +481,8 @@ export default function TeamPage() {
                 <Edit />
               </IconButton>
               <IconButton
-                aria-label="delete"
+                aria-label="Деактивировать участника"
+                title="Деактивировать участника"
                 onClick={() => removeParticipant(p.id)}
               >
                 <Delete />

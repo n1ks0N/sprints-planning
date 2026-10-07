@@ -176,6 +176,31 @@ test.describe("Planning Workbench", () => {
     await expect(availableCards.first()).toContainText("Heavy Q2");
   });
 
+  test("keeps an inactive participant visible on existing demands but excludes new assignments", async ({ page }) => {
+    const scenario = buildPlanningScenario();
+    const participant = scenario.participants[0];
+    participant.active = false;
+    scenario.planningItems[0].planningDemands = [{
+      kind: "PARTICIPANT", participantId: participant.id, stream: "Core", days: 3,
+    }];
+    await setupPlanningScenario(page, scenario);
+    await page.goto(urls.planning);
+    const item = page.getByTestId(`planning-item-${scenario.planningItems[0].id}`);
+    await expect(item).toContainText(`${participant.fullName} (неактивен)`);
+    await item.getByRole("button", { name: "Изменить" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Роль / Участник")).toHaveValue(`Участник: ${participant.fullName} (неактивен)`);
+    await dialog.getByRole("button", { name: "Добавить", exact: true }).click();
+    const newDemand = dialog.getByLabel("Роль / Участник").last();
+    await expect(newDemand).toHaveValue("");
+    await newDemand.click();
+    await page.getByRole("option").first().waitFor();
+    await expect(page.getByRole("option").filter({ hasText: participant.fullName })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await dialog.getByRole("button", { name: "Отмена" }).click();
+    await expect(item).toContainText(`${participant.fullName} (неактивен)`);
+  });
+
   test("shows count-only chip in current plan and supports create-edit-delete", async ({ page }) => {
     await setupPlanningScenario(page);
 

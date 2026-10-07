@@ -14,7 +14,18 @@ public interface ParticipantStreamValueRepository extends JpaRepository<Particip
 
     Optional<ParticipantStreamValueEntity> findByNameAndTeamKey(String name, String teamKey);
 
-    @Query("SELECT DISTINCT ps.name FROM ParticipantStreamValueEntity ps WHERE ps.teamKey = :teamKey ORDER BY ps.name")
+    @Query("""
+        SELECT DISTINCT ps.name
+        FROM ParticipantStreamValueEntity ps
+        WHERE ps.teamKey = :teamKey
+          AND EXISTS (
+            SELECT p.id
+            FROM ParticipantEntity p
+            JOIN p.userStreams userStream
+            WHERE p.teamKey = :teamKey AND p.active = true AND userStream = ps.name
+          )
+        ORDER BY ps.name
+        """)
     List<String> findAllNamesByTeamKey(@Param("teamKey") String teamKey);
 
     @Query("""

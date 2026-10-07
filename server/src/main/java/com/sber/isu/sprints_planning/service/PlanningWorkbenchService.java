@@ -421,7 +421,9 @@ public class PlanningWorkbenchService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected items do not have planning window");
         }
 
-        List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey);
+        List<ParticipantEntity> participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey).stream()
+            .filter(ParticipantEntity::isActive)
+            .toList();
         Map<String, Map<String, BigDecimal>> committed = aggregateCommittedLoad(teamKey, relevantSprints);
         List<PlanningDraftTask> draftTasks = toDraftTasks(items, teamKey);
 
@@ -988,6 +990,7 @@ public class PlanningWorkbenchService {
         String teamKey
     ) {
         Map<String, ParticipantEntity> participantsById = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey).stream()
+            .filter(ParticipantEntity::isActive)
             .collect(Collectors.toMap(participant -> participant.getId().toString(), Function.identity()));
         Map<String, SprintEntity> sprintsById = sprintRepository.findByTeamKeyOrderByQuarterAndOrder(teamKey).stream()
             .collect(Collectors.toMap(sprint -> sprint.getId().toString(), Function.identity()));

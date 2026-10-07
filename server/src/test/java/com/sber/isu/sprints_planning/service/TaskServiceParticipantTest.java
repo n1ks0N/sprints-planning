@@ -98,6 +98,20 @@ class TaskServiceParticipantTest {
     }
 
     @Test
+    void addParticipantRejectsInactiveAssigneeWithoutCreatingLinks() {
+        ParticipantEntity participant = participant(PARTICIPANT_ID);
+        participant.setActive(false);
+        when(taskRepository.findByIdAndTeamKeyForUpdate(TASK_ID, TEAM_KEY)).thenReturn(Optional.of(task()));
+        when(taskParticipantRepository.findParticipantIds(TASK_ID, TEAM_KEY)).thenReturn(List.of());
+        when(participantRepository.findByIdAndTeamKey(PARTICIPANT_ID, TEAM_KEY)).thenReturn(Optional.of(participant));
+
+        assertThatThrownBy(() -> taskService.addParticipant(TEAM_KEY, TASK_ID,
+            new TaskParticipantAddRequest(PARTICIPANT_ID.toString())))
+            .hasMessageContaining("неактивного участника");
+        verify(taskParticipantRepository, never()).save(any());
+    }
+
+    @Test
     void addParticipantUsesOnlyLightweightQueriesAndReturnsCanonicalOrder() {
         TaskEntity task = task();
         ParticipantEntity participant = participant(PARTICIPANT_ID);

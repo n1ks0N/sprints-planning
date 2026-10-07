@@ -313,8 +313,10 @@ export default function PlanningWorkbenchReviewPage() {
   }, [draftAllocations, draftTasks]);
 
   const filteredParticipantSummary = React.useMemo(
-    () => localParticipantSummary.filter((row) => planningParticipantIds.has(row.participant.id)),
-    [localParticipantSummary, planningParticipantIds]
+    () => localParticipantSummary.filter((row) =>
+      planningParticipantIds.has(row.participant.id)
+      && participantMap.get(row.participant.id)?.active !== false),
+    [localParticipantSummary, planningParticipantIds, participantMap]
   );
 
   const previewDisplaySprints = React.useMemo(

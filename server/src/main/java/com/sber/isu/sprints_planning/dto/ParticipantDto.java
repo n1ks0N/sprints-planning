@@ -6,6 +6,7 @@ public record ParticipantDto(
     String role,
     double rate,
     java.util.List<String> userStreams,
-    String jiraLogin
+    String jiraLogin,
+    boolean active
 ) {
 }

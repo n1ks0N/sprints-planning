@@ -64,7 +64,8 @@ public final class DtoMapper {
             entity.getUserStreams() == null
                 ? java.util.List.of()
                 : entity.getUserStreams().stream().toList(),
-            entity.getJiraLogin()
+            entity.getJiraLogin(),
+            entity.isActive()
         );
     }
 

@@ -40,8 +40,9 @@ public class ParticipantService {
         this.participantStreamValueRepository = participantStreamValueRepository;
     }
 
-    public List<ParticipantDto> findAll(String teamKey) {
+    public List<ParticipantDto> findAll(String teamKey, boolean includeInactive) {
         return participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey).stream()
+            .filter(participant -> includeInactive || participant.isActive())
             .map(DtoMapper::toParticipantDto)
             .toList();
     }
@@ -85,6 +86,9 @@ public class ParticipantService {
         if (request.jiraLogin() != null) {
             entity.setJiraLogin(normalizeOptional(request.jiraLogin()));
         }
+        if (request.active() != null) {
+            entity.setActive(request.active());
+        }
         syncReferenceValues(teamKey, entity.getRole(), entity.getUserStreams());
         cleanupUnusedReferenceValues(teamKey);
         return DtoMapper.toParticipantDto(entity);
@@ -94,9 +98,7 @@ public class ParticipantService {
     public ParticipantDto delete(String teamKey, IdRequest request) {
         ParticipantEntity entity = participantRepository.findByIdAndTeamKey(UUID.fromString(request.id()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
-        participantRepository.delete(entity);
-        participantRepository.flush();
-        cleanupUnusedReferenceValues(teamKey);
+        entity.setActive(false);
         return DtoMapper.toParticipantDto(entity);
     }
 

@@ -634,7 +634,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
 
   const assignedParticipantIds = task.participantIds || [];
   const availableParticipants = participants
-    .filter((p) => !assignedParticipantIds.includes(p.id))
+    .filter((p) => p.active !== false && !assignedParticipantIds.includes(p.id))
     .sort((a, b) =>
       a.fullName.localeCompare(b.fullName, "ru", { sensitivity: "base" })
     );
@@ -1269,7 +1269,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                     const participantEditOptions = participants.filter(
                       (candidate) =>
                         candidate.id === p.id ||
-                        !assignedParticipantIds.includes(candidate.id)
+                        (candidate.active !== false && !assignedParticipantIds.includes(candidate.id))
                     );
                     const participantNote = task.notes?.[p.id] ?? "";
                     const participantJiraIssues = task.jiraIssues?.[p.id] || {};
@@ -1329,6 +1329,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                               >
                                 <IconButton
                                   size="small"
+                                  disabled={p.active === false && !isLeader}
                                   onClick={() =>
                                     onUpdateTaskPatch(task, {
                                       leaderId: leaderPid === p.id ? "" : p.id,
@@ -1342,6 +1343,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                                   )}
                                 </IconButton>
                                 <Chip label={p.role} size="small" />
+                                {p.active === false && <Chip label="Неактивен" size="small" variant="outlined" />}
                                 <EditableParticipant
                                   value={p}
                                   options={participantEditOptions}

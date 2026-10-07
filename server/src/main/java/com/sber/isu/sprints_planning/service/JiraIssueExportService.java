@@ -622,12 +622,13 @@ public class JiraIssueExportService {
         List<TaskParticipantEntity> orderedParticipants
     ) {
         ParticipantEntity leader = task.getLeaderParticipant();
-        if (leader != null && leader.getId() != null) {
+        if (leader != null && leader.isActive() && leader.getId() != null) {
             return leader;
         }
         return orderedParticipants.stream()
             .map(TaskParticipantEntity::getParticipant)
             .filter(Objects::nonNull)
+            .filter(ParticipantEntity::isActive)
             .findFirst()
             .orElse(null);
     }
@@ -651,6 +652,9 @@ public class JiraIssueExportService {
         List<TaskParticipantEntity> participants,
         List<String> requestedParticipantIds
     ) {
+        participants = participants.stream()
+            .filter(link -> link.getParticipant() != null && link.getParticipant().isActive())
+            .toList();
         if (requestedParticipantIds == null || requestedParticipantIds.isEmpty()) {
             return participants;
         }
@@ -756,6 +760,9 @@ public class JiraIssueExportService {
             .orElse(null);
         if (participant == null) {
             return item.withStatus(ITEM_STATUS_FAILED, "Участник не найден в задаче");
+        }
+        if (!participant.isActive()) {
+            return item.withStatus(ITEM_STATUS_SKIPPED, "Участник неактивен");
         }
         String projectKey = normalizeRequiredProjectKey(batch.getProjectKey());
 
@@ -1593,7 +1600,7 @@ public class JiraIssueExportService {
             new JiraCreateIssueFields(
                 new JiraProject(projectKey),
                 new JiraIssueType(DEFAULT_PARTICIPANT_ISSUE_TYPE_ID),
-                normalizedTaskTitle(task),
+                participant.getRole().trim() + ": " + normalizedTaskTitle(task),
                 buildDescription(task),
                 new JiraAssignee(participant.getJiraLogin().trim()),
                 labels,
