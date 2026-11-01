@@ -54,7 +54,7 @@ async function setup(page: Page, taskCount = 1) {
     }
     if (resource === "/quarters") return respond(scenario.quarters);
     if (resource === "/sprints") return respond(scenario.sprints);
-    if (resource === "/releases") return respond(scenario.releases);
+    if (resource === "/releases" || resource === "/releases/options") return respond(scenario.releases);
     if (resource === "/filters") return respond({ ...scenario.filters,
       participantRoles: [...new Set(participants.filter((p) => p.active).map((p) => p.role))],
       participantStreams: [...new Set(participants.filter((p) => p.active).flatMap((p) => p.userStreams || []))],

@@ -133,7 +133,8 @@ const cleanupTeam = async (request: APIRequestContext, teamKey: string) => {
   try {
     const backlogResponse = await request.get(`${API_PREFIX}/${teamKey}/planning-workbench/backlog`);
     if (backlogResponse.ok()) {
-      const planningItems = await getJson<PlanningWorkbenchItemDto[]>(backlogResponse);
+      const payload = await backlogResponse.json();
+      const planningItems: PlanningWorkbenchItemDto[] = Array.isArray(payload) ? payload : payload.content || [];
       for (const item of planningItems) {
         await request.delete(`${API_PREFIX}/${teamKey}/planning-workbench/items/${item.id}`);
       }
@@ -386,11 +387,11 @@ test.describe("Planning Workbench Real Backend", () => {
       await page.getByTestId("planning-preview-apply").click();
       await expect(page).toHaveURL(new RegExp(`#/${escapeRegExp(teamKey)}/$`));
 
-      const planningBacklog = await apiGet<PlanningWorkbenchItemDto[]>(
+      const planningBacklog = await apiGet<{ content: PlanningWorkbenchItemDto[] }>(
         request,
         `/${teamKey}/planning-workbench/backlog`
       );
-      expect(planningBacklog).toHaveLength(0);
+      expect(planningBacklog.content).toHaveLength(0);
 
       const tasks = await apiGet<TaskPageDto>(request, `/${teamKey}/tasks?page=0&size=50`);
       const criticalTask = tasks.content.find((task) => task.title === "Critical API");
@@ -600,7 +601,7 @@ test.describe("Planning Workbench Real Backend", () => {
       await page.getByTestId(`planning-preview-priority-${item.id}`).click();
       await page.getByRole("option", { name: "1" }).click();
       await page.getByTestId(`planning-preview-status-${item.id}`).click();
-      await page.getByRole("option", { name: "Выполнена" }).click();
+      await page.getByRole("option", { name: "Выполнено" }).click();
 
       const taskCard = page.getByTestId(`planning-preview-task-${item.id}`);
       await taskCard.getByLabel("Добавить участника").click();
@@ -629,11 +630,11 @@ test.describe("Planning Workbench Real Backend", () => {
       await page.getByTestId("planning-preview-apply").click();
       await expect(page).toHaveURL(new RegExp(`#/${escapeRegExp(teamKey)}/$`));
 
-      const planningBacklog = await apiGet<PlanningWorkbenchItemDto[]>(
+      const planningBacklog = await apiGet<{ content: PlanningWorkbenchItemDto[] }>(
         request,
         `/${teamKey}/planning-workbench/backlog`
       );
-      expect(planningBacklog).toHaveLength(0);
+      expect(planningBacklog.content).toHaveLength(0);
 
       const tasks = await apiGet<TaskPageDto>(request, `/${teamKey}/tasks?page=0&size=50`);
       const created = tasks.content.find((task) => task.title === "Manual Preview Final");

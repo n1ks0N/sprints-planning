@@ -19,8 +19,26 @@ public record TaskFilter(
     Set<String> userStreams,
     String searchQuery,
     boolean withoutQuarter,
-    UUID pinnedTaskId
+    UUID pinnedTaskId,
+    String workspace,
+    java.time.LocalDate releasePromDate
 ) {
+
+    public TaskFilter(Set<UUID> quarterIds, Set<Short> priorities, Set<String> statuses, UUID releaseDateId, Set<String> streams, boolean withoutStream, Set<String> customers, boolean withoutCustomer, Set<UUID> participantIds, Set<String> roles, Set<String> userStreams, String searchQuery, boolean withoutQuarter, UUID pinnedTaskId) {
+        this(quarterIds, priorities, statuses, releaseDateId, streams, withoutStream, customers, withoutCustomer, participantIds, roles, userStreams, searchQuery, withoutQuarter, pinnedTaskId, null, null);
+    }
+
+    public TaskFilter withScope(String workspace, String releasePromDate) {
+        if (workspace != null && !Set.of("ROADMAP", "BACKLOG").contains(workspace)) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "Unknown workspace");
+        }
+        java.time.LocalDate date = null;
+        try { if (releasePromDate != null && !releasePromDate.isBlank()) date = java.time.LocalDate.parse(releasePromDate); }
+        catch (java.time.DateTimeException e) { throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "Invalid release date"); }
+        if (date != null && releaseDateId != null) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "Choose release ID or date, not both");
+        return new TaskFilter(quarterIds, priorities, statuses, releaseDateId, streams, withoutStream, customers,
+            withoutCustomer, participantIds, roles, userStreams, searchQuery, withoutQuarter, pinnedTaskId, workspace, date);
+    }
 
     public static TaskFilter empty() {
         return new TaskFilter(

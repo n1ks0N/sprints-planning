@@ -3,6 +3,7 @@ import { Box, Paper, TextField } from "@mui/material";
 import type { PaperProps } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material/styles";
 import FilterAutocomplete from "./FilterAutocomplete";
+import ReleaseDateField from "../ReleaseDateField";
 import type { FilterAutocompleteProps } from "./FilterAutocomplete";
 
 export type SearchFilterConfig = {
@@ -16,6 +17,7 @@ export type SearchFilterConfig = {
 };
 
 export type FiltersPanelFilter =
+  | { type: "releaseDate"; key: string; props: React.ComponentProps<typeof ReleaseDateField>; minWidth?: number; maxWidth?: number }
   | {
       type: "autocomplete";
       key: string;
@@ -95,17 +97,14 @@ export default function FiltersPanel({
             }
           : undefined;
 
+        if (filter.type === "releaseDate") {
+          return <Box key={filter.key} sx={wrapItemSx ?? baseSx}><ReleaseDateField {...filter.props} /></Box>;
+        }
         if (filter.type === "autocomplete") {
           const sx = baseSx
             ? mergeSx(baseSx, filter.props.sx)
             : filter.props.sx;
-          const field = (
-            <FilterAutocomplete
-              key={filter.key}
-              {...filter.props}
-              sx={sx}
-            />
-          );
+          const field = <FilterAutocomplete key={filter.key} {...filter.props} sx={sx} />;
           return isWrapLayout ? (
             <Box key={filter.key} sx={wrapItemSx}>
               {field}

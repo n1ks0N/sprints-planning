@@ -444,6 +444,9 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         List<Predicate> predicates = new ArrayList<>();
         Predicate teamPredicate = cb.equal(task.get("teamKey"), teamKey);
         predicates.add(teamPredicate);
+        Predicate workspacePredicate = filter.workspace() == null ? cb.conjunction() : cb.equal(task.get("workspace"), filter.workspace());
+        predicates.add(workspacePredicate);
+        if (filter.releasePromDate() != null) predicates.add(cb.equal(task.get("releaseDate").get("promDate"), filter.releasePromDate()));
 
         if (!filter.participantIds().isEmpty()) {
             predicates.add(participantExists(query, cb, task, filter.participantIds()));
@@ -492,7 +495,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
 
         if (!filter.statuses().isEmpty()) {
             predicates.add(cb.lower(task.get("status")).in(filter.statuses()));
-        } else {
+        } else if (filter.workspace() == null) {
             predicates.add(cb.or(
                 cb.isNull(task.get("status")),
                 cb.notEqual(cb.lower(task.get("status")), "backlog")
@@ -503,6 +506,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         if (filter.pinnedTaskId() != null) {
             Predicate pinned = cb.and(
                 teamPredicate,
+                workspacePredicate,
                 cb.equal(task.get("id"), filter.pinnedTaskId())
             );
             return cb.or(basePredicate, pinned);

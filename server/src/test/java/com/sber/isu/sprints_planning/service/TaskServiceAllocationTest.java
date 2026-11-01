@@ -126,6 +126,55 @@ class TaskServiceAllocationTest {
         );
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 10, 100})
+    void planningBatchLoadsSharedDictionariesAndJiraOnce(int size) {
+        ParticipantEntity participant = participant("22222222-2222-2222-2222-222222222222");
+        SprintEntity sprint = sprint("33333333-3333-3333-3333-333333333333");
+        var release = new com.sber.isu.sprints_planning.model.ReleaseEntity();
+        release.setId(UUID.randomUUID()); release.setPromDate(LocalDate.of(2032, 2, 15));
+        when(participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc("team-a")).thenReturn(List.of(participant));
+        when(sprintRepository.findByTeamKeyOrderByQuarterAndOrder("team-a")).thenReturn(List.of(sprint));
+        when(releaseRepository.findAllByTeamKeyOrderByPromDateAsc("team-a")).thenReturn(List.of(release));
+        when(taskRepository.save(any(TaskEntity.class))).thenAnswer(invocation -> {
+            TaskEntity task = invocation.getArgument(0); task.setId(UUID.randomUUID()); return task;
+        });
+        when(taskRepository.findMaxWorkspaceOrder("team-a", "BACKLOG")).thenReturn(100);
+        List<TaskService.PlanningMutation> mutations = new ArrayList<>();
+        for (int i = 0; i < size; i++) {
+            mutations.add(new TaskService.PlanningMutation(new TaskCreateRequest(
+                "Task " + i, "", "", (short) 1, "backlog", List.of(), List.of(),
+                List.of(participant.getId().toString()), List.of(), List.of(sprint.getId().toString()),
+                i % 2 == 0 ? Map.of() : Map.of(sprint.getId().toString(), BigDecimal.ONE),
+                i % 2 == 0 ? Map.of() : Map.of(participant.getId().toString(), Map.of(sprint.getId().toString(), BigDecimal.ONE)),
+                Map.of(), release.getId().toString(), null, participant.getId().toString(), null
+            ), null));
+        }
+        List<TaskDto> result = taskService.applyPlanningBatch("team-a", mutations);
+        assertThat(result).hasSize(size);
+        assertThat(result.get(0).order()).isEqualTo(101);
+        assertThat(result.get(size - 1).order()).isEqualTo(100 + size);
+        verify(taskRepository).findMaxWorkspaceOrder("team-a", "BACKLOG");
+        verify(taskRepository, never()).incrementWorkspaceOrderFrom(any(), any(), org.mockito.ArgumentMatchers.anyInt());
+        assertThat(result).allSatisfy(task -> {
+            assertThat(task.participantIds()).containsExactly(participant.getId().toString());
+            assertThat(task.loads()).isEqualTo(Integer.parseInt(task.title().substring(5)) % 2 == 0
+                ? Map.of() : Map.of(sprint.getId().toString(), new BigDecimal("1.0")));
+            assertThat(task.leaderId()).isEqualTo(participant.getId().toString());
+        });
+        ArgumentCaptor<TaskEntity> savedTasks = ArgumentCaptor.forClass(TaskEntity.class);
+        verify(taskRepository, org.mockito.Mockito.times(size)).save(savedTasks.capture());
+        assertThat(savedTasks.getAllValues()).allSatisfy(task ->
+            assertThat(task.getLoads()).hasSize(Integer.parseInt(task.getTitle().substring(5)) % 2));
+        verify(sprintRepository).findByTeamKeyOrderByQuarterAndOrder("team-a");
+        verify(participantRepository).findAllByTeamKeyOrderByDisplayOrderAsc("team-a");
+        verify(releaseRepository).findAllByTeamKeyOrderByPromDateAsc("team-a");
+        verify(participantRepository, never()).findByIdAndTeamKey(any(), any());
+        verify(releaseRepository, never()).findByIdAndTeamKey(any(), any());
+        verify(sprintRepository, never()).findByTeamKeyAndIdIn(any(), any());
+        verify(taskJiraIssueRepository).findAllByTeamKeyAndTaskIdIn(eq("team-a"), any());
+    }
+
     @Test
     void updatingTaskKeepsInactiveAssigneeLeaderAndAllocations() {
         TaskEntity task = task("11111111-1111-1111-1111-111111111111");
@@ -323,7 +372,6 @@ class TaskServiceAllocationTest {
         when(sprintRepository.findByTeamKeyOrderByQuarterAndOrder("team-a")).thenReturn(List.of(sprint));
         when(participantRepository.findByIdAndTeamKey(newParticipant.getId(), "team-a")).thenReturn(Optional.of(newParticipant));
         when(taskAllocationRepository.findById(newAllocationId)).thenAnswer(invocation -> findAllocation(task, newAllocationId));
-        when(taskLoadRepository.findById(loadId)).thenAnswer(invocation -> findLoad(task, loadId));
         lenient().when(taskJiraIssueRepository.findAllByTeamKeyAndTaskIdIn("team-a", Set.of(task.getId()))).thenReturn(List.of());
 
         TaskDto result = taskService.update("team-a", new TaskUpdateRequest(

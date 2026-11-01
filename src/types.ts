@@ -70,9 +70,7 @@ export type TaskPriority = 1 | 2 | 3;
 export type TaskStatus =
   | "inprogress"
   | "done"
-  | "notdone"
   | "canceled"
-  | "partial"
   | "backlog";
 
 export type PlanningDemandKind = "ROLE" | "PARTICIPANT";
@@ -86,6 +84,10 @@ export type PlanningDemand = {
 };
 
 export type PlanningWorkbenchItem = {
+  notes?: Record<string, string>;
+  leaderId?: string | null;
+  releasePromDate?: string | null;
+  sourceTaskId?: string | null;
   id: string;
   title: string;
   description: string;
@@ -106,7 +108,12 @@ export type PlanningWorkbenchItem = {
   updatedAt: string;
 };
 
+export type TaskWorkspace = "ROADMAP" | "BACKLOG";
+
 export type BacklogItem = {
+  workspace?: TaskWorkspace;
+  revision?: number;
+  releasePromDate?: string | null;
   id: string;
   title: string;
   description: string;
@@ -203,6 +210,8 @@ export type Release = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type ReleaseOption = Pick<Release, "id" | "name" | "promDate">;
 
 export type ReleaseAnchorField =
   | "stDate"

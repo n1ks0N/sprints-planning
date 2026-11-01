@@ -299,6 +299,8 @@ type TaskAllocationsUpdateResponse = {
   updatedAt: string;
 };
 type TasksQueryArgs = {
+  teamKey?: string;
+  workspace?: "ROADMAP" | "BACKLOG";
   quarterIds?: string[];
   withoutQuarter?: boolean;
   withoutStream?: boolean;
@@ -306,6 +308,7 @@ type TasksQueryArgs = {
   priority?: number[];
   statuses?: string[];
   releaseDateId?: string;
+  releasePromDate?: string;
   streams?: string[];
   customers?: string[];
   search?: string;
@@ -320,8 +323,8 @@ type TasksQueryArgs = {
 };
 const tasksCacheKey = (arg: void | TasksQueryArgs, endpointName = "getTasks") => {
   if (!arg) return endpointName;
-  const { page, size, ...filters } = arg;
-  return `${endpointName}-${JSON.stringify(filters)}`;
+  const { page, ...filters } = arg;
+  return `${endpointName}-${JSON.stringify(Object.fromEntries(Object.entries(filters).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => [key, Array.isArray(value) ? [...new Set<string | number>(value)].sort() : value])))}`;
 };
 
 type ParticipantWorkloadQueryArgs = {
@@ -345,6 +348,7 @@ type PlanningWorkbenchBacklogArgs = {
   quarterIds?: string[];
   priority?: string[];
   releaseDateId?: string;
+  releasePromDate?: string;
   streams?: string[];
   customers?: string[];
   search?: string;
@@ -400,15 +404,16 @@ const joinFilterValues = (values?: Array<string | number>) => {
   return normalized.length > 0 ? normalized.join(",") : undefined;
 };
 
-const buildExcelExportUrl = (state: any) => {
+const buildExcelExportUrl = (state: any, workspace: "ROADMAP" | "BACKLOG") => {
   const baseUrl = process.env.API_URL || "/api/v1/sprints-planning";
   const teamKey = (
     selectCurrentTeamKey(state) ||
     getTeamFromLocation() ||
     DEFAULT_TEAM_KEY
   ).toLowerCase();
-  const backlog = state?.ui?.backlog;
+  const backlog = state?.ui?.taskLists?.[`${teamKey}:${workspace}`] ?? (workspace === "BACKLOG" ? state?.ui?.todo : state?.ui?.backlog);
   const params = new URLSearchParams();
+  params.set("workspace", workspace);
 
   const quarterIds = Array.isArray(backlog?.selectedQuarterIds)
     ? backlog.selectedQuarterIds
@@ -434,7 +439,7 @@ const buildExcelExportUrl = (state: any) => {
       ? backlog.releaseSprintFilter.trim()
       : "";
   if (releaseDateId && releaseDateId !== "all") {
-    params.set("releaseDateId", releaseDateId);
+    params.set(/^\d{4}-\d{2}-\d{2}$/.test(releaseDateId) ? "releasePromDate" : "releaseDateId", releaseDateId);
   }
 
   const streams = joinFilterValues(backlog?.streamFilter);
@@ -453,14 +458,14 @@ const buildExcelExportUrl = (state: any) => {
   return `${baseUrl}/${teamKey}/export/excel${query ? `?${query}` : ""}`;
 };
 
-export const exportExcelFile = async (state: any): Promise<Blob> => {
+export const exportExcelFile = async (state: any, workspace: "ROADMAP" | "BACKLOG"): Promise<Blob> => {
   const headers = new Headers();
   const sessionId = ensureSessionId();
   const userName = getStoredUserName();
   if (sessionId) headers.set("X-Session-Id", sessionId);
   if (userName) headers.set("X-User-Name", encodeURIComponent(userName));
 
-  const response = await fetch(buildExcelExportUrl(state), { headers });
+  const response = await fetch(buildExcelExportUrl(state, workspace), { headers });
   const blob = await response.blob();
   if (!response.ok) {
     const text = await blob.text();
@@ -646,24 +651,20 @@ const applySprintLoad = (task: BacklogItem, sprintId: string, days: number) => {
   task.updatedAt = new Date().toISOString().slice(0, 10);
 };
 
-const TASK_LIST_AFFECTING_FIELDS = new Set([
-  "quarterIds",
-  "priority",
-  "status",
-  "releaseDateId",
-  "initialQuarterId",
-  "streams",
-  "customers",
-  "participantIds",
-  "planningQuarterIds",
-  "planningSprintIds",
-  "title",
-  "description",
-  "dod",
-]);
-
-const shouldInvalidateTaskList = (arg: Partial<BacklogItem> & { id: string }) =>
-  Object.keys(arg).some((key) => TASK_LIST_AFFECTING_FIELDS.has(key));
+// Structural changes can shift pagination on both workspaces. Other edits only
+// refetch cached queries whose filters or sorting depend on the changed fields.
+const shouldInvalidateTaskList = (arg: Partial<BacklogItem> & { id: string }) => "status" in arg || "order" in arg;
+const shouldRefreshFilteredTasks = (arg: Partial<BacklogItem>, query: TasksQueryArgs | void) => {
+  if (!query) return false;
+  if (("title" in arg || "description" in arg || "dod" in arg) && query.search) return true;
+  if ("priority" in arg && (query.priority?.length || query.sortBy === "priority")) return true;
+  if (("releaseDateId" in arg || "releasePromDate" in arg) && (query.releaseDateId || query.releasePromDate || query.sortBy === "releaseDate")) return true;
+  if ("streams" in arg && (query.streams?.length || query.withoutStream || query.search)) return true;
+  if ("customers" in arg && (query.customers?.length || query.withoutCustomer || query.search)) return true;
+  if (["quarterIds", "initialQuarterId", "planningQuarterIds", "planningSprintIds", "allocations", "loads"].some(key => key in arg)
+      && (query.quarterIds?.length || query.withoutQuarter || query.sortBy === "load" || query.sortBy === "releaseDate")) return true;
+  return "participantIds" in arg && Boolean(query.participantIds?.length || query.roles?.length || query.userStreams?.length);
+};
 
 export const api = createApi({
   reducerPath: "api",
@@ -1194,6 +1195,8 @@ export const api = createApi({
           return values.join(",");
         };
 
+        if (arg?.workspace) params.workspace = arg.workspace;
+        if (arg?.releasePromDate) params.releasePromDate = arg.releasePromDate;
         const quarters = joinOrUndefined(arg?.quarterIds);
         if (quarters) params.quarterId = quarters;
         if (arg?.withoutQuarter) params.withoutQuarter = "true";
@@ -1255,7 +1258,8 @@ export const api = createApi({
         let result: TasksPage | undefined;
         for (let page = firstPage; page <= lastPage; page += 1) {
           const response = await fetchWithBaseQuery({
-            url: "/tasks",
+            url: arg?.teamKey ? `/${arg.teamKey}/tasks` : "/tasks",
+            skipTeamPrefix: Boolean(arg?.teamKey),
             method: "GET",
             params: { ...params, page: String(page) },
           });
@@ -1309,13 +1313,11 @@ export const api = createApi({
         if (currentPage !== prevPage || currentSize !== prevSize) return true;
         return JSON.stringify(currentFilters) !== JSON.stringify(prevFilters);
       },
-      providesTags: (result) =>
-        result
-          ? [
-              { type: "Task" as const, id: "LIST" as const },
-              ...result.content.map((t) => ({ type: "Task" as const, id: t.id })),
-            ]
-          : [{ type: "Task" as const, id: "LIST" as const }],
+      providesTags: (result, _error, arg) => [
+        listTag("Task"),
+        entityTag("Task", tasksCacheKey(arg)),
+        ...(result?.content.map(task => entityTag("Task", task.id)) ?? []),
+      ],
     }),
     getTask: b.query<BacklogItem, string>({
       query: (id) => ({ url: `/tasks/${id}`, method: "GET" }),
@@ -1328,7 +1330,7 @@ export const api = createApi({
       PlanningWorkbenchBacklogPage,
       void | PlanningWorkbenchBacklogArgs
     >({
-      query: (arg) => {
+      async queryFn(arg, queryApi, extraOptions, fetchWithBaseQuery) {
         const params: Record<string, string> = {};
         const joinOrUndefined = (values?: string[]) => {
           if (!values || values.length === 0) return undefined;
@@ -1342,6 +1344,7 @@ export const api = createApi({
         if (typeof arg?.page === "number") params.page = String(arg.page);
         if (typeof arg?.size === "number") params.size = String(arg.size);
 
+        if (arg?.releasePromDate) params.releasePromDate = arg.releasePromDate;
         const quarters = joinOrUndefined(arg?.quarterIds);
         if (quarters) params.quarterIds = quarters;
 
@@ -1362,17 +1365,40 @@ export const api = createApi({
         const search = (arg?.search || "").trim();
         if (search) params.search = search;
 
-        return {
-          url: "/planning-workbench/backlog",
-          method: "GET",
-          params: Object.keys(params).length ? params : undefined,
-        };
+        const { page: ignoredPage, ...filters } = arg || {};
+        const cacheKey = `getPlanningWorkbenchBacklog-${JSON.stringify(filters)}`;
+        const cached = (queryApi.getState() as {
+          api: { queries: Record<string, { data?: PlanningWorkbenchBacklogPage } | undefined> };
+        }).api.queries[cacheKey]?.data;
+        const requestedPage = Math.max(0, arg?.page ?? 0);
+        const refreshPrefix = !cached || requestedPage <= cached.page.number;
+        const pageSize = Math.max(1, arg?.size ?? cached?.page.size ?? 20);
+        const firstPage = refreshPrefix ? 0 : requestedPage;
+        const lastPage = refreshPrefix
+          ? Math.max(requestedPage, Math.ceil((cached?.content.length ?? 0) / pageSize) - 1)
+          : requestedPage;
+        const content: PlanningWorkbenchItem[] = [];
+        let result: PlanningWorkbenchBacklogPage | undefined;
+        for (let page = firstPage; page <= lastPage; page += 1) {
+          const response = await fetchWithBaseQuery({
+            url: "/planning-workbench/backlog", method: "GET",
+            params: { ...params, page: String(page), size: String(pageSize) },
+          });
+          if (response.error) return { error: response.error };
+          result = normalizePageResponse<PlanningWorkbenchItem>(response.data);
+          content.push(...result.content);
+          if (page + 1 >= result.page.totalPages) break;
+        }
+        const data = result!;
+        data.content = Array.from(new Map(content.map(item => [item.id, item])).values());
+        data.numberOfElements = data.content.length;
+        data.empty = data.content.length === 0;
+        data.first = firstPage === 0;
+        return { data };
       },
-      transformResponse: (response: unknown) =>
-        normalizePageResponse<PlanningWorkbenchItem>(response),
       serializeQueryArgs: ({ queryArgs, endpointName }) => {
         if (!queryArgs || typeof queryArgs !== "object") return endpointName;
-        const { page, size, ...rest } = queryArgs as Record<string, unknown>;
+        const { page, ...rest } = queryArgs as Record<string, unknown>;
         return `${endpointName}-${JSON.stringify(rest)}`;
       },
       merge: (currentCache, newData, { arg }) => {
@@ -1381,7 +1407,7 @@ export const api = createApi({
           return newData;
         }
 
-        const shouldReset = !arg || typeof arg !== "object" || !("page" in arg) || (arg as any).page === 0;
+        const shouldReset = newData.first === true || !arg || typeof arg !== "object" || !("page" in arg) || (arg as any).page === 0;
         if (shouldReset) {
           Object.assign(currentCache, newData);
           return;
@@ -1433,6 +1459,7 @@ export const api = createApi({
         streams: string[];
         planningDemands: PlanningDemand[];
         releaseDateId?: string | null;
+        releasePromDate?: string | null;
         initialQuarterId?: string | null;
         planningQuarterIds?: string[];
         planningSprintIds?: string[];
@@ -1441,9 +1468,10 @@ export const api = createApi({
     >({
       query: (body) => ({ url: "/planning-workbench/items", method: "POST", body }),
       invalidatesTags: () => [{ type: "PlanningItem" as const, id: "LIST" as const }],
-      async onQueryStarted(_arg, { queryFulfilled }) {
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
         try {
           await queryFulfilled;
+          if (_arg.releasePromDate) dispatch(api.util.invalidateTags([listTag("Release")]));
         } catch (error) {
           notifyError("Не удалось создать задачу для планирования", error);
         }
@@ -1461,6 +1489,7 @@ export const api = createApi({
         streams: string[];
         planningDemands: PlanningDemand[];
         releaseDateId?: string | null;
+        releasePromDate?: string | null;
         initialQuarterId?: string | null;
         planningQuarterIds?: string[];
         planningSprintIds?: string[];
@@ -1472,9 +1501,10 @@ export const api = createApi({
         { type: "PlanningItem" as const, id: arg.id },
         { type: "PlanningItem" as const, id: "LIST" as const },
       ],
-      async onQueryStarted(_arg, { queryFulfilled }) {
+      async onQueryStarted(_arg, { dispatch, queryFulfilled }) {
         try {
           await queryFulfilled;
+          if (_arg.releasePromDate) dispatch(api.util.invalidateTags([listTag("Release")]));
         } catch (error) {
           notifyError("Не удалось обновить задачу для планирования", error);
         }
@@ -1554,6 +1584,7 @@ export const api = createApi({
             participantIds?: string[];
             planningDemands?: PlanningDemand[];
             releaseDateId?: string | null;
+        releasePromDate?: string | null;
             initialQuarterId?: string | null;
             planningQuarterIds?: string[];
             planningSprintIds?: string[];
@@ -1687,7 +1718,17 @@ export const api = createApi({
           getState,
           "getTasks",
           [{ type: "Task", id: "LIST" }]
-        );
+        ).filter((filters: any) => {
+          if (!filters) return true;
+          if (filters.workspace && filters.workspace !== (arg.workspace ?? (arg.status === "backlog" ? "BACKLOG" : "ROADMAP"))) return false;
+          if (filters.statuses?.length && !filters.statuses.includes(arg.status)) return false;
+          if (filters.priority?.length && !filters.priority.includes(arg.priority)) return false;
+          if (filters.search || filters.streams?.length || filters.customers?.length || filters.releaseDateId || filters.releasePromDate || filters.roles?.length || filters.participantIds?.length || filters.userStreams?.length) return false;
+          if (filters.withoutQuarter && arg.initialQuarterId) return false;
+          if (filters.quarterIds?.length && !filters.quarterIds.includes(arg.initialQuarterId) && !arg.planningQuarterIds?.some(id => filters.quarterIds.includes(id))) return false;
+          if (filters.withoutStream && arg.streams?.length || filters.withoutCustomer && arg.customers?.length) return false;
+          return true;
+        });
 
         const patches = applyPatches(
           dispatch,
@@ -1702,6 +1743,7 @@ export const api = createApi({
 
         try {
           const { data } = await queryFulfilled;
+          if (arg.releasePromDate) dispatch(api.util.invalidateTags([listTag("Release")]));
           applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
             updateTasksDraft(draft, (tasks) => {
               const idx = tasks.findIndex((t: BacklogItem) => t.id === optimistic.id);
@@ -1718,12 +1760,12 @@ export const api = createApi({
     updateTask: b.mutation<BacklogItem, Partial<BacklogItem> & { id: string }>(
       {
         query: (body) => ({ url: "/tasks/update", method: "POST", body }),
-        invalidatesTags: (result, error, arg) => [
+        invalidatesTags: (result, error, arg) => error ? [] : [
           ...(shouldInvalidateTaskList(arg)
             ? [{ type: "Task" as const, id: "LIST" as const }]
             : []),
-          { type: "Capacity" as const, id: "LIST" as const },
-          { type: "ParticipantWorkload" as const, id: "LIST" as const },
+          ...(["status", "participantIds", "allocations", "loads"].some(key => key in arg) ? [listTag("Capacity")] : []),
+          ...(["title", "priority", "status", "streams", "participantIds", "allocations", "loads", "leaderId"].some(key => key in arg) ? [listTag("ParticipantWorkload")] : []),
         ],
         async onQueryStarted(arg, { dispatch, queryFulfilled, getState }) {
           const cachedArgs = collectCachedArgs<Record<string, unknown> | void>(
@@ -1757,6 +1799,12 @@ export const api = createApi({
 
           try {
             const { data } = await queryFulfilled;
+            if (arg.releasePromDate) dispatch(api.util.invalidateTags([listTag("Release")]));
+            if (!shouldInvalidateTaskList(arg)) {
+              dispatch(api.util.invalidateTags(cachedArgs
+                .filter(filters => shouldRefreshFilteredTasks(arg, filters as TasksQueryArgs))
+                .map(filters => entityTag("Task", tasksCacheKey(filters as TasksQueryArgs)))));
+            }
             applyPatches(dispatch, "getTasks", cachedArgs, (draft: TasksPage) => {
               updateTasksDraft(draft, (tasks) => {
                 const idx = tasks.findIndex((t: BacklogItem) => t.id === data.id);
@@ -2215,6 +2263,15 @@ export const api = createApi({
       },
     }),
 
+    transferTaskToPlanning: b.mutation<PlanningWorkbenchItem, { taskId: string }>({
+      query: ({ taskId }) => ({ url: `/planning-workbench/from-task/${taskId}`, method: "POST" }),
+      invalidatesTags: [{ type: "PlanningItem", id: "LIST" }],
+    }),
+    getReleaseOptions: b.query<{ id: string; name?: string; promDate: string }[], { teamKey: string; quarterIds?: string[]; fromDate?: string }>({
+      query: ({ teamKey, quarterIds, fromDate }) => ({ url: `/${teamKey}/releases/options`, skipTeamPrefix: true,
+        params: { ...(quarterIds?.length ? { quarterId: [...quarterIds].sort().join(",") } : {}), ...(fromDate ? { fromDate } : {}) } }),
+      providesTags: [{ type: "Release", id: "LIST" }],
+    }),
     // ---- Releases ----
     getReleases: b.query<Release[], void>({
       query: () => ({ url: "/releases", method: "GET" }),
@@ -2514,6 +2571,8 @@ export const {
   useUpsertTaskAllocationMultiMutation,
   useUpsertTaskLoadMutation,
 
+  useGetReleaseOptionsQuery,
+  useTransferTaskToPlanningMutation,
   useGetReleasesQuery,
   useAddReleaseMutation,
   useUpdateReleaseMutation,

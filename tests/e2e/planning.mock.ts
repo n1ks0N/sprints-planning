@@ -787,7 +787,7 @@ export const installPlanningApiMocks = async (
       if (pathname === `/${mockScenario.teamKey}/participants` && method === "GET") {
         return respond(mockScenario.participants);
       }
-      if (pathname === `/${mockScenario.teamKey}/releases` && method === "GET") {
+      if ([`/${mockScenario.teamKey}/releases`, `/${mockScenario.teamKey}/releases/options`].includes(pathname) && method === "GET") {
         return respond(mockScenario.releases);
       }
       if (pathname === `/${mockScenario.teamKey}/filters` && method === "GET") {

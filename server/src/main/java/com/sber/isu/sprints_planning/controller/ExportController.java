@@ -30,6 +30,8 @@ public class ExportController {
         @RequestParam(value = "priority", required = false) String priority,
         @RequestParam(value = "status", required = false) String status,
         @RequestParam(value = "releaseDateId", required = false) String releaseDateId,
+        @RequestParam(value = "workspace", required = false) String workspace,
+        @RequestParam(value = "releasePromDate", required = false) String releasePromDate,
         @RequestParam(value = "stream", required = false) String stream,
         @RequestParam(value = "withoutStream", required = false) String withoutStream,
         @RequestParam(value = "customer", required = false) String customer,
@@ -57,7 +59,7 @@ public class ExportController {
             search,
             withoutQuarter,
             pinnedTaskId
-        );
+        ).withScope(workspace, releasePromDate);
         byte[] bytes = exportService.exportToExcel(normalizedTeamKey, filter);
         return ResponseEntity.ok()
             .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"sprints-planning.xlsx\"")

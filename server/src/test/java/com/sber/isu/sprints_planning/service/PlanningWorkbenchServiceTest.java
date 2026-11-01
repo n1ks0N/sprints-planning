@@ -699,6 +699,7 @@ class PlanningWorkbenchServiceTest {
                 PlanningBacklogItemEntity item = items.get(id);
                 yield item != null && teamKey.equals(item.getTeamKey()) ? item : null;
             }
+            case "lockSelected" -> List.of();
             case "findMaxDisplayOrder" -> maxDisplayOrder;
             case "save" -> {
                 PlanningBacklogItemEntity item = (PlanningBacklogItemEntity) args[0];
@@ -897,6 +898,11 @@ class PlanningWorkbenchServiceTest {
 
         private CapturingTaskService() {
             super(null, null, null, null, null, null, null, null, null, null, null, null, null);
+        }
+
+        @Override
+        public List<TaskDto> applyPlanningBatch(String teamKey, List<TaskService.PlanningMutation> mutations) {
+            return mutations.stream().map(mutation -> create(teamKey, mutation.create())).toList();
         }
 
         @Override

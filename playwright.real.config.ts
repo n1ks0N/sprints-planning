@@ -3,5 +3,5 @@ import baseConfig from "./playwright.config";
 
 export default defineConfig({
   ...baseConfig,
-  testMatch: /planning\.real\.ts$/,
+  testMatch: /(?:planning|roadmap|review)\.real\.ts$/,
 });

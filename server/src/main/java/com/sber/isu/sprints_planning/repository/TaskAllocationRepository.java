@@ -97,7 +97,7 @@ public interface TaskAllocationRepository extends JpaRepository<TaskAllocationEn
         join ta.task t
         where ta.teamKey = :teamKey
           and ta.sprint.id in :sprintIds
-          and lower(coalesce(t.status, 'inprogress')) <> 'backlog'
+          and t.workspace = 'ROADMAP' and lower(coalesce(t.status, 'inprogress')) <> 'backlog'
         group by ta.participant.id, ta.sprint.id
         """)
     List<WorkloadAggregation> aggregateWorkloadByParticipantAndSprint(
@@ -113,7 +113,7 @@ public interface TaskAllocationRepository extends JpaRepository<TaskAllocationEn
           and ta.participant.id in :participantIds
           and ta.sprint.id in :sprintIds
           and t.id <> :taskId
-          and lower(coalesce(t.status, 'inprogress')) <> 'backlog'
+          and t.workspace = 'ROADMAP' and lower(coalesce(t.status, 'inprogress')) <> 'backlog'
         group by ta.participant.id, ta.sprint.id
         """)
     List<WorkloadAggregation> aggregateScheduledWorkloadByParticipantAndSprintExcludingTask(

@@ -42,7 +42,7 @@ import type {
   JiraExportBatchItem,
   JiraSprintOption,
   Participant,
-  Release,
+  ReleaseOption,
   Sprint,
 } from "../types";
 import { useAppDispatch, useDebounce } from "../views/hooks";
@@ -52,7 +52,7 @@ type JiraExportDialogProps = {
   tasks: BacklogItem[];
   participantMap: Map<string, Participant>;
   sprints: Sprint[];
-  releases: Release[];
+  releases: ReleaseOption[];
   onClose: () => void;
   onRemoveTask: (taskId: string) => void;
   onClearTasks: () => void;
@@ -191,11 +191,12 @@ function sprintOptionLabel(option: JiraSprintOption | string) {
   return `${option.name} · ${option.id}${dates}`;
 }
 
-function releaseDefaultLabel(task: BacklogItem, releaseMap: Map<string, Release>) {
+function releaseDefaultLabel(task: BacklogItem, releaseMap: Map<string, ReleaseOption>) {
   if (!task.releaseDateId) return null;
   const release = releaseMap.get(task.releaseDateId);
-  if (!release?.promDate) return null;
-  const promDate = moment(release.promDate, "YYYY-MM-DD", true);
+  const date = task.releasePromDate || release?.promDate;
+  if (!date) return null;
+  const promDate = moment(date, "YYYY-MM-DD", true);
   if (!promDate.isValid()) return null;
   return `plan_release_${promDate.format("YYYYMMDD")}`;
 }

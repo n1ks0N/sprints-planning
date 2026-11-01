@@ -11,7 +11,12 @@ export const store = configureStore({
     undo: undoReducer,
     team: teamReducer,
   },
-  middleware: (gDM) => gDM().concat(api.middleware),
+  middleware: (gDM) => gDM().concat(api.middleware, (storeApi: any) => (next: any) => (action: any) => {
+    const previousTeam = storeApi.getState().team.currentTeam;
+    const result = next(action);
+    if (action.type === "team/setCurrentTeam" && previousTeam !== storeApi.getState().team.currentTeam) storeApi.dispatch(api.util.resetApiState());
+    return result;
+  }),
 });
 
 // Сохранение UI-фильтров в localStorage

@@ -83,6 +83,21 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID>, TaskRep
     @Query("select t from TaskEntity t where t.id = :id and t.teamKey = :teamKey")
     Optional<TaskEntity> findByIdAndTeamKeyForUpdate(@Param("id") UUID id, @Param("teamKey") String teamKey);
 
+    @Query("select coalesce(max(t.displayOrder), 0) from TaskEntity t where t.teamKey = :teamKey and t.workspace = :workspace")
+    int findMaxWorkspaceOrder(@Param("teamKey") String teamKey, @Param("workspace") String workspace);
+
+    @Modifying(flushAutomatically = true)
+    @Query("update TaskEntity t set t.displayOrder = t.displayOrder + 1 where t.teamKey = :teamKey and t.workspace = :workspace and t.displayOrder >= :start")
+    void incrementWorkspaceOrderFrom(@Param("teamKey") String teamKey, @Param("workspace") String workspace, @Param("start") int start);
+
+    @Modifying(flushAutomatically = true)
+    @Query("update TaskEntity t set t.displayOrder = t.displayOrder + :delta where t.id <> :id and t.teamKey = :teamKey and t.workspace = :workspace and t.displayOrder >= :start and t.displayOrder <= :end")
+    void shiftWorkspaceOrder(@Param("id") UUID id, @Param("teamKey") String teamKey, @Param("workspace") String workspace, @Param("start") int start, @Param("end") int end, @Param("delta") int delta);
+
+    @Modifying(flushAutomatically = true)
+    @Query("update TaskEntity t set t.displayOrder = t.displayOrder - 1 where t.teamKey = :teamKey and t.workspace = :workspace and t.displayOrder > :order")
+    void decrementWorkspaceOrderAfter(@Param("teamKey") String teamKey, @Param("workspace") String workspace, @Param("order") int order);
+
     @Query("select coalesce(max(t.displayOrder), 0) from TaskEntity t where t.teamKey = :teamKey")
     int findMaxDisplayOrder(@Param("teamKey") String teamKey);
 

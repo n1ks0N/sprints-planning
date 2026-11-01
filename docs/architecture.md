@@ -29,7 +29,7 @@ Main state and integration points:
   Persistent UI filters and page state.
 
 - `src/views/BacklogPage.tsx`
-  Main live backlog screen. Edits real tasks, participants, sprint allocations, filters, and Jira export selection.
+  Shared task screen: roadmap at `/{teamKey}/`, todo backlog at `/{teamKey}/backlog`. The workspace prop selects independent filters, creation defaults and available actions; cards and allocation editing are shared.
 
 - `src/views/CapacityPage.tsx`
   Capacity summary table by participant and sprint.
@@ -202,3 +202,25 @@ Participants have an `active` flag, defaulting to `true`. `POST /participants/de
 Live backlog queries accumulate pages. On invalidation, they refresh the entire loaded prefix and replace the accumulated list so insertions and changes in order are visible immediately. If a new copy moves beyond the end of the prefix, the refresh loads an additional page. Duplicating a task copies its planning window and active assignees; existing assignments of inactive participants remain on the original task. Creation failures roll back the temporary row.
 
 Jira participant issues use `Participant role: Task title` as their summary. Story summaries continue to use the task title. Request previews and actual issue creation share these builders. Inactive participants are excluded from new Jira exports; stored Jira links remain on task rows.
+
+## Roadmap and todo backlog
+
+Migration `1.0.0_22_roadmap_backlog.sql` separates real tasks using `workspace` (`ROADMAP` / `BACKLOG`).
+`inprogress` and `done` belong to the roadmap; `backlog` belongs to the todo list; canceling preserves the workspace.
+Legacy statuses migrate with `notdone → canceled` and `partial → done`. A database check enforces the allowed pairs.
+
+Task lists apply workspace and other predicates before pagination, and pinned tasks cannot bypass team/workspace.
+Order updates are scoped by team and workspace. Backlog allocations are retained as estimates and excluded from committed capacity.
+Jira export checks workspace both when scheduling and processing the batch. Inactive participants stay in historical assignments,
+while create/replace/copy/planning operations do not make new inactive assignments.
+
+The planning backlog has an optional unique `source_task_id` and source revision. Explicit transfer creates one draft per task.
+Apply locks the draft and source, rejects stale data, updates the original ID, and preserves inactive assignments and their data.
+Independent planning items still create new tasks. Solver rules are unchanged. Planning backlog filtering, sorting and pagination
+run in PostgreSQL (`PlanningBacklogPageRepository`), without loading all items or querying sprint quarters per item.
+
+`GET /{teamKey}/releases/options` projects only ID, name and date and supports quarter/date constraints for suggestions.
+The task/date picker accepts valid manual dates outside the suggestions. `releasePromDate` filters by exact date without creating
+a release; assignment resolves or atomically creates the team's release, guarded by unique `(team_key, prom_date)`.
+The complete releases endpoint remains available for the calendar. Frontend commits date input on Enter/blur,
+shares cached option lists, and retains manual selections when the suggested list changes.

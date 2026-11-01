@@ -1,3 +1,4 @@
+import useToday from "./useToday";
 import * as React from "react";
 import {
   Paper,
@@ -49,7 +50,7 @@ import {
   OpenInNew,
 } from "@mui/icons-material";
 import { skipToken } from "@reduxjs/toolkit/query";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import moment from "moment";
 import "moment/locale/ru";
 
@@ -59,6 +60,7 @@ import {
   useGetQuartersQuery,
   useGetSprintsQuery,
   useGetTasksQuery,
+  useGetTaskQuery,
   useAddTaskMutation,
   useUpdateTaskMutation,
   useAddTaskParticipantMutation,
@@ -69,6 +71,8 @@ import {
   useUpsertTaskAllocationBulkMutation,
   useUpsertTaskAllocationMultiMutation,
   useGetReleasesQuery,
+  useGetReleaseOptionsQuery,
+  useTransferTaskToPlanningMutation,
   useGetFiltersQuery,
   useGetTaskHistoryQuery,
   useUpdateTaskJiraLinksMutation,
@@ -86,7 +90,7 @@ import type {
   Page,
   TaskHistoryItem,
 } from "../types";
-import { setBacklogFilters } from "../app/uiSlice";
+import { setTaskListFilters } from "../app/uiSlice";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import JiraExportDialog from "../components/JiraExportDialog";
@@ -195,6 +199,8 @@ function syncTasksPageMeta(draft: TasksPage) {
 }
 
 function buildTasksSearchParams(arg: {
+  workspace?: string;
+  releasePromDate?: string;
   quarterIds?: string[];
   withoutQuarter?: boolean;
   withoutStream?: boolean;
@@ -215,6 +221,8 @@ function buildTasksSearchParams(arg: {
   size?: number;
 }) {
   const params = new URLSearchParams();
+  if (arg.workspace) params.set("workspace", arg.workspace);
+  if (arg.releasePromDate) params.set("releasePromDate", arg.releasePromDate);
 
   const joinOrUndefined = (values?: string[] | number[]) => {
     if (!values || values.length === 0) return undefined;
@@ -491,10 +499,8 @@ const LS_HIDDEN_PARTICIPANTS = "backlog.hiddenParticipants";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   inprogress: "В работе",
-  done: "Выполнена",
-  notdone: "Не сделана",
+  done: "Выполнено",
   canceled: "Отменена",
-  partial: "Частично",
   backlog: "В бэклоге",
 };
 
@@ -504,9 +510,7 @@ const STATUS_COLOR: Record<
 > = {
   inprogress: "default",
   done: "success",
-  notdone: "error",
   canceled: "info",
-  partial: "warning",
   backlog: "default",
 };
 
@@ -576,6 +580,7 @@ const EMPTY_ALLOCATIONS_ROW: Record<string, Record<string, number>> = {};
 // ---------- TaskCard (карточка задачи + таблица нагрузок) ----------
 
 type TaskCardProps = {
+  onTransferToPlanning?: (task: BacklogItem) => void;
   task: BacklogItem;
   allocationsByParticipant: Record<string, Record<string, number>>;
   participants: Participant[];
@@ -912,7 +917,7 @@ const TaskHistoryDialog = React.memo(function TaskHistoryDialog({
       if (value === null || value === undefined) return "—";
 
       if (field === "status") {
-        const key = String(value) as TaskStatus;
+        const key = (value === "notdone" ? "canceled" : value === "partial" ? "done" : String(value)) as TaskStatus;
         return STATUS_LABEL[key] || String(value);
       }
 
@@ -1063,8 +1068,19 @@ const TaskHistoryDialog = React.memo(function TaskHistoryDialog({
 
 // ---------- BacklogPage ----------
 
-export default function BacklogPage() {
+export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "ROADMAP" | "BACKLOG" }) {
+  const isTodo = workspace === "BACKLOG";
+  const today = useToday();
   const location = useLocation();
+  const navigate = useNavigate();
+  const linkedTaskId = new URLSearchParams(location.search).get("pinnedTaskId");
+  const { data: linkedTask } = useGetTaskQuery(linkedTaskId || skipToken);
+  React.useEffect(() => {
+    if (linkedTask?.workspace && linkedTask.workspace !== workspace) {
+      const target = linkedTask.workspace === "BACKLOG" ? "backlog" : "";
+      navigate(`/${location.pathname.split("/")[1]}/${target}?pinnedTaskId=${encodeURIComponent(linkedTask.id)}`, { replace: true });
+    }
+  }, [linkedTask, workspace, navigate, location.pathname]);
   const { data: quarters = [], isLoading: isQuartersLoading } =
     useGetQuartersQuery();
   const { data: participants = [], isLoading: isParticipantsLoading } =
@@ -1075,8 +1091,9 @@ export default function BacklogPage() {
     isFetching: isSprintsFetching,
   } = useGetSprintsQuery(undefined);
   const allSprints = sprintsData;
+  const routeTeamKey = location.pathname.split("/")[1];
   const { data: releases = [], isLoading: isReleasesLoading } =
-    useGetReleasesQuery();
+    useGetReleaseOptionsQuery({ teamKey: routeTeamKey, fromDate: today });
   const quarterIdsKey = React.useMemo(
     () => quarters.map((q) => q.id).join("|"),
     [quarters]
@@ -1093,6 +1110,10 @@ export default function BacklogPage() {
 
   const dispatch = useAppDispatch();
   const teamKey = useAppSelector(selectCurrentTeamKey);
+  const scopeKey = `${teamKey}:${workspace}`;
+  const hiddenParticipantsStorageKey = `${LS_HIDDEN_PARTICIPANTS}:${scopeKey}`;
+  const setBacklogFilters = React.useCallback((changes: any) => setTaskListFilters({ key: scopeKey, changes }), [scopeKey]);
+  const [transferToPlanning] = useTransferTaskToPlanningMutation();
   const {
     selectedTasks: jiraSelectedTasks,
     selectedCount: jiraSelectedCount,
@@ -1120,7 +1141,7 @@ export default function BacklogPage() {
     hideAllParticipants,
     sortBy,
     sortDirection,
-  } = useAppSelector((s) => s.ui.backlog);
+  } = useAppSelector((s) => s.ui.taskLists[scopeKey] ?? (isTodo ? s.ui.todo : s.ui.backlog));
 
   const [, startFiltersTransition] = React.useTransition();
   const [, startTaskTransition] = React.useTransition();
@@ -1267,9 +1288,11 @@ export default function BacklogPage() {
       withoutStream: withoutStreamFilter,
       withoutCustomer: withoutCustomerFilter,
       priority: priorityFilter,
-      statuses: statusFilter,
-      releaseDateId:
-        releaseSprintFilter === "all" ? undefined : releaseSprintFilter.trim(),
+      teamKey,
+      workspace,
+      statuses: statusFilter.filter(status => isTodo ? ["backlog", "canceled"].includes(status) : ["inprogress", "done", "canceled"].includes(status)),
+      releaseDateId: releaseSprintFilter === "all" || /^\d{4}-\d{2}-\d{2}$/.test(releaseSprintFilter) ? undefined : releaseSprintFilter.trim(),
+      releasePromDate: /^\d{4}-\d{2}-\d{2}$/.test(releaseSprintFilter) ? releaseSprintFilter : undefined,
       streams: streamFilter.length > 0 ? streamFilter : undefined,
       customers: customerFilter.length > 0 ? customerFilter : undefined,
       search: normalizedSearch,
@@ -1280,6 +1303,7 @@ export default function BacklogPage() {
       size: TASKS_PAGE_SIZE,
     }),
     [
+      workspace, teamKey, isTodo,
       selectedQuarterIds,
       priorityFilter,
       statusFilter,
@@ -1424,7 +1448,7 @@ export default function BacklogPage() {
   >({});
   const [hiddenParticipantsTaskIds, setHiddenParticipantsTaskIds] =
     React.useState<Set<string>>(
-      () => new Set(readLS<string[]>(LS_HIDDEN_PARTICIPANTS, []))
+      () => new Set(readLS<string[]>(hiddenParticipantsStorageKey, []))
     );
   const prevHideAllParticipants = React.useRef(hideAllParticipants);
   const prevQuarterFilterSignature = React.useRef<string | null>(null);
@@ -1433,7 +1457,7 @@ export default function BacklogPage() {
   React.useEffect(() => {
     if (prevHideAllParticipants.current === hideAllParticipants) return;
     prevHideAllParticipants.current = hideAllParticipants;
-    writeLS(LS_HIDDEN_PARTICIPANTS, []);
+    writeLS(hiddenParticipantsStorageKey, []);
     setHiddenParticipantsTaskIds(new Set());
   }, [hideAllParticipants]);
 
@@ -1669,11 +1693,11 @@ export default function BacklogPage() {
 
   const statusOptions = React.useMemo(
     () =>
-      (Object.keys(STATUS_LABEL) as TaskStatus[]).map((st) => ({
+      (Object.keys(STATUS_LABEL) as TaskStatus[]).filter(st => isTodo ? ["backlog", "canceled"].includes(st) : ["inprogress", "done", "canceled"].includes(st)).map((st) => ({
         value: st,
         label: STATUS_LABEL[st],
       })),
-    []
+    [isTodo]
   );
 
   const streamFilterOptions = React.useMemo(
@@ -1692,8 +1716,9 @@ export default function BacklogPage() {
     [customerOptions]
   );
 
+  const { data: releaseSuggestions = [] } = useGetReleaseOptionsQuery({ teamKey, quarterIds: [...selectedQuarterIds].sort() });
   const releaseFilterOptions = React.useMemo(() => {
-    const entries = releases
+    const entries = releaseSuggestions
       .map((r: any) => ({
         id: String(r.id ?? r.promId ?? ""),
         promDate: String(r.promDate || r.prom || r.date || ""),
@@ -1706,7 +1731,11 @@ export default function BacklogPage() {
         value: entry.id,
         label: moment(entry.promDate).format("DD.MM.YYYY"),
       }));
-  }, [releases]);
+  }, [releaseSuggestions]);
+
+  const assignmentReleaseOptions = React.useMemo(() => releases
+    .filter(r => r.promDate >= today)
+    .map(r => ({ value: r.id, label: moment(r.promDate).format("DD.MM.YYYY") })), [releases, today]);
 
   const releaseLabelById = React.useMemo(
     () => new Map(releaseFilterOptions.map((option) => [option.value, option.label])),
@@ -2055,9 +2084,12 @@ export default function BacklogPage() {
   const handleStatusChange = React.useCallback(
     (task: BacklogItem, st: TaskStatus) => {
       if ((task.status ?? "inprogress") === st) return;
-      void updateField(task, { status: st });
+      void updateField(task, { status: st }).then(() => {
+        if (st === "backlog") removeTaskFromJiraCart(task.id);
+        if ((isTodo && (st === "inprogress" || st === "done")) || (!isTodo && st === "backlog")) setPinnedTaskId(null);
+      });
     },
-    [updateField]
+    [updateField, removeTaskFromJiraCart, isTodo]
   );
 
   const handlePriorityChange = React.useCallback(
@@ -2139,7 +2171,8 @@ export default function BacklogPage() {
       description: "",
       dod: "",
       priority: 1 as TaskPriority,
-      status: "inprogress" as TaskStatus,
+      workspace,
+      status: (isTodo ? "backlog" : "inprogress") as TaskStatus,
       customers: [],
       streams: [],
       participantIds: [],
@@ -2198,7 +2231,8 @@ export default function BacklogPage() {
           description: (task as any).description,
           dod: task.dod,
           priority: task.priority,
-          status: task.status ?? "inprogress",
+          workspace,
+          status: isTodo ? "backlog" : "inprogress",
           customers: task.customers?.slice() || [],
           streams: task.streams?.slice() || [],
           participantIds: activeParticipantIds,
@@ -2208,7 +2242,9 @@ export default function BacklogPage() {
           initialQuarterId: task.initialQuarterId ?? null,
           leaderId: task.leaderId && activeParticipantIds.includes(task.leaderId) ? task.leaderId : undefined,
           order: baseOrder + 1,
-          loads: loadsPayload,
+          loads: activeParticipantIds.length === task.participantIds.length ? loadsPayload : Object.values(allocationsPayload).reduce<Record<string, number>>((totals, row) => {
+            Object.entries(row).forEach(([sid, days]) => { totals[sid] = (totals[sid] || 0) + days; }); return totals;
+          }, {}),
           allocations: Object.keys(allocationsPayload).length
             ? allocationsPayload
             : undefined,
@@ -2220,7 +2256,7 @@ export default function BacklogPage() {
         console.error("Не удалось дублировать задачу", error);
       }
     },
-    [addTask, allocations, allTasks.length, participantMap]
+    [addTask, allocations, allTasks.length, participantMap, workspace, isTodo]
   );
 
   const removeTask = React.useCallback(
@@ -2663,11 +2699,11 @@ export default function BacklogPage() {
         } else {
           next.delete(taskId);
         }
-        writeLS(LS_HIDDEN_PARTICIPANTS, Array.from(next));
+        writeLS(hiddenParticipantsStorageKey, Array.from(next));
         return next;
       });
     },
-    [hideAllParticipants]
+    [hideAllParticipants, hiddenParticipantsStorageKey]
   );
 
   return (
@@ -2682,7 +2718,7 @@ export default function BacklogPage() {
           flexWrap="wrap"
         >
           <Typography variant="h6" sx={{ flexShrink: 0 }}>
-            Бэклог
+            {isTodo ? "Бэклог" : "Дорожная карта"}
           </Typography>
 
           <Stack
@@ -2766,22 +2802,19 @@ export default function BacklogPage() {
                 allowCustom: false,
                 label: "Статусы",
                 options: statusOptions,
-                value: statusFilter,
+                value: statusFilter.filter(st => isTodo ? ["backlog", "canceled"].includes(st) : ["inprogress", "done", "canceled"].includes(st)),
                 onChange: handleStatusFilterChange,
               },
             },
             {
-              type: "autocomplete",
+              type: "releaseDate",
               key: "release",
               minWidth: 200,
               props: {
-                allowCustom: false,
                 label: "Релиз",
                 options: releaseFilterOptions,
                 value: releaseSprintFilter === "all" ? "" : releaseSprintFilter,
                 onChange: handleReleaseFilterChange,
-                placeholder: "Все релизы",
-                sortOptions: false,
               },
             },
             {
@@ -2876,7 +2909,7 @@ export default function BacklogPage() {
             onDirectionChange={handleSortDirectionChange}
             sx={{ width: { xs: "100%", md: "fit-content" } }}
           />
-          <Button
+          {!isTodo && <Button
             size="small"
             variant="outlined"
             startIcon={<AddTask />}
@@ -2886,7 +2919,7 @@ export default function BacklogPage() {
             {isAddingAllToJira
               ? "Добавляем..."
               : `Добавить все (${totalTasksCount || displayedTasksCount})`}
-          </Button>
+          </Button>}
         </Stack>
 
         {addAllToJiraError && <Alert severity="error">{addAllToJiraError}</Alert>}
@@ -2915,10 +2948,14 @@ export default function BacklogPage() {
           quarterFilterOptions={taskQuarterOptions}
           customerOptions={customerOptions}
           streamOptions={streamOptions}
-          releaseOptions={releaseFilterOptions}
+          releaseOptions={assignmentReleaseOptions}
           onStatusChange={handleStatusChange}
           onPriorityChange={handlePriorityChange}
           onUpdateTaskPatch={handleUpdateTaskPatch}
+          onTransferToPlanning={isTodo ? async task => {
+            try { await transferToPlanning({ taskId: task.id }).unwrap(); setDuplicateNotice("Задача добавлена в общий список на странице «Планирование»"); }
+            catch { setDuplicateNotice("Не удалось передать задачу в планирование"); }
+          } : undefined}
           onDuplicateTask={duplicateTask}
           onOpenTaskHistory={handleOpenTaskHistory}
           onUpdateJiraLinks={handleUpdateJiraLinks}

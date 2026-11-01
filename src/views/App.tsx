@@ -47,7 +47,7 @@ import { PAGE_TITLES, buildTabTitle } from "../constants/pageTitles";
 import PageHelpDialog, {
   PageHelpContent,
 } from "../components/PageHelpDialog";
-import { setBacklogFilters } from "../app/uiSlice";
+import { setTaskListFilters } from "../app/uiSlice";
 import {
   JiraExportProvider,
   useJiraExport,
@@ -78,13 +78,14 @@ function TeamScopedApp() {
   const dispatch = useDispatch();
   const store = useStore();
   const teams = useSelector(selectAvailableTeams);
-  const hideAllParticipants = useSelector(
-    (state: any) => state.ui?.backlog?.hideAllParticipants ?? false
-  );
+  const currentTeamKey = useSelector(selectCurrentTeamKey);
+  const isTodoPath = /\/backlog\/?$/.test(location.pathname);
+  const hideAllParticipants = useSelector((state: any) =>
+    state.ui?.taskLists?.[`${rawTeamKey}:${isTodoPath ? "BACKLOG" : "ROADMAP"}`]?.hideAllParticipants
+      ?? (isTodoPath ? state.ui?.todo?.hideAllParticipants : state.ui?.backlog?.hideAllParticipants) ?? false);
   const normalizedParam = (rawTeamKey || DEFAULT_TEAM_KEY).toLowerCase();
-  const teamKey = teams.some((team) => team.key === normalizedParam)
-    ? normalizedParam
-    : teams[0]?.key ?? DEFAULT_TEAM_KEY;
+  // The URL is the team scope, including while the team directory is loading.
+  const teamKey = normalizedParam;
   const currentPathSuffix = React.useMemo(
     () => location.pathname.replace(/^\/[A-Za-z0-9_-]+/, "") || "/",
     [location.pathname]
@@ -101,7 +102,8 @@ function TeamScopedApp() {
     }
 
     const titleMap: Record<string, string> = {
-      "/": PAGE_TITLES.backlog,
+      "/": PAGE_TITLES.roadmap,
+      "/backlog": PAGE_TITLES.backlog,
       "/capacity": PAGE_TITLES.capacity,
       "/participant-work": PAGE_TITLES.participantWork,
       "/time": PAGE_TITLES.timeSetup,
@@ -135,7 +137,7 @@ function TeamScopedApp() {
 
     const contentMap: Record<string, PageHelpContent> = {
       "/": {
-        title: "Справка: Бэклог",
+        title: "Справка: Дорожная карта",
         description:
           "Здесь ведется список задач и распределение нагрузки по участникам и спринтам.",
         bullets: [
@@ -159,6 +161,7 @@ function TeamScopedApp() {
           "Story создается один раз на задачу. Название задачи участника в Jira имеет вид «Роль: название задачи», название Story сохраняется.",
         ],
       },
+      "/backlog": { title: "Справка: Бэклог", description: "Будущие задачи: участники, оценки и спринты сохраняются, но не занимают рабочую ёмкость.", bullets: ["Создание и копирование дают статус «В бэклоге».", "В работе / Выполнено переводят задачу на дорожную карту; отмена сохраняет страницу.", "В меню задачи выберите «В планирование» для подготовки автораспределения.", "Создание задач Jira доступно на дорожной карте.", "Дату релиза можно выбрать или ввести вручную."] },
       "/capacity": {
         title: "Справка: Нагрузка",
         description:
@@ -247,13 +250,13 @@ function TeamScopedApp() {
   const [isExporting, setIsExporting] = React.useState(false);
 
   const handleToggleAllParticipants = React.useCallback(() => {
-    dispatch(setBacklogFilters({ hideAllParticipants: !hideAllParticipants }));
-  }, [dispatch, hideAllParticipants]);
+    dispatch(setTaskListFilters({ key: `${teamKey}:${isTodoPath ? "BACKLOG" : "ROADMAP"}`, changes: { hideAllParticipants: !hideAllParticipants } }));
+  }, [dispatch, hideAllParticipants, teamKey, isTodoPath]);
 
   const handleExportExcel = React.useCallback(async () => {
     setIsExporting(true);
     try {
-      const blob = await exportExcelFile(store.getState());
+      const blob = await exportExcelFile(store.getState(), isTodoPath ? "BACKLOG" : "ROADMAP");
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -267,7 +270,7 @@ function TeamScopedApp() {
     } finally {
       setIsExporting(false);
     }
-  }, [store]);
+  }, [store, isTodoPath]);
 
   const navigateToTeam = React.useCallback(
     (nextTeam: string) => {
@@ -283,6 +286,8 @@ function TeamScopedApp() {
     (suffix: string) => `/${teamKey}${suffix}`,
     [teamKey]
   );
+
+  if (currentTeamKey !== teamKey) return null;
 
   return (
     <JiraExportProvider scopeKey={teamKey}>
@@ -316,6 +321,8 @@ type TeamScopedAppContentProps = {
 };
 
 function TeamScopedAppContent({
+  currentPathSuffix,
+  teamKey,
   buildPath,
   handleExportExcel,
   handleToggleAllParticipants,
@@ -325,6 +332,7 @@ function TeamScopedAppContent({
   helpContent,
 }: TeamScopedAppContentProps) {
   const { selectedCount, openDialog } = useJiraExport();
+  const isTaskListPage = isBacklogPage || currentPathSuffix.replace(/\/$/, "") === "/backlog";
 
   return (
     <>
@@ -344,6 +352,9 @@ function TeamScopedAppContent({
             sx={{ flexGrow: 1 }}
           >
             <Button component={Link} to={buildPath("/")}>
+              Дорожная карта
+            </Button>
+            <Button component={Link} to={buildPath("/backlog")}>
               Бэклог
             </Button>
             <Button component={Link} to={buildPath("/capacity")}>
@@ -367,8 +378,8 @@ function TeamScopedAppContent({
             <Button component={Link} to={buildPath("/history")}>
               История
             </Button>
-            {isBacklogPage && (
-              <Tooltip title="Экспортировать бэклог в Excel">
+            {isTaskListPage && (
+              <Tooltip title="Экспортировать задачи в Excel">
                 <span>
                   <Button
                     variant="outlined"
@@ -408,7 +419,7 @@ function TeamScopedAppContent({
                 </span>
               </Tooltip>
             )}
-            {isBacklogPage && (
+            {isTaskListPage && (
               <Tooltip
                 title={
                   hideAllParticipants
@@ -441,7 +452,8 @@ function TeamScopedAppContent({
           <Route path="time" element={<TimeSetupPage />} />
           <Route path="team" element={<TeamPage />} />
           <Route path="capacity" element={<CapacityPage />} />
-          <Route path="/" element={<BacklogPage />} />
+          <Route path="/" element={<BacklogPage key={`${teamKey}:ROADMAP`} workspace="ROADMAP" />} />
+          <Route path="backlog" element={<BacklogPage key={`${teamKey}:BACKLOG`} workspace="BACKLOG" />} />
           <Route path="planning" element={<PlanningWorkbenchPage />} />
           <Route path="planning/review" element={<PlanningWorkbenchReviewPage />} />
           <Route

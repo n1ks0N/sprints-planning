@@ -69,6 +69,18 @@ public class PlanningWorkbenchService {
     private final ReleaseRepository releaseRepository;
     private final TaskAllocationRepository taskAllocationRepository;
     private final TaskService taskService;
+    private com.sber.isu.sprints_planning.repository.TaskRepository taskRepository;
+    private ReleaseService releaseService;
+    private com.sber.isu.sprints_planning.repository.PlanningBacklogPageRepository pageRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void configureBacklogIntegration(com.sber.isu.sprints_planning.repository.TaskRepository taskRepository,
+        ReleaseService releaseService, com.sber.isu.sprints_planning.repository.PlanningBacklogPageRepository pageRepository) {
+        this.taskRepository = taskRepository;
+        this.releaseService = releaseService;
+        this.pageRepository = pageRepository;
+    }
+
     private final CapacityProperties capacityProperties;
     private final Map<PlannerType, PlanningSolverPort> plannersByType;
 
@@ -126,6 +138,15 @@ public class PlanningWorkbenchService {
         int safePage = page == null ? 0 : Math.max(0, page);
         int safeSize = size == null ? 20 : Math.min(Math.max(1, size), 200);
         Pageable pageable = Pageable.ofSize(safeSize).withPage(safePage);
+        if (pageRepository != null) {
+            var ids = pageRepository.findPage(teamKey, sortBy, sortDirection, safePage, safeSize, quarterIds, priority,
+                releaseDateId, streams, customers, search, withoutStream, withoutCustomer);
+            var byId = planningBacklogItemRepository.findAllWithDetailsByTeamKeyAndIdIn(teamKey, ids.getContent()).stream()
+                .collect(Collectors.toMap(PlanningBacklogItemEntity::getId, Function.identity()));
+            return new PageImpl<>(ids.getContent().stream().map(byId::get).filter(Objects::nonNull)
+                .map(item -> toPlanningItemDto(item, Map.of())).toList(), pageable, ids.getTotalElements());
+        }
+
         List<PlanningBacklogItemEntity> filtered = planningBacklogItemRepository.findAllByTeamKeyOrderByDisplayOrderAscCreatedAtAsc(teamKey)
             .stream()
             .filter(item -> planningItemMatchesFilters(
@@ -170,8 +191,8 @@ public class PlanningWorkbenchService {
 
         String normalizedReleaseDateId = normalizeOptional(releaseDateId);
         if (normalizedReleaseDateId != null) {
-            UUID itemReleaseId = item.getReleaseDate() == null ? null : item.getReleaseDate().getId();
-            if (itemReleaseId == null || !normalizedReleaseDateId.equals(itemReleaseId.toString())) {
+            String actualRelease = item.getReleaseDate() == null ? null : (normalizedReleaseDateId.startsWith("date:") ? "date:" + item.getReleaseDate().getPromDate() : item.getReleaseDate().getId().toString());
+            if (!normalizedReleaseDateId.equals(actualRelease)) {
                 return false;
             }
         }
@@ -372,6 +393,43 @@ public class PlanningWorkbenchService {
     }
 
     @Transactional
+    public PlanningWorkbenchItemDto transferTask(String teamKey, UUID taskId) {
+        taskRepository.findByIdAndTeamKeyForUpdate(taskId, teamKey)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Task not found"));
+        var existing = planningBacklogItemRepository.findBySourceTaskIdAndTeamKey(taskId, teamKey);
+        if (existing.isPresent()) return toPlanningItemDto(existing.get(), Map.of());
+        var source = taskRepository.findWithDetailsById(taskId, teamKey);
+        if (!"BACKLOG".equals(source.getWorkspace()) || !"backlog".equals(source.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "В планирование можно передать только задачу в статусе «В бэклоге»");
+        }
+        PlanningBacklogItemEntity item = new PlanningBacklogItemEntity();
+        item.setTeamKey(teamKey); item.setSourceTaskId(taskId); item.setSourceRevision(source.getRevision());
+        item.setTitle(source.getTitle()); item.setDescription(source.getDescription()); item.setDod(source.getDod()); item.setPriority(source.getPriority());
+        item.setCustomers(source.getCustomers().stream().map(com.sber.isu.sprints_planning.model.TaskCustomerEntity::getName).sorted().toList());
+        item.setStreams(source.getStreams().stream().map(com.sber.isu.sprints_planning.model.TaskStreamEntity::getName).sorted().toList());
+        item.setReleaseDate(source.getReleaseDate()); item.setInitialQuarter(source.getInitialQuarter());
+        item.setSourceNotes(source.getNotes() == null ? Map.of() : new LinkedHashMap<>(source.getNotes()));
+        item.setSourceLeaderId(source.getLeaderParticipant() == null ? null : source.getLeaderParticipant().getId());
+        item.setPlanningQuarterIds(source.getPlanningQuarterIds() == null ? List.of() : source.getPlanningQuarterIds());
+        item.setPlanningSprintIds(source.getPlanningSprintIds() == null ? List.of() : source.getPlanningSprintIds());
+        if (item.getPlanningQuarterIds().isEmpty()) {
+            var quarters = source.getAllocations().stream().filter(a -> a.getDays().signum() > 0)
+                .map(a -> a.getSprint().getQuarter().getId()).distinct().toList();
+            item.setPlanningQuarterIds(!quarters.isEmpty() ? quarters : source.getInitialQuarter() == null ? List.of() : List.of(source.getInitialQuarter().getId()));
+        }
+        Map<UUID, BigDecimal> daysByParticipant = new LinkedHashMap<>();
+        source.getAllocations().stream().filter(a -> a.getParticipant().isActive() && a.getDays().signum() > 0)
+            .forEach(a -> daysByParticipant.merge(a.getParticipant().getId(), a.getDays(), BigDecimal::add));
+        item.setPlanningDemands(source.getParticipants().stream().sorted(Comparator.comparingInt(com.sber.isu.sprints_planning.model.TaskParticipantEntity::getDisplayOrder))
+            .filter(link -> link.getParticipant().isActive())
+            .map(link -> new TaskPlanningDemandValue("PARTICIPANT", null, link.getParticipant().getId(), null, daysByParticipant.getOrDefault(link.getParticipant().getId(), BigDecimal.ZERO)))
+            .toList());
+        item.setDisplayOrder(planningBacklogItemRepository.findMaxDisplayOrder(teamKey) + 1);
+        item.setCreatedAt(LocalDate.now()); item.setUpdatedAt(LocalDate.now());
+        return toPlanningItemDto(planningBacklogItemRepository.save(item), Map.of());
+    }
+
+    @Transactional
     public PlanningWorkbenchItemDto createItem(String teamKey, PlanningWorkbenchItemRequest request) {
         PlanningBacklogItemEntity entity = new PlanningBacklogItemEntity();
         entity.setTeamKey(teamKey);
@@ -450,15 +508,26 @@ public class PlanningWorkbenchService {
         String rawSessionId,
         String rawUserName
     ) {
+        planningBacklogItemRepository.lockSelected(teamKey, request.itemIds().stream().map(UUID::fromString).sorted().toList());
         List<PlanningBacklogItemEntity> items = fetchSelectedItems(teamKey, request.itemIds());
         if (items.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No planning items selected");
         }
+        Map<UUID, com.sber.isu.sprints_planning.model.TaskEntity> sources = new LinkedHashMap<>();
+        for (var item : items.stream().filter(i -> i.getSourceTaskId() != null).sorted(Comparator.comparing(PlanningBacklogItemEntity::getSourceTaskId)).toList()) {
+            taskRepository.findByIdAndTeamKeyForUpdate(item.getSourceTaskId(), teamKey)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Исходная задача удалена"));
+            var source = taskRepository.findWithDetailsById(item.getSourceTaskId(), teamKey);
+            if (!"backlog".equals(source.getStatus()) || !"BACKLOG".equals(source.getWorkspace()) || !Objects.equals(item.getSourceRevision(), source.getRevision())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Исходная задача изменена. Удалите её заготовку и передайте актуальную задачу в планирование заново.");
+            }
+            sources.put(source.getId(), source);
+        }
         Map<String, ApplyItemState> applyStates = buildApplyStates(teamKey, items, request.itemPatches());
         Map<String, Map<String, Map<String, BigDecimal>>> normalized = normalizeAllocations(request.allocations());
-        validateAllocationMatrix(applyStates, normalized, teamKey);
+        Map<String, SprintEntity> applySprints = validateAllocationMatrix(applyStates, normalized, teamKey);
 
-        List<TaskDto> createdTasks = new ArrayList<>();
+        List<TaskService.PlanningMutation> mutations = new ArrayList<>();
         for (PlanningBacklogItemEntity item : items) {
             ApplyItemState applyState = applyStates.get(item.getId().toString());
             PlanningBacklogItemEntity itemState = applyState.item();
@@ -474,7 +543,38 @@ public class PlanningWorkbenchService {
                 ? applyState.statusOverride()
                 : (loads.isEmpty() ? "backlog" : "inprogress");
 
-            createdTasks.add(taskService.create(teamKey, new TaskCreateRequest(
+            if (item.getSourceTaskId() != null) {
+                var source = sources.get(item.getSourceTaskId());
+                var merged = new LinkedHashMap<String, Map<String, BigDecimal>>();
+                // Explicit zeros replace old active allocations; inactive rows retain historical data.
+                for (var allocation : source.getAllocations()) {
+                    merged.computeIfAbsent(allocation.getParticipant().getId().toString(), ignored -> new LinkedHashMap<>())
+                        .put(allocation.getSprint().getId().toString(), allocation.getParticipant().isActive() ? BigDecimal.ZERO : allocation.getDays());
+                }
+                itemAllocations.forEach((pid, row) -> merged.computeIfAbsent(pid, ignored -> new LinkedHashMap<>()).putAll(row));
+                var retainedParticipants = new LinkedHashSet<>(participantIds);
+                source.getParticipants().stream().filter(link -> !link.getParticipant().isActive())
+                    .forEach(link -> retainedParticipants.add(link.getParticipant().getId().toString()));
+                Map<String, String> notes = new LinkedHashMap<>();
+                if (source.getNotes() != null) source.getNotes().forEach((pid, note) -> notes.put(pid.toString(), note));
+                applyState.notes().forEach((pid, note) -> {
+                    if (note.isBlank()) notes.remove(pid);
+                    else notes.put(pid, note);
+                });
+                String leader = applyState.leaderId() != null ? applyState.leaderId()
+                    : source.getLeaderParticipant() == null ? "" : source.getLeaderParticipant().getId().toString();
+                if (!retainedParticipants.contains(leader)) leader = "";
+                mutations.add(new TaskService.PlanningMutation(null, new com.sber.isu.sprints_planning.dto.request.TaskUpdateRequest(
+                    source.getId().toString(), itemState.getTitle(), itemState.getDescription(), itemState.getDod(), priority, status,
+                    itemState.getCustomers(), itemState.getStreams(), List.copyOf(retainedParticipants),
+                    deriveAppliedPlanningQuarterIds(itemState, itemAllocations, teamKey, applySprints),
+                    itemState.getPlanningSprintIds().stream().map(UUID::toString).toList(),
+                    sumLoads(merged), merged, notes,
+                    itemState.getReleaseDate() == null ? "" : itemState.getReleaseDate().getId().toString(),
+                    itemState.getInitialQuarter() == null ? "" : itemState.getInitialQuarter().getId().toString(), leader, null)));
+                continue;
+            }
+            mutations.add(new TaskService.PlanningMutation(new TaskCreateRequest(
                 itemState.getTitle(),
                 itemState.getDescription(),
                 itemState.getDod(),
@@ -483,7 +583,7 @@ public class PlanningWorkbenchService {
                 itemState.getCustomers() == null ? List.of() : List.copyOf(itemState.getCustomers()),
                 itemState.getStreams() == null ? List.of() : List.copyOf(itemState.getStreams()),
                 participantIds,
-                deriveAppliedPlanningQuarterIds(itemState, itemAllocations, teamKey),
+                deriveAppliedPlanningQuarterIds(itemState, itemAllocations, teamKey, applySprints),
                 itemState.getPlanningSprintIds() == null ? List.of() : itemState.getPlanningSprintIds().stream().map(UUID::toString).toList(),
                 loads,
                 itemAllocations,
@@ -491,12 +591,13 @@ public class PlanningWorkbenchService {
                 itemState.getReleaseDate() != null ? itemState.getReleaseDate().getId().toString() : null,
                 itemState.getInitialQuarter() != null ? itemState.getInitialQuarter().getId().toString() : null,
                 applyState.leaderId(),
-                itemState.getDisplayOrder()
-            )));
+                null // New tasks append in selected-item order; draft order belongs to another list.
+            ), null));
         }
 
+        List<TaskDto> appliedTasks = taskService.applyPlanningBatch(teamKey, mutations);
         planningBacklogItemRepository.deleteAll(items);
-        return createdTasks;
+        return appliedTasks;
     }
 
     private Map<String, ApplyItemState> buildApplyStates(
@@ -507,7 +608,7 @@ public class PlanningWorkbenchService {
         Map<String, ApplyItemState> result = items.stream()
             .collect(Collectors.toMap(
                 item -> item.getId().toString(),
-                item -> new ApplyItemState(copyPlanningItem(item), null, Map.of(), null, List.of()),
+                item -> new ApplyItemState(copyPlanningItem(item), null, Map.of(), null, null),
                 (left, right) -> left,
                 LinkedHashMap::new
             ));
@@ -516,6 +617,7 @@ public class PlanningWorkbenchService {
         }
         Map<String, PlanningBacklogItemEntity> itemsById = items.stream()
             .collect(Collectors.toMap(item -> item.getId().toString(), Function.identity()));
+        ItemResolutionCache cache = new ItemResolutionCache();
         itemPatches.forEach((itemId, patch) -> {
             if (patch == null) {
                 return;
@@ -525,20 +627,30 @@ public class PlanningWorkbenchService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "One or more item patches do not match selected items");
             }
             PlanningBacklogItemEntity itemCopy = copyPlanningItem(source);
-            applyItemState(teamKey, itemCopy, toPlanningWorkbenchItemRequest(patch));
+            applyItemState(teamKey, itemCopy, toPlanningWorkbenchItemRequest(patch), cache);
             itemCopy.setUpdatedAt(LocalDate.now());
             result.put(itemId, new ApplyItemState(
                 itemCopy,
                 normalizeOptional(patch.status()),
                 normalizeNotes(patch.notes()),
-                normalizeOptional(patch.leaderId()),
-                normalizeIdList(patch.participantIds())
+                patch.leaderId() == null ? null : patch.leaderId().trim(),
+                patch.participantIds() == null ? null : normalizeIdList(patch.participantIds())
             ));
         });
         return result;
     }
 
+    private record ItemResolutionCache(
+        Map<String, QuarterEntity> quarters, Map<String, SprintEntity> sprints, Map<String, ReleaseEntity> releases
+    ) {
+        ItemResolutionCache() { this(new LinkedHashMap<>(), new LinkedHashMap<>(), new LinkedHashMap<>()); }
+    }
+
     private void applyItemState(String teamKey, PlanningBacklogItemEntity entity, PlanningWorkbenchItemRequest request) {
+        applyItemState(teamKey, entity, request, new ItemResolutionCache());
+    }
+
+    private void applyItemState(String teamKey, PlanningBacklogItemEntity entity, PlanningWorkbenchItemRequest request, ItemResolutionCache cache) {
         entity.setTitle(request.title() == null || request.title().isBlank() ? "Новая задача" : request.title().trim());
         entity.setDescription(request.description() == null ? "" : request.description().trim());
         entity.setDod(request.dod() == null ? "" : request.dod().trim());
@@ -548,10 +660,17 @@ public class PlanningWorkbenchService {
         if (request.planningDemands() != null) {
             entity.setPlanningDemands(normalizePlanningDemands(request.planningDemands()));
         }
-        entity.setPlanningQuarterIds(resolvePlanningQuarterIds(teamKey, request.planningQuarterIds()));
-        entity.setPlanningSprintIds(resolvePlanningSprintIds(teamKey, request.planningSprintIds()));
-        entity.setReleaseDate(resolveRelease(teamKey, request.releaseDateId()));
-        entity.setInitialQuarter(resolveQuarter(teamKey, request.initialQuarterId()));
+        entity.setPlanningQuarterIds(normalizeIdList(request.planningQuarterIds()).stream().map(id -> cachedQuarter(teamKey, id, cache).getId()).distinct().toList());
+        entity.setPlanningSprintIds(normalizeIdList(request.planningSprintIds()).stream().map(id -> cache.sprints().computeIfAbsent(id, key -> sprintRepository.findByIdAndTeamKey(UUID.fromString(key), teamKey).orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Sprint not found"))).getId()).distinct().toList());
+        String releaseKey = request.releasePromDate() + ":" + request.releaseDateId();
+        entity.setReleaseDate(cache.releases().computeIfAbsent(releaseKey, ignored -> request.releasePromDate() != null
+            ? releaseService.resolveDate(teamKey, request.releasePromDate(), request.releaseDateId()) : resolveRelease(teamKey, request.releaseDateId())));
+        entity.setInitialQuarter(cachedQuarter(teamKey, request.initialQuarterId(), cache));
+    }
+
+    private QuarterEntity cachedQuarter(String teamKey, String id, ItemResolutionCache cache) {
+        String normalized = normalizeOptional(id);
+        return normalized == null ? null : cache.quarters().computeIfAbsent(normalized, key -> resolveQuarter(teamKey, key));
     }
 
     private PlanningWorkbenchItemRequest toPlanningWorkbenchItemRequest(PlanningWorkbenchApplyItemPatchRequest patch) {
@@ -567,13 +686,16 @@ public class PlanningWorkbenchService {
             patch.initialQuarterId(),
             patch.planningQuarterIds(),
             patch.planningSprintIds(),
-            patch.order()
+            patch.order(),
+            patch.releasePromDate()
         );
     }
 
     private PlanningBacklogItemEntity copyPlanningItem(PlanningBacklogItemEntity source) {
         PlanningBacklogItemEntity copy = new PlanningBacklogItemEntity();
         copy.setId(source.getId());
+        copy.setSourceTaskId(source.getSourceTaskId()); copy.setSourceRevision(source.getSourceRevision());
+        copy.setSourceNotes(source.getSourceNotes()); copy.setSourceLeaderId(source.getSourceLeaderId());
         copy.setTeamKey(source.getTeamKey());
         copy.setTitle(source.getTitle());
         copy.setDescription(source.getDescription());
@@ -611,7 +733,8 @@ public class PlanningWorkbenchService {
     private List<String> deriveAppliedPlanningQuarterIds(
         PlanningBacklogItemEntity item,
         Map<String, Map<String, BigDecimal>> itemAllocations,
-        String teamKey
+        String teamKey,
+        Map<String, SprintEntity> sprints
     ) {
         LinkedHashSet<String> quarterIds = new LinkedHashSet<>();
         if (item.getPlanningQuarterIds() != null) {
@@ -631,7 +754,7 @@ public class PlanningWorkbenchService {
             .map(UUID::fromString)
             .collect(Collectors.toCollection(LinkedHashSet::new));
         if (!allocatedSprintIds.isEmpty()) {
-            sprintRepository.findByTeamKeyAndIdIn(teamKey, allocatedSprintIds).stream()
+            sprints.values().stream().filter(sprint -> allocatedSprintIds.contains(sprint.getId()))
                 .sorted(Comparator.comparing(SprintEntity::getStartDate).thenComparingInt(SprintEntity::getOrder))
                 .map(SprintEntity::getQuarter)
                 .filter(Objects::nonNull)
@@ -819,6 +942,16 @@ public class PlanningWorkbenchService {
                 .toList();
     }
 
+    private boolean isSprintAllowed(PlanningBacklogItemEntity item, SprintEntity sprint) {
+        if (item.getPlanningSprintIds() != null && !item.getPlanningSprintIds().isEmpty()) {
+            return item.getPlanningSprintIds().contains(sprint.getId());
+        }
+        if (item.getPlanningQuarterIds() != null && !item.getPlanningQuarterIds().isEmpty()) {
+            return item.getPlanningQuarterIds().contains(sprint.getQuarter().getId());
+        }
+        return item.getInitialQuarter() != null && item.getInitialQuarter().getId().equals(sprint.getQuarter().getId());
+    }
+
     private List<SprintEntity> resolveAllowedSprints(PlanningBacklogItemEntity item, String teamKey) {
         if (item.getPlanningSprintIds() != null && !item.getPlanningSprintIds().isEmpty()) {
             return sprintRepository.findByTeamKeyAndIdIn(teamKey, item.getPlanningSprintIds()).stream()
@@ -917,7 +1050,11 @@ public class PlanningWorkbenchService {
             item.getInitialQuarter() != null ? item.getInitialQuarter().getId().toString() : null,
             item.getDisplayOrder(),
             item.getCreatedAt() != null ? item.getCreatedAt().toString() : null,
-            item.getUpdatedAt() != null ? item.getUpdatedAt().toString() : null
+            item.getUpdatedAt() != null ? item.getUpdatedAt().toString() : null,
+            item.getReleaseDate() == null ? null : item.getReleaseDate().getPromDate().toString(),
+            item.getSourceTaskId() == null ? null : item.getSourceTaskId().toString(),
+            item.getSourceNotes().entrySet().stream().collect(Collectors.toMap(e -> e.getKey().toString(), Map.Entry::getValue)),
+            item.getSourceLeaderId() == null ? null : item.getSourceLeaderId().toString()
         );
     }
 
@@ -984,7 +1121,7 @@ public class PlanningWorkbenchService {
         return rows;
     }
 
-    private void validateAllocationMatrix(
+    private Map<String, SprintEntity> validateAllocationMatrix(
         Map<String, ApplyItemState> applyStates,
         Map<String, Map<String, Map<String, BigDecimal>>> allocations,
         String teamKey
@@ -997,11 +1134,11 @@ public class PlanningWorkbenchService {
         for (ApplyItemState applyState : applyStates.values()) {
             PlanningBacklogItemEntity item = applyState.item();
             Map<String, Map<String, BigDecimal>> itemAllocations = allocations.getOrDefault(item.getId().toString(), Map.of());
-            List<SprintEntity> allowedSprints = resolveAllowedSprints(item, teamKey);
+            List<SprintEntity> allowedSprints = sprintsById.values().stream().filter(sprint -> isSprintAllowed(item, sprint)).toList();
             Set<String> allowedSprintIds = allowedSprints.stream()
                 .map(sprint -> sprint.getId().toString())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-            Set<String> allowedParticipantOverrides = applyState.participantIdsOverride().stream()
+            Set<String> allowedParticipantOverrides = (applyState.participantIdsOverride() == null ? List.<String>of() : applyState.participantIdsOverride()).stream()
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
             for (Map.Entry<String, Map<String, BigDecimal>> participantEntry : itemAllocations.entrySet()) {
@@ -1024,6 +1161,7 @@ public class PlanningWorkbenchService {
                 }
             }
         }
+        return sprintsById;
     }
 
     private boolean isParticipantAllowed(PlanningBacklogItemEntity item, ParticipantEntity participant) {
@@ -1040,7 +1178,7 @@ public class PlanningWorkbenchService {
         List<String> participantIdsOverride
     ) {
         LinkedHashSet<String> participantIds = new LinkedHashSet<>(participantIdsOverride == null ? List.of() : participantIdsOverride);
-        resolvePlanningDemands(item).stream()
+        (participantIdsOverride == null ? resolvePlanningDemands(item) : List.<TaskPlanningDemandValue>of()).stream()
             .filter(demand -> "PARTICIPANT".equalsIgnoreCase(demand.getKind()) && demand.getParticipantId() != null)
             .map(demand -> demand.getParticipantId().toString())
             .forEach(participantIds::add);
@@ -1053,7 +1191,7 @@ public class PlanningWorkbenchService {
             return List.of();
         }
         return item.getPlanningDemands().stream()
-            .filter(demand -> demand != null && demand.getDays() != null && demand.getDays().signum() > 0)
+            .filter(demand -> demand != null && demand.getDays() != null && (demand.getDays().signum() > 0 || (demand.getDays().signum() == 0 && "PARTICIPANT".equalsIgnoreCase(demand.getKind()))))
             .toList();
     }
 
@@ -1233,8 +1371,8 @@ public class PlanningWorkbenchService {
         notes.forEach((participantId, value) -> {
             String normalizedParticipantId = normalizeOptional(participantId);
             String normalizedValue = normalizeOptional(value);
-            if (normalizedParticipantId != null && normalizedValue != null) {
-                normalized.put(normalizedParticipantId, normalizedValue);
+            if (normalizedParticipantId != null) {
+                normalized.put(normalizedParticipantId, normalizedValue == null ? "" : normalizedValue);
             }
         });
         return Map.copyOf(normalized);
@@ -1255,7 +1393,7 @@ public class PlanningWorkbenchService {
             }
             String upperKind = kind.toUpperCase();
             BigDecimal days = normalizeHalfDays(demand.days());
-            if (days.signum() <= 0) {
+            if (days.signum() < 0 || (days.signum() == 0 && !"PARTICIPANT".equals(upperKind))) {
                 continue;
             }
             if ("ROLE".equals(upperKind)) {
@@ -1281,38 +1419,6 @@ public class PlanningWorkbenchService {
             ));
         }
         return List.copyOf(normalized);
-    }
-
-    private List<UUID> resolvePlanningQuarterIds(String teamKey, List<String> quarterIds) {
-        if (quarterIds == null) {
-            return List.of();
-        }
-        return quarterIds.stream()
-            .filter(Objects::nonNull)
-            .map(String::trim)
-            .filter(value -> !value.isBlank())
-            .map(UUID::fromString)
-            .map(id -> quarterRepository.findByIdAndTeamKey(id, teamKey)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Quarter not found")))
-            .map(QuarterEntity::getId)
-            .distinct()
-            .toList();
-    }
-
-    private List<UUID> resolvePlanningSprintIds(String teamKey, List<String> sprintIds) {
-        if (sprintIds == null) {
-            return List.of();
-        }
-        return sprintIds.stream()
-            .filter(Objects::nonNull)
-            .map(String::trim)
-            .filter(value -> !value.isBlank())
-            .map(UUID::fromString)
-            .map(id -> sprintRepository.findByIdAndTeamKey(id, teamKey)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Sprint not found")))
-            .map(SprintEntity::getId)
-            .distinct()
-            .toList();
     }
 
     private ReleaseEntity resolveRelease(String teamKey, String releaseDateId) {

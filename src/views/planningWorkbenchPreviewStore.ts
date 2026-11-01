@@ -1,7 +1,7 @@
 import type { Allocations, BacklogItem, PlanningWorkbenchPreview } from "../types";
 
-const PREVIEW_STORAGE_KEY = "planning-workbench-preview";
-const REVIEW_STATE_STORAGE_KEY = "planning-workbench-review-state";
+const PREVIEW_STORAGE_KEY = "planning-workbench-preview-v2";
+const REVIEW_STATE_STORAGE_KEY = "planning-workbench-review-state-v2";
 
 export type PlanningWorkbenchReviewState = {
   preview: PlanningWorkbenchPreview;
@@ -28,7 +28,7 @@ const readSessionValue = <T,>(key: string): T | null => {
   const raw = window.sessionStorage.getItem(storageKey(key));
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as T;
+    return JSON.parse(raw, (key, value) => key === "status" ? (value === "notdone" ? "canceled" : value === "partial" ? "done" : value) : value) as T;
   } catch {
     window.sessionStorage.removeItem(storageKey(key));
     return null;

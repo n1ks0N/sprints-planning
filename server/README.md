@@ -39,7 +39,7 @@ docker compose down
 3. Запустите приложение:
 
 ```bash
-mvn spring-boot:run
+mvn -Drevision=0.1.0 spring-boot:run
 ```
 
 По умолчанию сервис доступен на `http://localhost:8080/api/v1/sprints-planning`.
@@ -47,7 +47,7 @@ mvn spring-boot:run
 ## Миграции базы данных
 
 Liquibase использует `database/changelog.yml`.
-- В обычном профиле указан путь `file:./database/changelog.yml`.
+- В обычном профиле указан путь `classpath:database/changelog.yml`, как и в Docker; идентификаторы миграций сохраняются при смене способа запуска.
 - В docker-профиле используется `classpath:database/changelog.yml`.
 
 При изменении схемы добавляйте новые changeset-файлы в `database/` и обновляйте `changelog.yml`.
@@ -72,3 +72,14 @@ server/
 ├── Dockerfile                       # сборка контейнера
 └── pom.xml                          # зависимости Maven
 ```
+
+## Проверка дорожной карты и бэклога локально
+
+Запустить PostgreSQL командой `docker compose up -d db` из корня. Для backend требуется Java 17 или новее.
+Из `server/` выполнить `APP_JIRA_MOCK_ENABLED=true mvn -Drevision=0.1.0 spring-boot:run`;
+из корня — `npm run dev:e2e` (http://localhost:4173).
+Проверка готовности: http://localhost:8080/api/v1/sprints-planning/actuator/health.
+
+Дорожная карта: `/#/customlab/`, отдельный бэклог: `/#/customlab/backlog`, планирование: `/#/customlab/planning`.
+Режим Jira mock позволяет проверить интерфейс экспорта без создания задач во внешней Jira.
+`npm run e2e:real -- --workers=1` запускает реальные сценарии на отдельных временных командах и удаляет их данные после проверки.

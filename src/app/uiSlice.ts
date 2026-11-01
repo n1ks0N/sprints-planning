@@ -2,6 +2,8 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { TaskStatus } from "../types";
 
 export type UIState = {
+  taskLists: Record<string, UIState["backlog"]>;
+  todo: UIState["backlog"];
   backlog: {
     quarterId: string; // "all" | qid
     selectedQuarterIds: string[];
@@ -49,14 +51,16 @@ const BACKLOG_PRIORITIES = new Set([1, 2, 3]);
 const BACKLOG_STATUSES: TaskStatus[] = [
   "inprogress",
   "done",
-  "notdone",
   "canceled",
-  "partial",
   "backlog",
 ];
 
 function defaultState(): UIState {
   return {
+    taskLists: {},
+    todo: { quarterId: "all", selectedQuarterIds: [], withoutQuarterFilter: false, withoutStreamFilter: false,
+      withoutCustomerFilter: false, releaseSprintFilter: "all", priorityFilter: [], streamFilter: [], customerFilter: [],
+      statusFilter: [], searchQuery: "", tasksPageSize: "20", hideAllParticipants: false, sortBy: "manual", sortDirection: "asc" },
     backlog: {
       quarterId: "all",
       selectedQuarterIds: [],
@@ -104,7 +108,7 @@ function sanitizeBacklog(
     : defaults.priorityFilter.slice();
 
   const statusFilter = Array.isArray(input?.statusFilter)
-    ? input.statusFilter.filter((s: any): s is TaskStatus =>
+    ? Array.from(new Set(input.statusFilter.map((s: string) => s === "notdone" ? "canceled" : s === "partial" ? "done" : s))).filter((s: any): s is TaskStatus =>
         typeof s === "string" ? BACKLOG_STATUSES.includes(s as TaskStatus) : false
       )
     : defaults.statusFilter.slice();
@@ -272,6 +276,8 @@ function loadInitial(): UIState {
     if (!raw) return defaults;
     const parsed = JSON.parse(raw);
     return {
+      taskLists: Object.fromEntries(Object.entries(parsed?.taskLists || {}).map(([key, value]) => [key, sanitizeBacklog(value, defaults.backlog)])),
+      todo: sanitizeBacklog(parsed?.todo, defaults.todo),
       backlog: sanitizeBacklog(parsed?.backlog, defaults.backlog),
       capacity: sanitizeCapacity(parsed?.capacity, defaults.capacity),
       team: sanitizeTeam(parsed?.team, defaults.team),
@@ -297,6 +303,11 @@ const uiSlice = createSlice({
   name: "ui",
   initialState,
   reducers: {
+    setTaskListFilters(state, action: PayloadAction<{ key: string; changes: Partial<UIState["backlog"]> }>) {
+      const { key, changes } = action.payload;
+      const current = state.taskLists[key] ?? (key.endsWith(":BACKLOG") ? state.todo : state.backlog);
+      state.taskLists[key] = sanitizeBacklog({ ...current, ...changes }, current);
+    },
     setBacklogFilters(
       state,
       action: PayloadAction<Partial<UIState["backlog"]>>
@@ -352,6 +363,7 @@ const uiSlice = createSlice({
 });
 
 export const {
+  setTaskListFilters,
   setBacklogFilters,
   setCapacitySelectedQuarterIds,
   setCapacityFilters,

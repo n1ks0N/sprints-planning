@@ -50,6 +50,8 @@ public class TaskController {
         @RequestParam(value = "priority", required = false) String priority,
         @RequestParam(value = "status", required = false) String status,
         @RequestParam(value = "releaseDateId", required = false) String releaseDateId,
+        @RequestParam(value = "workspace", required = false) String workspace,
+        @RequestParam(value = "releasePromDate", required = false) String releasePromDate,
         @RequestParam(value = "stream", required = false) String stream,
         @RequestParam(value = "withoutStream", required = false) String withoutStream,
         @RequestParam(value = "customer", required = false) String customer,
@@ -80,7 +82,7 @@ public class TaskController {
             search,
             withoutQuarter,
             pinnedTaskId
-        );
+        ).withScope(workspace, releasePromDate);
         return taskService.findPage(normalizedTeamKey, filter, page, size, sortBy, sortDirection);
     }
 

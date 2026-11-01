@@ -30,6 +30,14 @@ public class ReleaseController {
         return releaseService.findAll(TeamKeyNormalizer.normalize(teamKey));
     }
 
+    @GetMapping("/releases/options")
+    public List<ReleaseService.Option> getOptions(@PathVariable String teamKey,
+        @org.springframework.web.bind.annotation.RequestParam(required = false) List<java.util.UUID> quarterId,
+        @org.springframework.web.bind.annotation.RequestParam(required = false)
+        @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate fromDate) {
+        return releaseService.options(TeamKeyNormalizer.normalize(teamKey), quarterId, fromDate);
+    }
+
     @PostMapping("/releases")
     public ReleaseDto createRelease(@PathVariable String teamKey, @RequestBody @Valid ReleaseCreateRequest request) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);

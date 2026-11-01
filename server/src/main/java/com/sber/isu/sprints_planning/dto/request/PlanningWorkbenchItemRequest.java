@@ -14,6 +14,11 @@ public record PlanningWorkbenchItemRequest(
     String initialQuarterId,
     List<String> planningQuarterIds,
     List<String> planningSprintIds,
-    Integer order
+    Integer order,
+    String releasePromDate
 ) {
+
+    public PlanningWorkbenchItemRequest(String title, String description, String dod, Short priority, List<String> customers, List<String> streams, List<TaskPlanningDemandRequest> planningDemands, String releaseDateId, String initialQuarterId, List<String> planningQuarterIds, List<String> planningSprintIds, Integer order) {
+        this(title, description, dod, priority, customers, streams, planningDemands, releaseDateId, initialQuarterId, planningQuarterIds, planningSprintIds, order, null);
+    }
 }

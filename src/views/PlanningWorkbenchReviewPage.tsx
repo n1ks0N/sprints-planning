@@ -1,3 +1,4 @@
+import useToday from "./useToday";
 import * as React from "react";
 import {
   Alert,
@@ -16,7 +17,7 @@ import {
   useGetFiltersQuery,
   useGetParticipantsQuery,
   useGetQuartersQuery,
-  useGetReleasesQuery,
+  useGetReleaseOptionsQuery,
   useGetSprintsQuery,
   usePreviewPlanningWorkbenchMutation,
 } from "../app/api";
@@ -86,13 +87,14 @@ const buildDraftTasks = (preview: PlanningWorkbenchPreview): BacklogItem[] =>
       planningSprintIds: item.planningSprintIds || [],
       loads,
       allocations: item.allocations || {},
-      notes: {},
+      notes: item.notes || {},
       jiraIssues: {},
       jiraStoryIssue: null,
       quarterIds: item.planningQuarterIds || [],
       releaseDateId: item.releaseDateId ?? null,
+      releasePromDate: item.releasePromDate,
       initialQuarterId: item.initialQuarterId ?? null,
-      leaderId: null,
+      leaderId: item.leaderId ?? null,
       order: item.order,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
@@ -155,7 +157,7 @@ const deriveTaskQuarters = (
   return task.initialQuarterId ? [task.initialQuarterId] : [];
 };
 
-const toApplyItemPatch = (task: BacklogItem) => ({
+const toApplyItemPatch = (task: BacklogItem, originalNotes: Record<string, string> = {}) => ({
   title: task.title,
   description: task.description,
   dod: task.dod,
@@ -164,22 +166,24 @@ const toApplyItemPatch = (task: BacklogItem) => ({
   customers: task.customers || [],
   streams: task.streams || [],
   participantIds: task.participantIds || [],
-  releaseDateId: task.releaseDateId ?? null,
+  releasePromDate: task.releasePromDate,
+  releaseDateId: task.releasePromDate ? "" : task.releaseDateId ?? null,
   initialQuarterId: task.initialQuarterId ?? null,
   planningQuarterIds: task.planningQuarterIds || [],
   planningSprintIds: task.planningSprintIds || [],
-  notes: task.notes || {},
-  leaderId: task.leaderId ?? null,
+  notes: { ...Object.fromEntries(Object.keys(originalNotes).map(id => [id, ""])), ...task.notes },
+  leaderId: task.leaderId ?? "",
   order: task.order,
 });
 
 export default function PlanningWorkbenchReviewPage() {
   const { teamKey = "default" } = useParams<{ teamKey: string }>();
   const navigate = useNavigate();
+  const today = useToday();
   const { data: participants = [] } = useGetParticipantsQuery();
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: sprints = [] } = useGetSprintsQuery();
-  const { data: releases = [] } = useGetReleasesQuery();
+  const { data: releases = [] } = useGetReleaseOptionsQuery({ teamKey, fromDate: today });
   const { data: filters } = useGetFiltersQuery();
   const [previewPlanning, { isLoading: isResolving }] = usePreviewPlanningWorkbenchMutation();
   const [applyPlanning, { isLoading: isApplying }] = useApplyPlanningWorkbenchMutation();
@@ -265,11 +269,11 @@ export default function PlanningWorkbenchReviewPage() {
   );
   const releaseOptions = React.useMemo(
     () =>
-      releases.map((release) => ({
+      releases.filter(release => release.promDate >= today).map((release) => ({
         value: release.id,
         label: formatDate(release.promDate),
       })),
-    [releases]
+    [releases, today]
   );
 
   const localParticipantSummary = React.useMemo(() => {
@@ -644,7 +648,7 @@ export default function PlanningWorkbenchReviewPage() {
       await applyPlanning({
         itemIds: selectedItemIds,
         allocations: draftAllocations,
-        itemPatches: Object.fromEntries(draftTasks.map((task) => [task.id, toApplyItemPatch(task)])),
+        itemPatches: Object.fromEntries(draftTasks.map((task) => [task.id, toApplyItemPatch(task, preview?.items.find(item => item.id === task.id)?.notes)])),
       }).unwrap();
       clearPlanningWorkbenchPreview();
       navigate(`/${teamKey}/`);
@@ -754,10 +758,10 @@ export default function PlanningWorkbenchReviewPage() {
         <Stack spacing={1.5}>
           <Box>
             <Typography variant="h6" sx={{ fontWeight: 700 }}>
-              Задачи, которые будут созданы в backlog
+              Задачи после применения плана
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              Здесь используется та же компонентная карточка, что и на странице backlog. Изменения сохраняются
+              Задачи из бэклога обновятся с сохранением ID. Для остальных будут созданы новые задачи. Изменения сохраняются
               локально до подтверждения.
             </Typography>
           </Box>

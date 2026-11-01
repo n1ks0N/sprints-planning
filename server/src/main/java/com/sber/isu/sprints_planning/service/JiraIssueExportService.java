@@ -189,6 +189,9 @@ public class JiraIssueExportService {
 
         List<UUID> requestedTaskIds = parseRequiredUuidList(request.taskIds(), "taskIds");
         List<TaskEntity> loadedTasks = taskRepository.findAllByIdInAndTeamKey(requestedTaskIds, teamKey);
+        if (loadedTasks.stream().anyMatch(task -> "BACKLOG".equals(task.getWorkspace()))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Задачи бэклога нельзя создавать в Jira");
+        }
         Map<UUID, TaskEntity> tasksById = loadedTasks.stream()
             .collect(LinkedHashMap::new, (map, task) -> map.put(task.getId(), task), Map::putAll);
         List<String> labels = normalizeLabels(request.labels());
@@ -748,6 +751,9 @@ public class JiraIssueExportService {
         UUID planningSprintId = parseRequiredUuid(item.planningSprintId(), "planningSprintId");
 
         TaskEntity task = taskRepository.findWithDetailsById(taskId, batch.getTeamKey());
+        if (task != null && "BACKLOG".equals(task.getWorkspace())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Задача перемещена в бэклог; экспорт запрещён");
+        }
         if (task == null) {
             return item.withStatus(ITEM_STATUS_FAILED, "Задача не найдена");
         }
@@ -890,6 +896,9 @@ public class JiraIssueExportService {
         UUID taskId = parseRequiredUuid(item.taskId(), "taskId");
 
         TaskEntity task = taskRepository.findWithDetailsById(taskId, batch.getTeamKey());
+        if (task != null && "BACKLOG".equals(task.getWorkspace())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Задача перемещена в бэклог; экспорт запрещён");
+        }
         if (task == null) {
             return item.withStatus(ITEM_STATUS_FAILED, "Задача не найдена");
         }

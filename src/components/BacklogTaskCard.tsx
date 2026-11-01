@@ -1,3 +1,4 @@
+import ReleaseDateField from "./ReleaseDateField";
 import * as React from "react";
 import {
   Paper,
@@ -84,10 +85,8 @@ const TASK_ACTIONS_COL_WIDTH = 220;
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   inprogress: "В работе",
-  done: "Выполнена",
-  notdone: "Не сделана",
+  done: "Выполнено",
   canceled: "Отменена",
-  partial: "Частично",
   backlog: "В бэклоге",
 };
 
@@ -97,9 +96,7 @@ const STATUS_COLOR: Record<
 > = {
   inprogress: "default",
   done: "success",
-  notdone: "error",
   canceled: "info",
-  partial: "warning",
   backlog: "default",
 };
 
@@ -339,6 +336,7 @@ const SortableParticipantRow = ({
 };
 
 export type BacklogTaskCardProps = {
+  onTransferToPlanning?: (task: BacklogItem) => void;
   task: BacklogItem;
   allocationsByParticipant: Record<string, Record<string, number>>;
   participants: Participant[];
@@ -430,6 +428,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
   onPriorityChange,
   onUpdateTaskPatch,
   onDuplicateTask,
+  onTransferToPlanning,
   onOpenTaskHistory,
   onUpdateJiraLinks,
   onMoveTask,
@@ -456,6 +455,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
   const isPreview = mode === "preview";
   const rows = allocationsByParticipant || {};
   const taskStatus = task.status ?? "inprogress";
+  const canExportJira = task.workspace !== "BACKLOG" && task.status !== "backlog";
   const taskQuarterIds = getTaskQuarters(task);
   const taskHasQuarterOverride = hasTaskQuarterOverride(task.id);
   const [selectedParticipantToAdd, setSelectedParticipantToAdd] =
@@ -980,30 +980,9 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
             sx={{ minWidth: 180, maxWidth: 300, flexShrink: 0 }}
           />
 
-          <TextField
-            select
-            size="small"
-            label="Релиз (ПРОМ)"
-            value={normalizedReleaseValue}
-            onChange={(e) => {
-              const nextId = String(e.target.value);
-              onUpdateTaskPatch(task, {
-                releaseDateId: nextId,
-              });
-            }}
-            sx={{ minWidth: 180, maxWidth: 220, flexShrink: 0 }}
-            InputLabelProps={{ shrink: true }}
-            SelectProps={{ displayEmpty: true }}
-          >
-            <MenuItem value="">
-              <em>—</em>
-            </MenuItem>
-            {releaseOptions.map((opt) => (
-              <MenuItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </MenuItem>
-            ))}
-          </TextField>
+          <ReleaseDateField label="Релиз (ПРОМ)" value={task.releasePromDate || releaseDateId}
+            options={releaseOptions} onChange={(value) => onUpdateTaskPatch(task,
+              /^\d{4}-\d{2}-\d{2}$/.test(value) ? { releasePromDate: value, releaseDateId: "" } : { releaseDateId: value, releasePromDate: undefined })} />
 
           <Stack direction="row" spacing={0.5} sx={{ ml: "auto" }}>
             {dragHandle && !isPreview && (
@@ -1036,7 +1015,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
               </Tooltip>
             )}
 
-            {!isPreview && (
+            {!isPreview && canExportJira && (
               <Tooltip
                 title={
                   isJiraSelected
@@ -1046,6 +1025,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
               >
                 <IconButton
                   size="small"
+                  disabled={!canExportJira}
                   onClick={() => onToggleJiraSelection(task)}
                   aria-label={
                     isJiraSelected
@@ -1112,14 +1092,14 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
 
               {!isPreview && (
                 <>
-                  <MenuItem onClick={() => handleTaskOption(() => onToggleJiraSelection(task))}>
+                  {canExportJira && <MenuItem onClick={() => handleTaskOption(() => onToggleJiraSelection(task))}>
                     <ListItemIcon>
                       <AddTask fontSize="small" color={isJiraSelected ? "success" : "inherit"} />
                     </ListItemIcon>
                     <ListItemText>
                       {isJiraSelected ? "Убрать из корзины Jira" : "Добавить в корзину Jira"}
                     </ListItemText>
-                  </MenuItem>
+                  </MenuItem>}
                   {storyJiraIssue?.jiraIssueUrl ? (
                     <MenuItem
                       component="a"
@@ -1147,6 +1127,9 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                     </ListItemIcon>
                     <ListItemText>Редактировать ссылки Jira</ListItemText>
                   </MenuItem>
+                  {onTransferToPlanning && <MenuItem onClick={() => handleTaskOption(() => onTransferToPlanning(task))}>
+                    <ListItemText>В планирование</ListItemText>
+                  </MenuItem>}
                   <MenuItem onClick={() => handleTaskOption(() => onDuplicateTask(task))}>
                     <ListItemIcon>
                       <CopyAll fontSize="small" />
@@ -1437,6 +1420,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                                   <IconButton
                                     size="small"
                                     color={hasNote ? "primary" : "default"}
+                                    aria-label={`Заметка: ${p.fullName}`}
                                     onClick={() => handleOpenNote(p)}
                                   >
                                     <EditNote fontSize="small" />

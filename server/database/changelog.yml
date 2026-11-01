@@ -56,3 +56,6 @@ databaseChangeLog:
   - include:
       file: 1.0.0/1.0.0_21_participant_active.sql
       relativeToChangelogFile: true
+  - include:
+      file: 1.0.0/1.0.0_22_roadmap_backlog.sql
+      relativeToChangelogFile: true

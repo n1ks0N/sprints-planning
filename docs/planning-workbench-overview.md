@@ -2,7 +2,7 @@
 
 ## Product flow
 
-The planning feature now uses its own persistence model and no longer overlaps with live backlog tasks.
+The planning feature uses separate draft persistence. Drafts can be independent or explicitly linked to a real task from the todo backlog.
 
 User scenario:
 
@@ -15,7 +15,7 @@ User scenario:
 4. Planning items can be created from either side:
    - if an item is created from the right side, it is still saved into the common planning backlog
    - the right-side selection is not persisted, so after a page reload the item appears in the left planning backlog again
-5. The page also supports client-side filtering by quarter and sorting by:
+5. The page supports server-side filtering, pagination and sorting; the current selection also sorts locally by:
    - manual order
    - total demand
    - release date
@@ -33,7 +33,7 @@ User scenario:
    - the raw preview survives reload
    - local review edits also survive reload
    - nothing is published until explicit confirmation
-10. After confirmation, backend creates real backlog tasks from the selected planning items and writes allocations and total sprint loads.
+10. After confirmation, backend updates linked source tasks with the same ID, or creates tasks for independent planning items, and writes approved allocations and total sprint loads. Applied drafts are removed in the same transaction.
 
 ## What is edited on the planning page
 
@@ -95,9 +95,9 @@ Live tasks are no longer used as planning-workbench source data.
 Important behavior now:
 
 - tasks with status `backlog` stay regular backlog tasks
-- they are not auto-imported into planning workbench
+- they are not auto-imported into planning workbench; use the explicit «В планирование» action in the task menu
 - the left planning list is backed by a separate table
-- the only place where planning touches live tasks is final `apply`
+- explicit transfer takes a source snapshot; final `apply` validates its revision and updates the original task
 
 ## Planning demand rules
 
@@ -174,7 +174,7 @@ This approach removes the old dual-source problem:
 - planning metadata no longer mutates live tasks before publish
 - sprint loads and allocations remain live-task data only
 - planning backlog has its own single source of truth
-- live backlog tasks, including status `backlog`, stay regular tasks and are not mixed with planning items
+- live tasks stay in `tasks`; linked drafts stay in `planning_backlog_items` with a unique source reference
 
 Detailed backend design is documented in:
 
@@ -262,3 +262,28 @@ Why all three layers are needed:
 - mocked e2e catches frontend regressions quickly
 - real e2e proves the browser flow works against the live backend
 - Java tests protect solver and service rules with more precise domain assertions
+
+## Roadmap integration
+
+The todo page is `/{teamKey}/backlog`; the roadmap retains `/{teamKey}/`. Create/copy on either page uses its default status.
+Canceling does not move the task. Work/done moves it to the roadmap; backlog moves it to the todo list.
+
+Transferring a todo task locks the source and returns an existing draft on repeated clicks. Active participant estimates are derived
+from allocations, avoiding double-counting task totals. Missing estimates can be added in the existing planning dialog.
+An edited, canceled, deleted or manually started source cannot be overwritten by an old draft; remove and transfer the draft again.
+Historical inactive participant rows, notes, Jira links and allocations remain on the existing source task after apply.
+They do not become new solver assignments. Draft deletion leaves the source untouched.
+
+Release suggestions are limited by today's date for assignment and by chosen quarters for filtering. Manual valid dates always work,
+including dates outside the suggestions. Filtering never creates calendar records. Creating/assigning an unknown date uses the same
+release calculation rules as the calendar. Existing past dates survive editing and copying.
+
+Additional real-backend coverage: `tests/e2e/roadmap.real.ts` (same-ID apply, inactive rows, manual date input, search, page transitions,
+concurrent date creation, workspace isolation, quarter suggestions and stale source conflicts).
+
+### Уточнения после ревью 01.11.2026
+
+- Явно назначенный активный участник без оценки передаётся с `days=0`, остаётся видимым в review и сохраняется после apply. Нулевая работа не передаётся solver и не создаёт allocations/loads.
+- Linked draft содержит snapshot заметок и лидера источника. Пропущенные поля patch сохраняют эти значения; `leaderId=""` очищает лидера, `notes={participantId: ""}` удаляет соответствующую заметку.
+- Новые задачи при apply добавляются в конец списка выбранного workspace в порядке заготовок. Существующая связанная задача сохраняет ID; при смене workspace она также добавляется в конец целевого списка.
+- Пакетный TaskService переиспользует словари и кеш порядка, а Jira-данные для ответа читает сразу для всех задач. Инвалидация planning-кеша обновляет весь загруженный префикс страниц.

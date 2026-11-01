@@ -53,6 +53,22 @@ public class TaskEntity {
     private String status;
 
     @Column(nullable = false)
+    private String workspace = "ROADMAP";
+
+    @Column(nullable = false)
+    private long revision;
+
+    public String getWorkspace() { return workspace; }
+    public void setWorkspace(String workspace) {
+        if (!"ROADMAP".equals(workspace) && !"BACKLOG".equals(workspace)) {
+            throw new IllegalArgumentException("Unknown task workspace");
+        }
+        this.workspace = workspace;
+    }
+    public long getRevision() { return revision; }
+
+
+    @Column(nullable = false)
     private String customer;
 
     @Column(nullable = false)
@@ -165,6 +181,8 @@ public class TaskEntity {
 
     public void setStatus(String status) {
         this.status = status;
+        if ("backlog".equals(status)) workspace = "BACKLOG";
+        else if ("inprogress".equals(status) || "done".equals(status)) workspace = "ROADMAP";
     }
 
     public String getCustomer() {
@@ -261,6 +279,7 @@ public class TaskEntity {
 
     public void setUpdatedAt(LocalDate updatedAt) {
         this.updatedAt = updatedAt;
+        this.revision++;
     }
 
     public Set<TaskParticipantEntity> getParticipants() {

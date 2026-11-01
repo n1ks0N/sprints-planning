@@ -19,6 +19,11 @@ public record PlanningWorkbenchApplyItemPatchRequest(
     List<String> planningSprintIds,
     Map<String, String> notes,
     String leaderId,
-    Integer order
+    Integer order,
+    String releasePromDate
 ) {
+
+    public PlanningWorkbenchApplyItemPatchRequest(String title, String description, String dod, Short priority, String status, List<String> customers, List<String> streams, List<String> participantIds, List<TaskPlanningDemandRequest> planningDemands, String releaseDateId, String initialQuarterId, List<String> planningQuarterIds, List<String> planningSprintIds, Map<String, String> notes, String leaderId, Integer order) {
+        this(title, description, dod, priority, status, customers, streams, participantIds, planningDemands, releaseDateId, initialQuarterId, planningQuarterIds, planningSprintIds, notes, leaderId, order, null);
+    }
 }

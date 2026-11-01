@@ -1,3 +1,5 @@
+import useToday from "../views/useToday";
+import ReleaseDateField, { isReleaseDate } from "./ReleaseDateField";
 import * as React from "react";
 import {
   Button,
@@ -21,7 +23,7 @@ import type {
   PlanningDemandKind,
   PlanningWorkbenchItem,
   Quarter,
-  Release,
+  ReleaseOption,
   Sprint,
   TaskPriority,
 } from "../types";
@@ -50,6 +52,7 @@ export type PlanningWorkbenchTaskSubmitPayload = {
   streams: string[];
   planningDemands: PlanningDemand[];
   releaseDateId?: string | null;
+  releasePromDate?: string | null;
   initialQuarterId?: string | null;
   planningQuarterIds?: string[];
   planningSprintIds?: string[];
@@ -62,7 +65,7 @@ type Props = {
   participants: Participant[];
   quarters: Quarter[];
   sprints: Sprint[];
-  releases: Release[];
+  releases: ReleaseOption[];
   customerOptions: string[];
   taskStreamOptions: string[];
   participantRoleOptions: string[];
@@ -167,7 +170,7 @@ const normalizeTask = (
     priority: task?.priority ?? 1,
     customers: task?.customers ?? [],
     streams: task?.streams ?? [],
-    releaseDateId: task?.releaseDateId ?? "",
+    releaseDateId: task?.releasePromDate ?? task?.releaseDateId ?? "",
     initialQuarterId,
     planningQuarterIds,
     planningSprintIds: task?.planningSprintIds ?? [],
@@ -227,6 +230,7 @@ export default function PlanningWorkbenchTaskDialog({
   onClose,
   onSubmit,
 }: Props) {
+  const today = useToday();
   const [form, setForm] = React.useState<FormState>(
     normalizeTask(undefined, resolveCurrentQuarterId(quarters)),
   );
@@ -261,11 +265,11 @@ export default function PlanningWorkbenchTaskDialog({
 
   const releaseOptions = React.useMemo<FilterOption[]>(
     () =>
-      releases.map((release) => ({
+      releases.filter(release => release.promDate >= today).map((release) => ({
         value: release.id,
         label: formatDate(release.promDate),
       })),
-    [releases],
+    [releases, today],
   );
 
   const quarterOptions = React.useMemo<FilterOption[]>(
@@ -409,8 +413,7 @@ export default function PlanningWorkbenchTaskDialog({
 
     const planningDemands = normalizedDemands.filter(
       (demand) =>
-        demand.days > 0 &&
-        ((demand.kind === "ROLE" && demand.role) ||
+        ((demand.days > 0 && demand.kind === "ROLE" && demand.role) ||
           (demand.kind === "PARTICIPANT" && demand.participantId)),
     );
 
@@ -423,7 +426,8 @@ export default function PlanningWorkbenchTaskDialog({
       customers: form.customers,
       streams: form.streams,
       planningDemands: planningDemands as PlanningDemand[],
-      releaseDateId: form.releaseDateId || null,
+      releaseDateId: isReleaseDate(form.releaseDateId) ? null : form.releaseDateId || null,
+      releasePromDate: isReleaseDate(form.releaseDateId) ? form.releaseDateId : undefined,
       initialQuarterId: form.initialQuarterId || null,
       planningQuarterIds: form.planningQuarterIds,
       planningSprintIds: form.planningSprintIds,
@@ -638,15 +642,13 @@ export default function PlanningWorkbenchTaskDialog({
           </Stack>
 
           <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-            <FilterAutocomplete
+            <ReleaseDateField
               label="Релиз"
-              allowCustom={false}
               value={form.releaseDateId}
               onChange={(releaseDateId) =>
                 setForm((prev) => ({ ...prev, releaseDateId }))
               }
               options={releaseOptions}
-              placeholder="Без релиза"
             />
             <FilterAutocomplete
               label="Стартовый квартал"

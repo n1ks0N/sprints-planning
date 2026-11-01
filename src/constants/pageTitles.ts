@@ -1,6 +1,7 @@
 export const TAB_TITLE_SUFFIX = "Сервис планирования";
 
 export const PAGE_TITLES = {
+  roadmap: "Дорожная карта",
   backlog: "Бэклог",
   capacity: "Нагрузка",
   participantWork: "По сотрудникам",

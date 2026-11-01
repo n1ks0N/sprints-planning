@@ -1,3 +1,4 @@
+import useToday from "./useToday";
 import * as React from "react";
 import {
   Alert,
@@ -21,6 +22,7 @@ import {
   useGetPlanningWorkbenchBacklogQuery,
   useGetQuartersQuery,
   useGetReleasesQuery,
+  useGetReleaseOptionsQuery,
   useGetSprintsQuery,
   usePreviewPlanningWorkbenchMutation,
   useDeletePlanningWorkbenchItemMutation,
@@ -63,6 +65,7 @@ type PlanningBacklogQueryArgs = {
   quarterIds?: string[];
   priority?: string[];
   releaseDateId?: string;
+  releasePromDate?: string;
   streams?: string[];
   customers?: string[];
   search?: string;
@@ -107,6 +110,7 @@ const buildPlanningBacklogSearchParams = (args: PlanningBacklogQueryArgs) => {
   appendArray("quarterIds", args.quarterIds);
   appendArray("priority", args.priority);
   if (args.releaseDateId) params.set("releaseDateId", args.releaseDateId);
+  if (args.releasePromDate) params.set("releasePromDate", args.releasePromDate);
   appendArray("streams", args.streams);
   appendArray("customers", args.customers);
   if (args.search) params.set("search", args.search);
@@ -260,6 +264,7 @@ export default function PlanningWorkbenchPage() {
   );
   const navigate = useNavigate();
   const location = useLocation();
+  const today = useToday();
   const { data: participants = [] } = useGetParticipantsQuery();
   const activeParticipants = React.useMemo(
     () => participants.filter((participant) => participant.active !== false),
@@ -267,7 +272,7 @@ export default function PlanningWorkbenchPage() {
   );
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: sprints = [] } = useGetSprintsQuery();
-  const { data: releases = [] } = useGetReleasesQuery();
+  const { data: releases = [] } = useGetReleaseOptionsQuery({ teamKey, fromDate: today });
   const { data: filters } = useGetFiltersQuery();
   const [addItem, { isLoading: isCreating }] = useAddPlanningWorkbenchItemMutation();
   const [updateItem, { isLoading: isUpdating }] = useUpdatePlanningWorkbenchItemMutation();
@@ -363,7 +368,8 @@ export default function PlanningWorkbenchPage() {
       size: planningPageSizeNumber,
       quarterIds: quarterFilterIds,
       priority: priorityFilterValues,
-      releaseDateId: releaseFilterValue.trim() || undefined,
+      releaseDateId: /^\d{4}-\d{2}-\d{2}$/.test(releaseFilterValue) ? undefined : releaseFilterValue.trim() || undefined,
+      releasePromDate: /^\d{4}-\d{2}-\d{2}$/.test(releaseFilterValue) ? releaseFilterValue : undefined,
       streams: selectedStreamFilters.length > 0 ? selectedStreamFilters : undefined,
       customers: selectedCustomerFilters.length > 0 ? selectedCustomerFilters : undefined,
       withoutStream: streamFilterValues.includes(WITHOUT_STREAM_FILTER_VALUE),
@@ -477,8 +483,8 @@ export default function PlanningWorkbenchPage() {
     [releases]
   );
   const releasePromDateById = React.useMemo(
-    () => new Map(releases.map((release) => [release.id, release.promDate || ""])),
-    [releases]
+    () => new Map([...releases.map((release) => [release.id, release.promDate || ""] as [string, string]), ...Array.from(itemCacheById.values()).filter(item => item.releaseDateId && item.releasePromDate).map(item => [item.releaseDateId!, item.releasePromDate!] as [string, string])]),
+    [releases, itemCacheById]
   );
   const participantNameById = React.useMemo(
     () => new Map(participants.map((participant) => [participant.id,
@@ -517,14 +523,15 @@ export default function PlanningWorkbenchPage() {
     ],
     [filters?.customers]
   );
+  const { data: releaseSuggestions = [] } = useGetReleaseOptionsQuery({ teamKey, quarterIds: [...quarterFilterIds].sort() });
   const releaseFilterOptions = React.useMemo(
     () =>
-      releases
+      releaseSuggestions
         .filter((release) => release.id && release.promDate)
         .slice()
         .sort((a, b) => a.promDate.localeCompare(b.promDate))
         .map((release) => ({ value: release.id, label: formatDate(release.promDate) })),
-    [releases]
+    [releaseSuggestions]
   );
   const sortByOptions = React.useMemo(
     () => [
@@ -706,6 +713,7 @@ export default function PlanningWorkbenchPage() {
           streams: payload.streams,
           planningDemands: payload.planningDemands,
           releaseDateId: payload.releaseDateId,
+          releasePromDate: payload.releasePromDate,
           initialQuarterId: payload.initialQuarterId,
           planningQuarterIds: payload.planningQuarterIds || [],
           planningSprintIds: payload.planningSprintIds || [],
@@ -725,6 +733,7 @@ export default function PlanningWorkbenchPage() {
           streams: payload.streams,
           planningDemands: payload.planningDemands,
           releaseDateId: payload.releaseDateId,
+          releasePromDate: payload.releasePromDate,
           initialQuarterId: payload.initialQuarterId,
           planningQuarterIds: payload.planningQuarterIds || [],
           planningSprintIds: payload.planningSprintIds || [],
@@ -815,17 +824,14 @@ export default function PlanningWorkbenchPage() {
                   },
                 },
                 {
-                  type: "autocomplete",
+                  type: "releaseDate",
                   key: "release",
                   minWidth: 180,
                   props: {
-                    allowCustom: false,
                     label: "Релиз",
                     value: releaseFilterValue,
                     onChange: setReleaseFilterValue,
                     options: releaseFilterOptions,
-                    placeholder: "Все релизы",
-                    sortOptions: false,
                   },
                 },
                 {
@@ -948,7 +954,7 @@ export default function PlanningWorkbenchPage() {
                     key={item.id}
                     item={item}
                     issues={getItemIssues(item)}
-                    releaseLabel={item.releaseDateId ? releaseLabelById.get(item.releaseDateId) : null}
+                    releaseLabel={item.releasePromDate ? formatDate(item.releasePromDate) : item.releaseDateId ? releaseLabelById.get(item.releaseDateId) : null}
                     participantNameById={participantNameById}
                     actionSlot={
                       <>
@@ -1037,7 +1043,7 @@ export default function PlanningWorkbenchPage() {
                     key={item.id}
                     item={item}
                     issues={getItemIssues(item)}
-                    releaseLabel={item.releaseDateId ? releaseLabelById.get(item.releaseDateId) : null}
+                    releaseLabel={item.releasePromDate ? formatDate(item.releasePromDate) : item.releaseDateId ? releaseLabelById.get(item.releaseDateId) : null}
                     participantNameById={participantNameById}
                     actionSlot={
                       <>

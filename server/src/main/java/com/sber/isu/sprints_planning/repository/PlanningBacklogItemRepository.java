@@ -11,6 +11,12 @@ import org.springframework.data.repository.query.Param;
 
 public interface PlanningBacklogItemRepository extends JpaRepository<PlanningBacklogItemEntity, UUID> {
 
+    java.util.Optional<PlanningBacklogItemEntity> findBySourceTaskIdAndTeamKey(UUID taskId, String teamKey);
+
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select i from PlanningBacklogItemEntity i where i.teamKey = :teamKey and i.id in :ids order by i.id")
+    List<PlanningBacklogItemEntity> lockSelected(@Param("teamKey") String teamKey, @Param("ids") Collection<UUID> ids);
+
     @EntityGraph(attributePaths = {"releaseDate", "initialQuarter"})
     List<PlanningBacklogItemEntity> findAllByTeamKeyOrderByDisplayOrderAscCreatedAtAsc(String teamKey);
 

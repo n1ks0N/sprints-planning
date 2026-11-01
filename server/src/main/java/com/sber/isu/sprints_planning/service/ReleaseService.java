@@ -26,6 +26,50 @@ public class ReleaseService {
         this.releaseRepository = releaseRepository;
     }
 
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
+
+    public record Option(String id, String name, LocalDate promDate) {}
+
+    public List<Option> options(String teamKey, List<UUID> quarters, LocalDate fromDate) {
+        boolean all = quarters == null || quarters.isEmpty();
+        return releaseRepository.findOptions(teamKey, fromDate == null ? LocalDate.of(1, 1, 1) : fromDate, all, all ? List.of(new UUID(0, 0)) : quarters).stream()
+            .map(r -> new Option(r.getId().toString(), r.getName(), r.getPromDate())).toList();
+    }
+
+    @Transactional
+    public ReleaseEntity resolveDate(String teamKey, String rawDate, String existingId) {
+        if (rawDate == null || rawDate.isBlank()) return null;
+        LocalDate date;
+        try { date = LocalDate.parse(rawDate); }
+        catch (java.time.DateTimeException ex) { throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Некорректная дата релиза"); }
+        if (existingId != null && !existingId.isBlank()) {
+            ReleaseEntity selected = releaseRepository.findByIdAndTeamKey(UUID.fromString(existingId), teamKey)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Release not found"));
+            if (!date.equals(selected.getPromDate())) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Дата не соответствует выбранному релизу");
+            return selected;
+        }
+        var existing = releaseRepository.findByTeamKeyAndPromDate(teamKey, date);
+        if (existing.isPresent()) return existing.get();
+        ReleaseEntity r = new ReleaseEntity();
+        recalculateFromAnchor(r, "promDate", date);
+        entityManager.createNativeQuery("""
+            insert into releases(id, team_key, prom_date, psi_date, ops_start, ops_end, regress_start, regress_end,
+              ff_date, ff_inner_date, ift_start, ift_end, build_date, cr_date, dev_start, dev_end, st_date, created_at, updated_at)
+            values (:id,:team,:prom,:psi,:opsStart,:opsEnd,:regressStart,:regressEnd,:ff,:ffInner,:iftStart,:iftEnd,:build,:cr,:devStart,:devEnd,:st,:today,:today)
+            on conflict (team_key, prom_date) do nothing
+            """)
+            .setParameter("id", UUID.randomUUID()).setParameter("team", teamKey).setParameter("prom", date)
+            .setParameter("psi", r.getPsiDate()).setParameter("opsStart", r.getOpsStart()).setParameter("opsEnd", r.getOpsEnd())
+            .setParameter("regressStart", r.getRegressStart()).setParameter("regressEnd", r.getRegressEnd())
+            .setParameter("ff", r.getFfDate()).setParameter("ffInner", r.getFfInnerDate())
+            .setParameter("iftStart", r.getIftStart()).setParameter("iftEnd", r.getIftEnd())
+            .setParameter("build", r.getBuildDate()).setParameter("cr", r.getCrDate())
+            .setParameter("devStart", r.getDevStart()).setParameter("devEnd", r.getDevEnd()).setParameter("st", r.getStDate())
+            .setParameter("today", LocalDate.now()).executeUpdate();
+        return releaseRepository.findByTeamKeyAndPromDate(teamKey, date).orElseThrow();
+    }
+
     public List<ReleaseDto> findAll(String teamKey) {
         return releaseRepository.findAllByTeamKeyOrderByPromDateAsc(teamKey).stream()
             .map(DtoMapper::toReleaseDto)

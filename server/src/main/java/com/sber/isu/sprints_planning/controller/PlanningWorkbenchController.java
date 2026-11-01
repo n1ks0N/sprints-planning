@@ -44,6 +44,8 @@ public class PlanningWorkbenchController {
         @RequestParam(value = "quarterIds", required = false) List<String> quarterIds,
         @RequestParam(value = "priority", required = false) String priority,
         @RequestParam(value = "releaseDateId", required = false) String releaseDateId,
+        @RequestParam(value = "releasePromDate", required = false)
+        @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate releasePromDate,
         @RequestParam(value = "streams", required = false) List<String> streams,
         @RequestParam(value = "customers", required = false) List<String> customers,
         @RequestParam(value = "search", required = false) String search,
@@ -59,13 +61,18 @@ public class PlanningWorkbenchController {
             size,
             quarterIds,
             priority,
-            releaseDateId,
+            releasePromDate == null ? releaseDateId : "date:" + releasePromDate,
             streams,
             customers,
             search,
             withoutStream,
             withoutCustomer
         );
+    }
+
+    @PostMapping("/from-task/{taskId}")
+    public PlanningWorkbenchItemDto fromTask(@PathVariable String teamKey, @PathVariable java.util.UUID taskId) {
+        return planningWorkbenchService.transferTask(TeamKeyNormalizer.normalize(teamKey), taskId);
     }
 
     @PostMapping("/items")

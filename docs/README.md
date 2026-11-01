@@ -4,6 +4,12 @@ This directory is the top-level documentation entry point for the project.
 
 ## Current docs
 
+- `docs/backlog-roadmap-implementation-review.md`
+  Requirement-by-requirement implementation audit and verified code review findings.
+
+- `docs/backlog-roadmap-implementation-plan.md`
+  Implementation plan for splitting the current backlog into roadmap and to-do pages, integrating planning, and filtering past releases.
+
 - `docs/architecture.md`
   General project architecture: frontend, backend, data model, and major runtime flows.
 

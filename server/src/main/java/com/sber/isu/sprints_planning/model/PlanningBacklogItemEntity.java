@@ -26,6 +26,26 @@ public class PlanningBacklogItemEntity {
     @UuidGenerator
     private UUID id;
 
+    @Column(name = "source_task_id")
+    private UUID sourceTaskId;
+    @Column(name = "source_revision")
+    private Long sourceRevision;
+    public UUID getSourceTaskId() { return sourceTaskId; }
+    public void setSourceTaskId(UUID id) { sourceTaskId = id; }
+    public Long getSourceRevision() { return sourceRevision; }
+    public void setSourceRevision(Long revision) { sourceRevision = revision; }
+
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "source_notes", columnDefinition = "jsonb", nullable = false)
+    private java.util.Map<UUID, String> sourceNotes = new java.util.LinkedHashMap<>();
+    @Column(name = "source_leader_id")
+    private UUID sourceLeaderId;
+    public java.util.Map<UUID, String> getSourceNotes() { return sourceNotes; }
+    public void setSourceNotes(java.util.Map<UUID, String> notes) { sourceNotes = notes; }
+    public UUID getSourceLeaderId() { return sourceLeaderId; }
+    public void setSourceLeaderId(UUID id) { sourceLeaderId = id; }
+
     @Column(nullable = false)
     private String title;
 
