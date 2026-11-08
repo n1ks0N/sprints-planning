@@ -43,10 +43,6 @@
           "passed": true
         },
         {
-          "name": "missingIndexNeverFallsBackToAnotherSchema",
-          "passed": true
-        },
-        {
           "name": "existing22AndLegacy23HistoryRemainValid(int)[1]",
           "passed": true
         },
@@ -60,6 +56,10 @@
         },
         {
           "name": "migration22IsUnchangedAnd23ContainsOneNonTransactionalChangeset",
+          "passed": true
+        },
+        {
+          "name": "rawSqlRunsWithoutLiquibaseSubstitutionAndCanRepeat",
           "passed": true
         },
         {
@@ -224,6 +224,18 @@
       "backlog": 100,
       "planning": 500
     },
-    "business_data_identical": true
-  }
+    "business_data_identical": true,
+    "tested_commit": "609bde5 (before removal of Liquibase schema substitution)"
+  },
+  "manual_sql_execution": {
+    "client": "psql -f with autocommit",
+    "liquibase_used": false,
+    "file_executed_verbatim": true,
+    "runs": 2,
+    "business_data_unchanged": true,
+    "primary_keys_preserved": 3,
+    "redundant_indexes_remaining": 0
+  },
+  "liquibase_substitutions_in_sql": 0,
+  "migration_23_sql_sha256": "1ac43362719cd7714d3454fc143c834b4229afb1cc2d0c19e97a92471d3ec152"
 }

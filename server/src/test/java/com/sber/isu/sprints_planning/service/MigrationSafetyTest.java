@@ -54,7 +54,7 @@ class MigrationSafetyTest {
             assertThat(changes.get(1).isRunInTransaction()).isFalse();
             for (String file : List.of(FILE_22, FILE_23)) {
                 try (var input = getClass().getClassLoader().getResourceAsStream(file)) {
-                    assertThat(new String(input.readAllBytes(), StandardCharsets.UTF_8)).doesNotContain("--precondition");
+                    assertThat(new String(input.readAllBytes(), StandardCharsets.UTF_8)).doesNotContain("--precondition", "${");
                 }
             }
         }
@@ -163,26 +163,30 @@ class MigrationSafetyTest {
 
     @Test
     @EnabledIfEnvironmentVariable(named = "BACKEND_AUDIT_DB_URL", matches = ".*/sprints_audit(?:\\?.*)?")
-    void missingIndexNeverFallsBackToAnotherSchema() throws Exception {
+    void rawSqlRunsWithoutLiquibaseSubstitutionAndCanRepeat() throws Exception {
         withSchema((connection, liquibase, schema) -> {
             prepareBefore22(connection, liquibase);
             liquibase.update(1, new Contexts(), new LabelExpression());
-            String shadow = schema + "_shadow";
-            sql(connection, "drop index idx_task_allocations_task");
-            sql(connection, "create schema " + shadow);
-            try {
-                sql(connection, "create table " + shadow + ".other_allocations(task_id uuid)");
-                sql(connection, "create index idx_task_allocations_task on " + shadow + ".other_allocations(task_id)");
-                sql(connection, "set search_path to " + schema + "," + shadow);
-                Map<String, String> before = snapshot(connection, schema, false, true);
-                liquibase.update(new Contexts(), new LabelExpression());
+            Map<String, String> before = snapshot(connection, schema, false, true);
+            String script;
+            try (var input = getClass().getClassLoader().getResourceAsStream(FILE_23)) {
+                script = new String(input.readAllBytes(), StandardCharsets.UTF_8).lines()
+                    .filter(line -> !line.stripLeading().startsWith("--"))
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            }
+            connection.setAutoCommit(true);
+            for (int run = 0; run < 2; run++) {
+                for (String command : script.split(";")) {
+                    if (!command.isBlank()) sql(connection, command);
+                }
                 assertThat(indexCount(connection, schema)).isZero();
                 assertThat(snapshot(connection, schema, false, true)).isEqualTo(before);
-                assertThat(scalar(connection, "select count(*) from pg_indexes where schemaname='" + shadow + "' and indexname='idx_task_allocations_task'")).isEqualTo(1);
-                verifyLedger(connection, 2);
-            } finally {
-                sql(connection, "drop schema " + shadow + " cascade");
+                verifyLedger(connection, 1);
             }
+            // Liquibase also accepts a database already upgraded manually.
+            updateFromFreshConnection(connection, schema, 1);
+            verifyLedger(connection, 2);
+            assertThat(snapshot(connection, schema, false, true)).isEqualTo(before);
         });
     }
 
