@@ -1,17 +1,27 @@
 {
   "date": "2026-11-08",
-  "production_sql_file": "server/database/1.0.0/1.0.0_22_roadmap_backlog.sql",
-  "physical_file_23_removed": true,
-  "preserved_changesets": 4,
+  "production_sql_file": "server/database/1.0.0/1.0.0_23_redundant_task_indexes.sql",
+  "migration_22_restored_byte_for_byte": true,
+  "migration_22_original_commit": "765a899",
+  "migration_22_sha256": "17d4fb29358fbe746138ada88b6d47f619256c4a6551278fe92c67f11295c476",
+  "migration_22_liquibase_checksum": "9:ac2553200a58eb37a153e037a9be53d3",
+  "migration_23_changesets": 1,
+  "preconditions": 0,
   "liquibase": "4.29.2",
   "postgres": "15.15",
   "runtime": "OpenJDK 21 Temurin",
   "java_target": 17,
-  "class_file_major": 61,
+  "full_backend_tests": {
+    "tests": 108,
+    "passed": 107,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1
+  },
   "test_suites": [
     {
-      "suite": "MigrationMergeSafetyTest",
-      "tests": 10,
+      "suite": "MigrationSafetyTest",
+      "tests": 11,
       "failures": 0,
       "errors": 0,
       "skipped": 0,
@@ -33,23 +43,27 @@
           "passed": true
         },
         {
-          "name": "cleanupNeverDropsAnotherSchemasIndexOrACustomUniqueIndex(IndexDrift)[1]",
+          "name": "missingIndexNeverFallsBackToAnotherSchema",
           "passed": true
         },
         {
-          "name": "cleanupNeverDropsAnotherSchemasIndexOrACustomUniqueIndex(IndexDrift)[2]",
+          "name": "existing22AndLegacy23HistoryRemainValid(int)[1]",
+          "passed": true
+        },
+        {
+          "name": "existing22AndLegacy23HistoryRemainValid(int)[2]",
+          "passed": true
+        },
+        {
+          "name": "existing22AndLegacy23HistoryRemainValid(int)[3]",
+          "passed": true
+        },
+        {
+          "name": "migration22IsUnchangedAnd23ContainsOneNonTransactionalChangeset",
           "passed": true
         },
         {
           "name": "populatedUpgradePartialExecutionRepeatedUpdateAndIndexRollbackPreserveData",
-          "passed": true
-        },
-        {
-          "name": "indexCleanupStopsIfTheCoveringPrimaryKeyIsMissing",
-          "passed": true
-        },
-        {
-          "name": "mergePreservesAlreadyAppliedIdentitiesChecksumsAndTransactionBoundaries",
           "passed": true
         },
         {
@@ -73,63 +87,82 @@
     }
   ],
   "main_database_read_only_preflight": {
-    "database": "existing main local database",
     "read_only": true,
-    "checks": 8,
-    "expected": [
-      "0",
-      "0",
-      "1",
-      "1",
-      "1",
-      "1",
-      "1",
-      "1"
+    "migration_applied": false,
+    "indexes": [
+      {
+        "name": "idx_task_allocations_task",
+        "table": "task_allocations",
+        "valid": true,
+        "unique": false,
+        "definition": "CREATE INDEX idx_task_allocations_task ON public.task_allocations USING btree (task_id)"
+      },
+      {
+        "name": "idx_task_loads_task",
+        "table": "task_loads",
+        "valid": true,
+        "unique": false,
+        "definition": "CREATE INDEX idx_task_loads_task ON public.task_loads USING btree (task_id)"
+      },
+      {
+        "name": "idx_task_participants_task",
+        "table": "task_participants",
+        "valid": true,
+        "unique": false,
+        "definition": "CREATE INDEX idx_task_participants_task ON public.task_participants USING btree (task_id)"
+      }
     ],
-    "actual": [
-      "0",
-      "0",
-      "1",
-      "1",
-      "1",
-      "1",
-      "1",
-      "1"
+    "primary_keys": [
+      {
+        "table": "task_allocations",
+        "valid": true,
+        "definition": "CREATE UNIQUE INDEX task_allocations_pkey ON public.task_allocations USING btree (task_id, participant_id, sprint_id)"
+      },
+      {
+        "table": "task_loads",
+        "valid": true,
+        "definition": "CREATE UNIQUE INDEX task_loads_pkey ON public.task_loads USING btree (task_id, sprint_id)"
+      },
+      {
+        "table": "task_participants",
+        "valid": true,
+        "definition": "CREATE UNIQUE INDEX task_participants_pkey ON public.task_participants USING btree (task_id, participant_id)"
+      }
     ],
-    "passed": true
+    "migration_22_checksum": "9:ac2553200a58eb37a153e037a9be53d3"
   },
   "already_applied_database_startup": {
-    "jar_sha256": "774c9ceae127d8ea0e8b444b09ff67a9e69743e1922c8873e7fa0cf9ae858a8d",
+    "jar_sha256": "52bd229f152401f9977866920506bed478d1f70de3f3157dfb4fe1045fee512b",
     "runtime": "OpenJDK 21 Temurin",
-    "resource_file_23_present": false,
-    "unchanged_public_tables_including_changelog": {
+    "resource_file_23_present": true,
+    "unchanged_business_tables": {
       "tasks": {
         "md5": "0f65818cb206298d31b3482336d06e15",
         "rows": 500
       },
       "teams": {
-        "md5": "fa7567ea2fc753536c24c123b7248a70",
-        "rows": 2
+        "md5": "f87288deefb948e10adcf0ffef9e78ba",
+        "rows": 3
       },
       "sprints": {
-        "md5": "c95fa92711b2b60df526f9aeff071352",
-        "rows": 24
+        "md5": "a882c173ffc07af41e606c7fe6dcd860",
+        "rows": 26
       },
       "quarters": {
-        "md5": "2e24410eef28d18f66527f9c6c7a49e1",
-        "rows": 4
+        "md5": "d6ba49b6447be7813c899ee792fbfacd",
+        "rows": 5
       },
       "releases": {
-        "md5": "38349cc4fb177b26d03d9fb9882a5784",
-        "rows": 44
+        "md5": "208e3fc03badcad8779add298eaee1e5",
+        "rows": 45
       },
       "task_loads": {
         "md5": "5128e8c38773e33f090689595a464c55",
         "rows": 3000
       },
       "participants": {
-        "md5": "4ef81bba0900cd6dd077063b8e0d6e37",
-        "rows": 50
+        "md5": "eb6ea0cd507d10efaddee392d9e130c3",
+        "rows": 52
       },
       "task_streams": {
         "md5": "eb9497918677609f85a56c5955422a00",
@@ -140,8 +173,8 @@
         "rows": 2
       },
       "api_call_history": {
-        "md5": "88a6223a6a371b6e340ec7274e043928",
-        "rows": 20088
+        "md5": "d4eba2f0746867bb544a8ea41008a00f",
+        "rows": 20264
       },
       "task_allocations": {
         "md5": "fb81e29ae08a70199a38117b0183ba92",
@@ -150,10 +183,6 @@
       "task_jira_issues": {
         "md5": "285a6aa1726f6586b374449fc4e52b32",
         "rows": 2600
-      },
-      "databasechangelog": {
-        "md5": "b5566b00457b43ae9f077ac6c16b08cd",
-        "rows": 23
       },
       "task_participants": {
         "md5": "1747d883c56c324a7244157dba23470b",
@@ -172,28 +201,29 @@
         "rows": 1000
       },
       "planning_backlog_items": {
-        "md5": "f14b23fc8c2dcdafc48753688ccf1eb9",
-        "rows": 500
+        "md5": "f304c64a0aa623adfa2e528eff6748f5",
+        "rows": 501
       },
       "participant_role_values": {
-        "md5": "4e9e4e92f96ee6c8cbb68143bc4f4f6d",
-        "rows": 3
+        "md5": "071e7883ac1dd579f35cbd9a95802319",
+        "rows": 5
       },
       "participant_user_streams": {
-        "md5": "a67cd3fd9178da63313a828c259d520b",
-        "rows": 100
+        "md5": "cfa63b5a1f4768257dde431e3572289e",
+        "rows": 102
       },
       "participant_stream_values": {
-        "md5": "be73bf331065c109b53ebd397539d133",
-        "rows": 6
+        "md5": "52170e5701065050d0d726577497722b",
+        "rows": 7
       }
     },
+    "old_changelog_rows_unchanged": true,
+    "new_changelog_rows": 1,
     "api_totals": {
       "roadmap": 400,
       "backlog": 100,
       "planning": 500
     },
-    "data_and_changelog_identical": true
-  },
-  "sql_sha256": "5d03bf42750eb7c402cb7fc380f15c4487a384c29528c185d4562141bd47fac8"
+    "business_data_identical": true
+  }
 }

@@ -27,12 +27,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
-class MigrationMergeSafetyTest {
+class MigrationSafetyTest {
     private static final String MASTER = "database/changelog.yml";
     private static final String FILE_22 = "database/1.0.0/1.0.0_22_roadmap_backlog.sql";
     private static final String FILE_23 = "database/1.0.0/1.0.0_23_redundant_task_indexes.sql";
-    // Captured from databases that applied the original files, before merging.
+    // Captured from databases that applied the original files, before the migration layout correction.
     private static final Map<String, String> ORIGINAL_CHECKSUMS = Map.of(
         "1.0.0-22", "9:ac2553200a58eb37a153e037a9be53d3",
         "1.0.0-23-alloc-task-index", "9:42288ef26858366c36ab3137dfea012d",
@@ -41,22 +42,21 @@ class MigrationMergeSafetyTest {
     );
 
     @Test
-    void mergePreservesAlreadyAppliedIdentitiesChecksumsAndTransactionBoundaries() throws Exception {
+    void migration22IsUnchangedAnd23ContainsOneNonTransactionalChangeset() throws Exception {
         try (var resources = new ClassLoaderResourceAccessor()) {
             var changelog = ChangeLogParserFactory.getInstance().getParser(MASTER, resources)
                 .parse(MASTER, new ChangeLogParameters(), resources);
             var changes = changelog.getChangeSets().stream()
-                .filter(change -> ORIGINAL_CHECKSUMS.containsKey(change.getId())).toList();
-            assertThat(changes).hasSize(4);
-            for (var change : changes) {
-                assertThat(change.getAuthor()).isEqualTo("sprints");
-                assertThat(change.getFilePath()).isEqualTo(change.getId().equals("1.0.0-22") ? FILE_22 : FILE_23);
-                assertThat(change.generateCheckSum(ChecksumVersion.V9).toString())
-                    .as("Original checksum of %s", change.getId()).isEqualTo(ORIGINAL_CHECKSUMS.get(change.getId()));
-                assertThat(change.isRunInTransaction()).isEqualTo(change.getId().equals("1.0.0-22"));
-                assertThat(change.getPreconditions()).as("Preconditions of %s", change.getId()).isNotNull();
+                .filter(change -> change.getFilePath().equals(FILE_22) || change.getFilePath().equals(FILE_23)).toList();
+            assertThat(changes).extracting(change -> change.getId()).containsExactly("1.0.0-22", "1.0.0-23");
+            assertThat(changes.get(0).generateCheckSum(ChecksumVersion.V9).toString()).isEqualTo(ORIGINAL_CHECKSUMS.get("1.0.0-22"));
+            assertThat(changes.get(0).isRunInTransaction()).isTrue();
+            assertThat(changes.get(1).isRunInTransaction()).isFalse();
+            for (String file : List.of(FILE_22, FILE_23)) {
+                try (var input = getClass().getClassLoader().getResourceAsStream(file)) {
+                    assertThat(new String(input.readAllBytes(), StandardCharsets.UTF_8)).doesNotContain("--precondition");
+                }
             }
-            assertThat(getClass().getClassLoader().getResource(FILE_23)).isNull();
         }
     }
 
@@ -81,15 +81,15 @@ class MigrationMergeSafetyTest {
             // Simulate a crash after DROP but before recording the changeset.
             sql(connection, "drop index idx_task_allocations_task");
             liquibase.update(1, new Contexts(), new LabelExpression());
-            assertThat(indexCount(connection, schema)).isEqualTo(2);
-            assertThat(liquibase.listUnrunChangeSets(new Contexts(), new LabelExpression())).hasSize(2);
+            assertThat(indexCount(connection, schema)).isZero();
+            assertThat(liquibase.listUnrunChangeSets(new Contexts(), new LabelExpression())).isEmpty();
             verifyLedger(connection, 2);
             assertThat(snapshot(connection, schema, false, true)).isEqualTo(migratedData);
 
             liquibase.validate();
             liquibase.update(new Contexts(), new LabelExpression());
             assertThat(indexCount(connection, schema)).isZero();
-            verifyLedger(connection, 4);
+            verifyLedger(connection, 2);
             assertThat(snapshot(connection, schema, false, true)).isEqualTo(migratedData);
 
             String ledger = scalarText(connection, "select jsonb_agg(to_jsonb(h) order by orderexecuted)::text from databasechangelog h");
@@ -97,13 +97,46 @@ class MigrationMergeSafetyTest {
             assertThat(scalarText(connection, "select jsonb_agg(to_jsonb(h) order by orderexecuted)::text from databasechangelog h")).isEqualTo(ledger);
             assertThat(snapshot(connection, schema, false, true)).isEqualTo(migratedData);
 
-            liquibase.rollback(3, new Contexts(), new LabelExpression());
+            liquibase.rollback(1, new Contexts(), new LabelExpression());
             assertThat(indexCount(connection, schema)).isEqualTo(3);
             assertThat(snapshot(connection, schema, false, true)).isEqualTo(migratedData);
-            updateFromFreshConnection(connection, schema, 3);
+            updateFromFreshConnection(connection, schema, 1);
             assertThat(indexCount(connection, schema)).isZero();
             assertThat(snapshot(connection, schema, false, true)).isEqualTo(migratedData);
-            verifyLedger(connection, 4);
+            verifyLedger(connection, 2);
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 1, 3})
+    @EnabledIfEnvironmentVariable(named = "BACKEND_AUDIT_DB_URL", matches = ".*/sprints_audit(?:\\?.*)?")
+    void existing22AndLegacy23HistoryRemainValid(int appliedLegacySteps) throws Exception {
+        withSchema((connection, liquibase, schema) -> {
+            prepareBefore22(connection, liquibase);
+            liquibase.update(1, new Contexts(), new LabelExpression());
+            if (appliedLegacySteps > 0) {
+                try (Connection oldConnection = DriverManager.getConnection(System.getenv("BACKEND_AUDIT_DB_URL"), "audit", "audit")) {
+                    oldConnection.setSchema(schema);
+                    var database = DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(oldConnection));
+                    database.setDefaultSchemaName(schema);
+                    try (Liquibase legacy = new Liquibase("migration-23-legacy.sql", new ClassLoaderResourceAccessor(), database)) {
+                        legacy.update(appliedLegacySteps, new Contexts(), new LabelExpression());
+                    }
+                }
+            }
+            try (Statement statement = connection.createStatement(); var rows = statement.executeQuery("select id,md5sum from databasechangelog where id like '1.0.0-23-%'")) {
+                while (rows.next()) assertThat(rows.getString(2)).isEqualTo(ORIGINAL_CHECKSUMS.get(rows.getString(1)));
+            }
+            Map<String, String> before = snapshot(connection, schema, false, true);
+            String legacyLedger = scalarText(connection, "select jsonb_agg(to_jsonb(h) order by orderexecuted)::text from databasechangelog h where id like '1.0.0-23-%'");
+            updateFromFreshConnection(connection, schema, 1);
+            assertThat(indexCount(connection, schema)).isZero();
+            assertThat(snapshot(connection, schema, false, true)).isEqualTo(before);
+            assertThat(scalarText(connection, "select jsonb_agg(to_jsonb(h) order by orderexecuted)::text from databasechangelog h where id like '1.0.0-23-%'")).isEqualTo(legacyLedger);
+            assertThat(scalar(connection, "select count(*) from pg_index i join pg_attribute a on a.attrelid=i.indrelid and a.attnum=i.indkey[0] where i.indrelid in ('task_allocations'::regclass,'task_loads'::regclass,'task_participants'::regclass) and i.indisprimary and i.indisvalid and a.attname='task_id'")).isEqualTo(3);
+            verifyLedger(connection, 2);
+            updateFromFreshConnection(connection, schema, 0);
+            assertThat(snapshot(connection, schema, false, true)).isEqualTo(before);
         });
     }
 
@@ -130,50 +163,25 @@ class MigrationMergeSafetyTest {
 
     @Test
     @EnabledIfEnvironmentVariable(named = "BACKEND_AUDIT_DB_URL", matches = ".*/sprints_audit(?:\\?.*)?")
-    void indexCleanupStopsIfTheCoveringPrimaryKeyIsMissing() throws Exception {
-        withSchema((connection, liquibase, schema) -> {
-            prepareBefore22(connection, liquibase);
-            liquibase.update(1, new Contexts(), new LabelExpression());
-            sql(connection, "alter table task_allocations drop constraint task_allocations_pkey");
-            Map<String, String> before = snapshot(connection, schema, false, true);
-            assertThatThrownBy(() -> liquibase.update(new Contexts(), new LabelExpression())).isInstanceOf(LiquibaseException.class);
-            assertThat(indexCount(connection, schema)).isEqualTo(3);
-            assertThat(snapshot(connection, schema, false, true)).isEqualTo(before);
-            verifyLedger(connection, 1);
-        });
-    }
-
-    enum IndexDrift { FOREIGN_SCHEMA, UNIQUE_REPLACEMENT }
-
-    @ParameterizedTest
-    @EnumSource(IndexDrift.class)
-    @EnabledIfEnvironmentVariable(named = "BACKEND_AUDIT_DB_URL", matches = ".*/sprints_audit(?:\\?.*)?")
-    void cleanupNeverDropsAnotherSchemasIndexOrACustomUniqueIndex(IndexDrift drift) throws Exception {
+    void missingIndexNeverFallsBackToAnotherSchema() throws Exception {
         withSchema((connection, liquibase, schema) -> {
             prepareBefore22(connection, liquibase);
             liquibase.update(1, new Contexts(), new LabelExpression());
             String shadow = schema + "_shadow";
             sql(connection, "drop index idx_task_allocations_task");
-            if (drift == IndexDrift.FOREIGN_SCHEMA) {
-                sql(connection, "create schema " + shadow);
+            sql(connection, "create schema " + shadow);
+            try {
                 sql(connection, "create table " + shadow + ".other_allocations(task_id uuid)");
                 sql(connection, "create index idx_task_allocations_task on " + shadow + ".other_allocations(task_id)");
                 sql(connection, "set search_path to " + schema + "," + shadow);
-            } else {
-                sql(connection, "create unique index idx_task_allocations_task on task_allocations(task_id)");
-            }
-            try {
                 Map<String, String> before = snapshot(connection, schema, false, true);
-                assertThatThrownBy(() -> liquibase.update(new Contexts(), new LabelExpression())).isInstanceOf(LiquibaseException.class);
+                liquibase.update(new Contexts(), new LabelExpression());
+                assertThat(indexCount(connection, schema)).isZero();
                 assertThat(snapshot(connection, schema, false, true)).isEqualTo(before);
-                verifyLedger(connection, 1);
-                String indexSchema = drift == IndexDrift.FOREIGN_SCHEMA ? shadow : schema;
-                assertThat(scalar(connection, "select count(*) from pg_indexes where schemaname='" + indexSchema + "' and indexname='idx_task_allocations_task'")).isEqualTo(1);
-                if (drift == IndexDrift.UNIQUE_REPLACEMENT) {
-                    assertThat(scalar(connection, "select count(*) from pg_index where indexrelid='idx_task_allocations_task'::regclass and indisunique")).isEqualTo(1);
-                }
+                assertThat(scalar(connection, "select count(*) from pg_indexes where schemaname='" + shadow + "' and indexname='idx_task_allocations_task'")).isEqualTo(1);
+                verifyLedger(connection, 2);
             } finally {
-                if (drift == IndexDrift.FOREIGN_SCHEMA) sql(connection, "drop schema " + shadow + " cascade");
+                sql(connection, "drop schema " + shadow + " cascade");
             }
         });
     }
@@ -227,7 +235,7 @@ class MigrationMergeSafetyTest {
             assertThat(scalar(connection, "select count(*) from pg_index where indexrelid='idx_task_allocations_task'::regclass and not indisvalid")).isEqualTo(1);
             liquibase.update(new Contexts(), new LabelExpression());
             assertThat(indexCount(connection, schema)).isZero();
-            verifyLedger(connection, 4);
+            verifyLedger(connection, 2);
             assertThat(snapshot(connection, schema, false, true)).isEqualTo(before);
         });
     }
@@ -243,7 +251,7 @@ class MigrationMergeSafetyTest {
         try (var input = getClass().getClassLoader().getResourceAsStream("migration-safety-fixture.sql")) {
             sql(connection, new String(input.readAllBytes(), StandardCharsets.UTF_8));
         }
-        assertThat(liquibase.listUnrunChangeSets(new Contexts(), new LabelExpression())).hasSize(4);
+        assertThat(liquibase.listUnrunChangeSets(new Contexts(), new LabelExpression())).hasSize(2);
     }
 
     private static Map<String, String> snapshot(Connection connection, String schema, boolean normalizeStatus, boolean fullShape) throws Exception {
@@ -265,12 +273,12 @@ class MigrationMergeSafetyTest {
 
     private static void verifyLedger(Connection connection, int expected) throws Exception {
         int found = 0;
-        try (Statement statement = connection.createStatement(); var rows = statement.executeQuery("select id,author,filename,md5sum from databasechangelog where id='1.0.0-22' or id like '1.0.0-23-%'")) {
+        try (Statement statement = connection.createStatement(); var rows = statement.executeQuery("select id,author,filename,md5sum from databasechangelog where id in ('1.0.0-22','1.0.0-23')")) {
             while (rows.next()) {
                 String id = rows.getString(1);
                 assertThat(rows.getString(2)).isEqualTo("sprints");
                 assertThat(rows.getString(3)).isEqualTo(id.equals("1.0.0-22") ? FILE_22 : FILE_23);
-                assertThat(rows.getString(4)).isEqualTo(ORIGINAL_CHECKSUMS.get(id));
+                if (id.equals("1.0.0-22")) assertThat(rows.getString(4)).isEqualTo(ORIGINAL_CHECKSUMS.get(id));
                 found++;
             }
         }
@@ -295,7 +303,7 @@ class MigrationMergeSafetyTest {
     }
 
     private static void assertNo22(Connection connection, String schema) throws Exception {
-        assertThat(scalar(connection, "select count(*) from databasechangelog where id='1.0.0-22' or id like '1.0.0-23-%'")).isZero();
+        assertThat(scalar(connection, "select count(*) from databasechangelog where id in ('1.0.0-22','1.0.0-23')")).isZero();
         assertThat(scalar(connection, "select count(*) from information_schema.columns where table_schema='" + schema + "' and table_name='tasks' and column_name in ('workspace','revision')")).isZero();
         assertThat(indexCount(connection, schema)).isEqualTo(3);
     }
@@ -323,7 +331,7 @@ class MigrationMergeSafetyTest {
 
     private static void withSchema(AuditTest test) throws Exception {
         String url = System.getenv("BACKEND_AUDIT_DB_URL");
-        String schema = "migration_merge_" + UUID.randomUUID().toString().replace("-", "");
+        String schema = "migration_safety_" + UUID.randomUUID().toString().replace("-", "");
         try (Connection connection = DriverManager.getConnection(url, "audit", "audit")) {
             sql(connection, "create schema " + schema);
             try {

@@ -48,7 +48,7 @@ class BackendSchemaAuditIntegrationTest {
                 try (Liquibase liquibase = new Liquibase("database/changelog.yml", new ClassLoaderResourceAccessor(), database)) {
                     liquibase.update(new Contexts(), new LabelExpression());
                     assertThat(redundantIndexCount(connection, schema)).isZero();
-                    liquibase.rollback(3, new Contexts(), new LabelExpression());
+                    liquibase.rollback(1, new Contexts(), new LabelExpression());
                     assertThat(redundantIndexCount(connection, schema)).isEqualTo(3);
                     UUID quarter = UUID.randomUUID(), sprint = UUID.randomUUID(), participant = UUID.randomUUID(), task = UUID.randomUUID(), leader = UUID.randomUUID();
                     try (Statement statement = connection.createStatement()) {

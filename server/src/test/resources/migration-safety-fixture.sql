@@ -1,7 +1,7 @@
 -- Test data for upgrading an existing schema at migration 21. Never application data.
 DO $$ BEGIN
-    IF current_schema() !~ '^migration_merge_[0-9a-f]{32}$' THEN
-        RAISE EXCEPTION 'Migration fixture requires an isolated migration_merge schema';
+    IF current_schema() !~ '^migration_safety_[0-9a-f]{32}$' THEN
+        RAISE EXCEPTION 'Migration fixture requires an isolated migration_safety schema';
     END IF;
 END $$;
 BEGIN;
