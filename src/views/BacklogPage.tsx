@@ -1,53 +1,40 @@
+import { defaultRangeExtractor, useWindowVirtualizer } from "@tanstack/react-virtual";
+import { useStore } from "react-redux";
+import type { RootState } from "../app/store";
+import useResolvedQuarterFilter from "./useResolvedQuarterFilter";
+import { releaseFilterParams } from "../utils/releaseFilters";
 import useToday from "./useToday";
 import * as React from "react";
+import { usePlanningSelection } from "../contexts/PlanningSelectionContext";
 import {
   Paper,
   Typography,
   Stack,
   Box,
-  TextField,
-  IconButton,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Chip,
-  Autocomplete,
   Button,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  Tooltip,
-  Divider,
-  InputBase,
   FormControl,
   InputLabel,
-  FormHelperText,
   Select,
   MenuItem,
-  Menu,
   Alert,
   CircularProgress,
+  LinearProgress,
   Snackbar,
 } from "@mui/material";
 import {
   Add,
   AddTask,
-  Delete,
-  CopyAll,
-  ArrowBack,
-  ArrowForward,
-  Star,
-  StarBorder,
   DragIndicator,
-  EditNote,
-  Visibility,
-  VisibilityOff,
-  History,
-  OpenInNew,
 } from "@mui/icons-material";
 import { skipToken } from "@reduxjs/toolkit/query";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -70,15 +57,13 @@ import {
   useUpsertTaskAllocationMutation,
   useUpsertTaskAllocationBulkMutation,
   useUpsertTaskAllocationMultiMutation,
-  useGetReleasesQuery,
   useGetReleaseOptionsQuery,
   useTransferTaskToPlanningMutation,
   useGetFiltersQuery,
   useGetTaskHistoryQuery,
   useUpdateTaskJiraLinksMutation,
 } from "../app/api";
-import EditableNumberCell from "../components/EditableNumberCell";
-import SharedBacklogTaskCard from "../components/BacklogTaskCard";
+import TaskCard, { type BacklogTaskCardProps } from "../components/BacklogTaskCard";
 import type {
   Allocations,
   BacklogItem,
@@ -123,6 +108,12 @@ const WITHOUT_QUARTER_FILTER_VALUE = "__WITHOUT_QUARTER__";
 const WITHOUT_STREAM_FILTER_VALUE = "__WITHOUT_STREAM__";
 const WITHOUT_CUSTOMER_FILTER_VALUE = "__WITHOUT_CUSTOMER__";
 const NO_INITIAL_QUARTER_VALUE = "__NO_INITIAL_QUARTER__";
+const WITHOUT_QUARTER_OPTIONS = [{ value: WITHOUT_QUARTER_FILTER_VALUE, label: "Без квартала" }];
+const EMPTY_QUARTERS: Quarter[] = [];
+const EMPTY_PARTICIPANTS: Participant[] = [];
+const EMPTY_SPRINTS: Sprint[] = [];
+const EMPTY_RELEASES: { id: string; name?: string; promDate: string }[] = [];
+
 const LOAD_MORE_SENTINEL_ROOT_MARGIN = "800px";
 
 type BacklogSortBy = "manual" | "load" | "releaseDate" | "priority";
@@ -138,40 +129,12 @@ function isISOWithin(iso: string, startISO: string, endISO: string) {
   return iso >= startISO && iso <= endISO;
 }
 
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
     if (a[i] !== b[i]) return false;
   }
   return true;
-}
-
-function normalizeSparseRow(row?: Record<string, number>) {
-  if (!row) return undefined;
-  const filtered = Object.entries(row).reduce<Record<string, number>>((acc, [sprintId, days]) => {
-    const value = normalizeDayAmount(Number(days) || 0);
-    if (value > 0) {
-      acc[sprintId] = value;
-    }
-    return acc;
-  }, {});
-  return Object.keys(filtered).length > 0 ? filtered : undefined;
-}
-
-function sumTaskLoad(task: BacklogItem) {
-  const fromLoads = Object.values(task.loads || {}).reduce((sum, days) => sum + normalizeDayAmount(Number(days) || 0), 0);
-  if (fromLoads > 0) {
-    return fromLoads;
-  }
-  return Object.values(task.allocations || {}).reduce(
-    (taskSum, row) =>
-      taskSum + Object.values(row || {}).reduce((rowSum, days) => rowSum + normalizeDayAmount(Number(days) || 0), 0),
-    0
-  );
 }
 
 type TasksPage = Page<BacklogItem>;
@@ -201,6 +164,8 @@ function syncTasksPageMeta(draft: TasksPage) {
 function buildTasksSearchParams(arg: {
   workspace?: string;
   releasePromDate?: string;
+  releaseDateIds?: string[];
+  releasePromDates?: string[];
   quarterIds?: string[];
   withoutQuarter?: boolean;
   withoutStream?: boolean;
@@ -223,6 +188,8 @@ function buildTasksSearchParams(arg: {
   const params = new URLSearchParams();
   if (arg.workspace) params.set("workspace", arg.workspace);
   if (arg.releasePromDate) params.set("releasePromDate", arg.releasePromDate);
+  if (arg.releaseDateIds?.length) params.set("releaseDateIds", arg.releaseDateIds.join(","));
+  if (arg.releasePromDates?.length) params.set("releasePromDates", arg.releasePromDates.join(","));
 
   const joinOrUndefined = (values?: string[] | number[]) => {
     if (!values || values.length === 0) return undefined;
@@ -292,207 +259,6 @@ function formatDateTimeRu(value?: string | null) {
   });
 }
 
-// ---------- Editable inputs (максимально локальное состояние) ----------
-
-type EditableTextProps = {
-  value: string;
-  onCommit?: (v: string) => void;
-  placeholder?: string;
-  sx?: any;
-  multiline?: boolean;
-  minRows?: number;
-  maxRows?: number;
-  displaySx?: any;
-  inputSx?: any;
-};
-
-/**
- * Редактируемый текст:
- * - хранит ввод локально;
- * - наружу шлёт значение только при завершении (blur / Enter);
- * - если значение не изменилось — API не трогаем.
- */
-const EditableText = React.memo(function EditableText({
-  value,
-  onCommit,
-  placeholder,
-  sx,
-  multiline,
-  minRows,
-  maxRows,
-  displaySx,
-  inputSx,
-}: EditableTextProps) {
-  const [editing, setEditing] = React.useState(false);
-  const [draft, setDraft] = React.useState(value ?? "");
-  const inputId = React.useId();
-
-  React.useEffect(() => {
-    if (!editing) {
-      setDraft(value ?? "");
-    }
-  }, [value, editing]);
-
-  const handleStart = React.useCallback(() => {
-    setDraft(value ?? "");
-    setEditing(true);
-  }, [value]);
-
-  const handleClose = React.useCallback(() => {
-    if (!editing) return;
-    setEditing(false);
-    const final = draft ?? "";
-    if (final !== (value ?? "")) {
-      onCommit?.(final);
-    }
-  }, [draft, editing, onCommit, value]);
-
-  if (!editing) {
-    return (
-      <Box
-        component="span"
-        sx={{
-          cursor: "text",
-          display: "inline-block",
-          minWidth: 8,
-          ...sx,
-          ...displaySx,
-        }}
-        onClick={handleStart}
-        title="Нажмите, чтобы редактировать"
-      >
-        {value?.trim() ? (
-          value
-        ) : (
-          <Typography
-            component="span"
-            color="text.secondary"
-            sx={{ fontStyle: "italic" }}
-          >
-            {placeholder || "—"}
-          </Typography>
-        )}
-      </Box>
-    );
-  }
-
-  return (
-    <InputBase
-      multiline={multiline}
-      minRows={minRows}
-      maxRows={maxRows}
-      autoFocus
-      placeholder={placeholder}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={handleClose}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && !multiline) {
-          (e.currentTarget as HTMLInputElement).blur();
-          return;
-        }
-        if (e.key === "Escape") {
-          (e.currentTarget as HTMLInputElement).blur();
-        }
-      }}
-      sx={{
-        px: 0.5,
-        borderRadius: 1,
-        bgcolor: "background.paper",
-        outline: "1px solid",
-        outlineColor: "divider",
-        fontSize: "inherit",
-        lineHeight: "inherit",
-        ...sx,
-        ...inputSx,
-      }}
-      inputProps={{
-        id: inputId,
-        "aria-label": placeholder || "Редактируемое поле",
-      }}
-    />
-  );
-});
-
-type EditableParticipantProps = {
-  value: Participant;
-  options: Participant[];
-  onCommit?: (next: Participant) => void;
-};
-
-const EditableParticipant = React.memo(function EditableParticipant({
-  value,
-  options,
-  onCommit,
-}: EditableParticipantProps) {
-  const [editing, setEditing] = React.useState(false);
-  const [draft, setDraft] = React.useState<Participant | null>(value);
-
-  React.useEffect(() => {
-    if (!editing) {
-      setDraft(value);
-    }
-  }, [editing, value]);
-
-  const handleStart = React.useCallback(() => {
-    setDraft(value);
-    setEditing(true);
-  }, [value]);
-
-  const handleCommit = React.useCallback(
-    (_: unknown, next: Participant | null) => {
-      setDraft(next);
-      if (!next) {
-        return;
-      }
-      if (next.id !== value.id) {
-        onCommit?.(next);
-      }
-      setEditing(false);
-    },
-    [onCommit, value.id]
-  );
-
-  const handleAutocompleteClose = React.useCallback(
-    (_: unknown, reason: string) => {
-      if (reason === "selectOption") return;
-      if (reason === "blur" || reason === "escape") {
-        setEditing(false);
-      }
-    },
-    []
-  );
-
-  if (!editing) {
-    return (
-      <Box
-        sx={{ cursor: "pointer" }}
-        title="Нажмите, чтобы сменить участника"
-        onClick={handleStart}
-      >
-        <Typography>{value.fullName}</Typography>
-      </Box>
-    );
-  }
-
-  return (
-    <Autocomplete
-      size="small"
-      openOnFocus
-      options={options}
-      value={draft}
-      onChange={handleCommit}
-      onClose={handleAutocompleteClose}
-      isOptionEqualToValue={(a, b) => a?.id === b?.id}
-      getOptionLabel={(p) => (p ? `${p.fullName} (${p.role})` : "")}
-      renderInput={(params) => (
-        <TextField {...params} size="small" label="Участник" autoFocus />
-      )}
-      sx={{ minWidth: 220 }}
-    />
-  );
-});
-
 // ---------- LocalStorage ----------
 
 const LS_HIDDEN_PARTICIPANTS = "backlog.hiddenParticipants";
@@ -504,22 +270,7 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
   backlog: "В бэклоге",
 };
 
-const STATUS_COLOR: Record<
-  TaskStatus,
-  "default" | "success" | "error" | "warning" | "info"
-> = {
-  inprogress: "default",
-  done: "success",
-  canceled: "info",
-  backlog: "default",
-};
-
 const PRIORITY_VALUES: readonly number[] = [1, 2, 3];
-
-type DragHandleProps = {
-  listeners: any;
-  attributes: any;
-};
 
 function readLS<T>(key: string, def: T): T {
   try {
@@ -576,117 +327,12 @@ function deriveTaskQuarters(
 
 // taskId -> participantId -> sprintId -> days
 const EMPTY_ALLOCATIONS_ROW: Record<string, Record<string, number>> = {};
+const TASK_POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 8 } };
+const PARTICIPANT_POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 6 } };
 
 // ---------- TaskCard (карточка задачи + таблица нагрузок) ----------
 
-type TaskCardProps = {
-  onTransferToPlanning?: (task: BacklogItem) => void;
-  task: BacklogItem;
-  allocationsByParticipant: Record<string, Record<string, number>>;
-  participants: Participant[];
-  participantMap: Map<string, Participant>;
-  participantOrder: string[];
-  sprintsGlobalOrdered: Sprint[];
-  sprintsByQuarter: Map<string, Sprint[]>;
-  quartersSorted: Quarter[];
-  selectedQuarterIds: string[];
-  withoutQuarterFilter: boolean;
-  quarterFilterOptions: { value: string; label: string }[];
-  customerOptions: string[];
-  streamOptions: string[];
-  releaseOptions: { value: string; label: string }[];
-  participantSensors: any;
-  onStatusChange: (task: BacklogItem, status: TaskStatus) => void;
-  onPriorityChange: (task: BacklogItem, priority: TaskPriority) => void;
-  onUpdateTaskPatch: (task: BacklogItem, patch: Partial<BacklogItem>) => void;
-  onDuplicateTask: (task: BacklogItem) => void;
-  onOpenTaskHistory: (task: BacklogItem) => void;
-  onUpdateJiraLinks: (
-    task: BacklogItem,
-    payload: {
-      storyUrl: string;
-      participantLinks: {
-        participantId: string;
-        planningSprintId: string;
-        jiraIssueUrl: string;
-      }[];
-    }
-  ) => Promise<void> | void;
-  onMoveTask: (id: string, dir: "up" | "down") => void;
-  onRemoveTask: (task: BacklogItem) => void;
-  isJiraSelected: boolean;
-  onToggleJiraSelection: (task: BacklogItem) => void;
-  onChangeTaskQuarters: (taskId: string, quarterIds: string[]) => void;
-  getTaskQuarters: (task: BacklogItem) => string[];
-  hasTaskQuarterOverride: (taskId: string) => boolean;
-  onAllocChange: (
-    taskId: string,
-    participantId: string,
-    sprintId: string,
-    value: number
-  ) => void;
-  onAllocCommit: (
-    taskId: string,
-    participantId: string,
-    sprintId: string,
-    value: number
-  ) => void;
-  onShiftRow: (
-    taskId: string,
-    participantId: string,
-    dir: "left" | "right"
-  ) => void;
-  onShiftTaskAllocations: (task: BacklogItem, dir: "left" | "right") => void;
-  onCopyRowToNextQuarter: (taskId: string, participantId: string) => void;
-  onAddParticipant: (task: BacklogItem, participantId: string) => void;
-  onRemoveParticipant: (task: BacklogItem, participantId: string) => void;
-  onChangeParticipant: (
-    task: BacklogItem,
-    fromParticipantId: string,
-    toParticipantId: string
-  ) => void;
-  onParticipantOrderChange: (taskId: string, nextOrder: string[]) => void;
-  hiddenParticipants: boolean;
-  onToggleParticipantsVisibility: (taskId: string, hidden: boolean) => void;
-  dragHandle?: DragHandleProps;
-};
-
-type SortableParticipantRowProps = {
-  participant: Participant;
-  children: (
-    props: DragHandleProps,
-    style: React.CSSProperties,
-    isDragging: boolean,
-    setNodeRef: (element: HTMLElement | null) => void
-  ) => React.ReactNode;
-};
-
-const SortableParticipantRow = ({
-  participant,
-  children,
-}: SortableParticipantRowProps) => {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: participant.id });
-
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    background: isDragging ? "rgba(0,0,0,0.04)" : undefined,
-    opacity: isDragging ? 0.95 : 1,
-  };
-
-  return children({ attributes, listeners }, style, isDragging, setNodeRef);
-};
-
-const TaskCard = React.memo(function TaskCard(props: TaskCardProps) {
-  return <SharedBacklogTaskCard {...props} />;
-});
+type TaskCardProps = BacklogTaskCardProps;
 
 // ---------- Обёртка для DnD задач ----------
 
@@ -705,6 +351,7 @@ const SortableTaskCard = React.memo(function SortableTaskCard({
     isDragging,
   } = useSortable({ id: task.id });
 
+  const dragHandle = React.useMemo(() => ({ attributes, listeners }), [attributes, listeners]);
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -716,7 +363,7 @@ const SortableTaskCard = React.memo(function SortableTaskCard({
       <TaskCard
         task={task}
         {...taskCardProps}
-        dragHandle={{ attributes, listeners }}
+        dragHandle={dragHandle}
       />
     </Box>
   );
@@ -731,6 +378,7 @@ type TaskCardsListProps = {
   isFetching: boolean;
   onPersistTaskOrder: (orderedIds: string[], movedTaskId: string) => Promise<void>;
   isJiraSelected: (taskId: string) => boolean;
+  isPlanningSelected: (taskId: string) => boolean;
   onToggleJiraSelection: (task: BacklogItem) => void;
 } & Omit<
   TaskCardProps,
@@ -739,6 +387,7 @@ type TaskCardsListProps = {
   | "participantOrder"
   | "hiddenParticipants"
   | "isJiraSelected"
+  | "isPlanningSelected"
   | "dragHandle"
   | "participantSensors"
 >;
@@ -752,20 +401,54 @@ const TaskCardsList = React.memo(function TaskCardsList({
   isFetching,
   onPersistTaskOrder,
   isJiraSelected,
+  isPlanningSelected,
   ...taskCardProps
 }: TaskCardsListProps) {
   const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
 
   const taskSensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    })
+    useSensor(PointerSensor, TASK_POINTER_SENSOR_OPTIONS)
   );
   const participantSensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
-    })
+    useSensor(PointerSensor, PARTICIPANT_POINTER_SENSOR_OPTIONS)
   );
+
+  const sortableTaskIds = React.useMemo(() => tasks.map(task => task.id), [tasks]);
+  const virtualized = tasks.length > 4;
+  const listRef = React.useRef<HTMLDivElement | null>(null);
+  const [scrollMargin, setScrollMargin] = React.useState(0);
+  const [focusedTaskId, setFocusedTaskId] = React.useState<string | null>(null);
+  const getItemKey = React.useCallback((index: number) => tasks[index].id, [tasks]);
+  const rangeExtractor = React.useCallback((range: Parameters<typeof defaultRangeExtractor>[0]) => {
+    const indices = new Set(defaultRangeExtractor(range));
+    // Keep a focused editor and the dragged card mounted when they leave the viewport.
+    for (const id of [focusedTaskId, activeTaskId]) {
+      const index = id ? sortableTaskIds.indexOf(id) : -1;
+      if (index >= 0) indices.add(index);
+    }
+    return [...indices].sort((a, b) => a - b);
+  }, [focusedTaskId, activeTaskId, sortableTaskIds]);
+  const virtualizer = useWindowVirtualizer({
+    count: tasks.length,
+    enabled: virtualized,
+    estimateSize: () => 560,
+    overscan: 1,
+    gap: 16,
+    scrollMargin,
+    getItemKey,
+    rangeExtractor,
+  });
+  React.useLayoutEffect(() => {
+    if (!virtualized) return;
+    const updateOffset = () => {
+      if (listRef.current) setScrollMargin(listRef.current.getBoundingClientRect().top + window.scrollY);
+    };
+    updateOffset();
+    const observer = new ResizeObserver(updateOffset);
+    observer.observe(document.body);
+    window.addEventListener("resize", updateOffset);
+    return () => { observer.disconnect(); window.removeEventListener("resize", updateOffset); };
+  }, [virtualized]);
 
   const activeTask = React.useMemo(
     () => tasks.find((t) => t.id === activeTaskId) || null,
@@ -797,6 +480,26 @@ const TaskCardsList = React.memo(function TaskCardsList({
     [onPersistTaskOrder, tasks]
   );
 
+  const renderTaskCard = (task: BacklogItem) => (
+    <SortableTaskCard
+      key={task.id}
+      task={task}
+      allocationsByParticipant={
+        allocations[task.id] || EMPTY_ALLOCATIONS_ROW
+      }
+      participantOrder={participantOrders[task.id] || task.participantIds}
+      participantSensors={participantSensors}
+      hiddenParticipants={
+        hideAllParticipants
+          ? !hiddenParticipantsTaskIds.has(task.id)
+          : hiddenParticipantsTaskIds.has(task.id)
+      }
+      isJiraSelected={isJiraSelected(task.id)}
+      isPlanningSelected={isPlanningSelected(task.id)}
+      {...taskCardProps}
+    />
+  );
+
   return (
     <DndContext
       sensors={taskSensors}
@@ -806,28 +509,29 @@ const TaskCardsList = React.memo(function TaskCardsList({
       onDragCancel={handleTaskDragCancel}
     >
       <SortableContext
-        items={tasks.map((t) => t.id)}
+        items={sortableTaskIds}
         strategy={verticalListSortingStrategy}
       >
         <Stack spacing={2}>
-          {tasks.map((task) => (
-            <SortableTaskCard
-              key={task.id}
-              task={task}
-              allocationsByParticipant={
-                allocations[task.id] || EMPTY_ALLOCATIONS_ROW
-              }
-              participantOrder={participantOrders[task.id] || []}
-              participantSensors={participantSensors}
-              hiddenParticipants={
-                hideAllParticipants
-                  ? !hiddenParticipantsTaskIds.has(task.id)
-                  : hiddenParticipantsTaskIds.has(task.id)
-              }
-              isJiraSelected={isJiraSelected(task.id)}
-              {...taskCardProps}
-            />
-          ))}
+          {virtualized ? (
+            <Box ref={listRef} data-testid="virtual-task-list"
+              onFocusCapture={event => {
+                const card = (event.target as HTMLElement).closest<HTMLElement>("[data-task-id]");
+                if (card) setFocusedTaskId(card.dataset.taskId ?? null);
+              }}
+              onBlurCapture={event => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusedTaskId(null);
+              }}
+              sx={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%", overflowAnchor: "none" }}>
+              {virtualizer.getVirtualItems().map(item => {
+                const task = tasks[item.index];
+                return <Box key={item.key} data-index={item.index} data-task-id={task.id} ref={virtualizer.measureElement}
+                  sx={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${item.start - scrollMargin}px)` }}>
+                  {renderTaskCard(task)}
+                </Box>;
+              })}
+            </Box>
+          ) : tasks.map(renderTaskCard)}
 
           {!tasks.length && !isFetching && (
             <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
@@ -835,6 +539,12 @@ const TaskCardsList = React.memo(function TaskCardsList({
                 Нет задач по текущим фильтрам
               </Typography>
             </Paper>
+          )}
+          {!tasks.length && isFetching && (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ p: 3 }} role="status">
+              <CircularProgress size={20} />
+              <Typography color="text.secondary">Загрузка задач…</Typography>
+            </Stack>
           )}
         </Stack>
       </SortableContext>
@@ -865,7 +575,6 @@ type TaskHistoryDialogProps = {
   open: boolean;
   onClose: () => void;
   participantMap: Map<string, Participant>;
-  releaseLabelById: Map<string, string>;
 };
 
 const TaskHistoryDialog = React.memo(function TaskHistoryDialog({
@@ -873,7 +582,6 @@ const TaskHistoryDialog = React.memo(function TaskHistoryDialog({
   open,
   onClose,
   participantMap,
-  releaseLabelById,
 }: TaskHistoryDialogProps) {
   const [page, setPage] = React.useState(0);
   const [totalPages, setTotalPages] = React.useState(0);
@@ -890,7 +598,7 @@ const TaskHistoryDialog = React.memo(function TaskHistoryDialog({
     open && task
       ? { taskId: task.id, page, size: TASK_HISTORY_PAGE_SIZE }
       : skipToken;
-  const { data, isFetching, isError } = useGetTaskHistoryQuery(queryArgs);
+  const { currentData: data, isFetching, isError } = useGetTaskHistoryQuery(queryArgs);
 
   React.useEffect(() => {
     if (!data) return;
@@ -908,6 +616,14 @@ const TaskHistoryDialog = React.memo(function TaskHistoryDialog({
       return merged;
     });
   }, [data, page]);
+
+  const teamKey = useAppSelector(selectCurrentTeamKey);
+  const releaseIds = React.useMemo(() => [...new Set(items.flatMap(item => item.changes
+    .filter(change => change.field === "releaseDateId").flatMap(change => [change.before, change.after]))
+    .filter((value): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(value)))].sort(), [items]);
+  const { data: historyReleases = EMPTY_RELEASES } = useGetReleaseOptionsQuery({ teamKey, ids: releaseIds }, { skip: !open || !releaseIds.length });
+  const releaseLabelById = React.useMemo(() => new Map(historyReleases.map(release => [release.id,
+    moment(release.promDate).format("DD.MM.YYYY")])), [historyReleases]);
 
   const hasMore = totalPages > 0 && page + 1 < totalPages;
   const isInitialLoading = isFetching && items.length === 0;
@@ -1066,34 +782,114 @@ const TaskHistoryDialog = React.memo(function TaskHistoryDialog({
   );
 });
 
+type TaskCreationControlsProps = {
+  quarters: Quarter[];
+  currentQuarterId?: string;
+  storageKey: string;
+  onCreate: (quarterId?: string) => Promise<void>;
+};
+
+const TaskCreationControls = React.memo(function TaskCreationControls({ quarters, currentQuarterId, storageKey, onCreate }: TaskCreationControlsProps) {
+  const [newTaskQuarterId, setNewTaskQuarterId] = React.useState(() => {
+    const saved = readLS<string | null>(storageKey, null);
+    return saved === NO_INITIAL_QUARTER_VALUE || quarters.some(q => q.id === saved)
+      ? saved! : currentQuarterId || NO_INITIAL_QUARTER_VALUE;
+  });
+  React.useEffect(() => {
+    setNewTaskQuarterId(previous => previous === NO_INITIAL_QUARTER_VALUE || quarters.some(q => q.id === previous)
+      ? previous : currentQuarterId || NO_INITIAL_QUARTER_VALUE);
+  }, [quarters, currentQuarterId]);
+  const handleConfirmAddTask = async () => {
+    try {
+      await onCreate(newTaskQuarterId !== NO_INITIAL_QUARTER_VALUE ? newTaskQuarterId : undefined);
+    } catch (error) {
+      console.error("Не удалось создать задачу", error);
+    }
+  };
+  return (
+          <Stack
+            direction="row"
+            spacing={1}
+            alignItems="center"
+            flexWrap="wrap"
+          >
+            <FormControl
+              size="small"
+              sx={{ minWidth: 220 }}
+            >
+              <InputLabel id="new-task-quarter-label">
+                Квартал задачи
+              </InputLabel>
+              <Select
+                labelId="new-task-quarter-label"
+                label="Квартал задачи"
+                value={newTaskQuarterId}
+                onChange={(e) => {
+                  setNewTaskQuarterId(String(e.target.value));
+                }}
+              >
+                <MenuItem value={NO_INITIAL_QUARTER_VALUE}>Без квартала</MenuItem>
+                {quarters.map((q) => (
+                  <MenuItem key={q.id} value={q.id}>
+                    {q.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <Button
+              variant="contained"
+              startIcon={<Add />}
+              onClick={handleConfirmAddTask}
+            >
+              Добавить задачу
+            </Button>
+          </Stack>
+  );
+});
+
+// A memoized boundary keeps the entire list (data, sprint scope and callbacks)
+// coherent while React renders its next version with interruptible priority.
+const DeferredTaskCardsList = React.memo(function DeferredTaskCardsList(props: TaskCardsListProps & { scopeKey: string }) {
+  const deferredProps = React.useDeferredValue(props);
+  const pending = deferredProps !== props;
+  const changingScope = pending && deferredProps.scopeKey !== props.scopeKey;
+  const { scopeKey: _scopeKey, ...listProps } = deferredProps;
+  return (
+    <Box sx={{ position: "relative" }} aria-busy={pending || props.isFetching} data-testid="task-cards-region">
+      {pending && <LinearProgress aria-label="Обновление списка задач" sx={{ position: "absolute", top: 0, left: 0, right: 0 }} />}
+      <Box component="fieldset" disabled={changingScope} sx={{ m: 0, p: 0, border: 0, minWidth: 0, opacity: changingScope ? 0.65 : 1, pointerEvents: changingScope ? "none" : undefined }}>
+        <TaskCardsList {...listProps} />
+      </Box>
+    </Box>
+  );
+});
+
 // ---------- BacklogPage ----------
 
-export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "ROADMAP" | "BACKLOG" }) {
+function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "ROADMAP" | "BACKLOG" }) {
+  const store = useStore<RootState>();
   const isTodo = workspace === "BACKLOG";
   const today = useToday();
   const location = useLocation();
   const navigate = useNavigate();
   const linkedTaskId = new URLSearchParams(location.search).get("pinnedTaskId");
-  const { data: linkedTask } = useGetTaskQuery(linkedTaskId || skipToken);
+  const { data: linkedTask } = useGetTaskQuery(linkedTaskId || skipToken, { selectFromResult: ({ data }) => ({ data }) });
   React.useEffect(() => {
     if (linkedTask?.workspace && linkedTask.workspace !== workspace) {
       const target = linkedTask.workspace === "BACKLOG" ? "backlog" : "";
       navigate(`/${location.pathname.split("/")[1]}/${target}?pinnedTaskId=${encodeURIComponent(linkedTask.id)}`, { replace: true });
     }
   }, [linkedTask, workspace, navigate, location.pathname]);
-  const { data: quarters = [], isLoading: isQuartersLoading } =
-    useGetQuartersQuery();
-  const { data: participants = [], isLoading: isParticipantsLoading } =
-    useGetParticipantsQuery();
-  const {
-    data: sprintsData = [],
-    isLoading: isSprintsLoading,
-    isFetching: isSprintsFetching,
-  } = useGetSprintsQuery(undefined);
-  const allSprints = sprintsData;
-  const routeTeamKey = location.pathname.split("/")[1];
-  const { data: releases = [], isLoading: isReleasesLoading } =
-    useGetReleaseOptionsQuery({ teamKey: routeTeamKey, fromDate: today });
+  const { data: quartersData, isError: isQuartersError, refetch: refetchQuarters } = useGetQuartersQuery(undefined, { selectFromResult: ({ data, isError }) => ({ data, isError }) });
+  const quarters = quartersData ?? EMPTY_QUARTERS;
+  const quartersReady = quartersData !== undefined;
+  const { participants } = useGetParticipantsQuery(undefined, {
+    selectFromResult: ({ data }) => ({ participants: data ?? EMPTY_PARTICIPANTS }),
+  });
+  const { allSprints } = useGetSprintsQuery(undefined, {
+    selectFromResult: ({ data }) => ({ allSprints: data ?? EMPTY_SPRINTS }),
+  });
   const quarterIdsKey = React.useMemo(
     () => quarters.map((q) => q.id).join("|"),
     [quarters]
@@ -1104,9 +900,8 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
   );
 
   const currentQ = React.useMemo<Quarter | undefined>(() => {
-    const today = todayISO();
     return quarters.find((q) => isISOWithin(today, q.startDate, q.endDate));
-  }, [quarters]);
+  }, [quarters, today]);
 
   const dispatch = useAppDispatch();
   const teamKey = useAppSelector(selectCurrentTeamKey);
@@ -1114,6 +909,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
   const hiddenParticipantsStorageKey = `${LS_HIDDEN_PARTICIPANTS}:${scopeKey}`;
   const setBacklogFilters = React.useCallback((changes: any) => setTaskListFilters({ key: scopeKey, changes }), [scopeKey]);
   const [transferToPlanning] = useTransferTaskToPlanningMutation();
+  const { addTransferredItem, isSourceSelected, removeSourceFromPlan } = usePlanningSelection();
   const {
     selectedTasks: jiraSelectedTasks,
     selectedCount: jiraSelectedCount,
@@ -1133,9 +929,9 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
     withoutStreamFilter,
     withoutCustomerFilter,
     statusFilter,
-    releaseSprintFilter,
+    releaseFilters,
     searchQuery,
-    selectedQuarterIds,
+    selectedQuarterIds: storedQuarterIds,
     withoutQuarterFilter,
     tasksPageSize,
     hideAllParticipants,
@@ -1143,29 +939,20 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
     sortDirection,
   } = useAppSelector((s) => s.ui.taskLists[scopeKey] ?? (isTodo ? s.ui.todo : s.ui.backlog));
 
-  const [, startFiltersTransition] = React.useTransition();
-  const [, startTaskTransition] = React.useTransition();
+  const priorityFilterValues = React.useMemo(() => priorityFilter.map(String), [priorityFilter]);
+  const visibleStatusFilters = React.useMemo(() => statusFilter.filter(status => isTodo
+    ? ["backlog", "canceled"].includes(status) : ["inprogress", "done", "canceled"].includes(status)), [statusFilter, isTodo]);
+  const streamFilterValues = React.useMemo(() => withoutStreamFilter ? [...streamFilter, WITHOUT_STREAM_FILTER_VALUE] : streamFilter, [streamFilter, withoutStreamFilter]);
+  const customerFilterValues = React.useMemo(() => withoutCustomerFilter ? [...customerFilter, WITHOUT_CUSTOMER_FILTER_VALUE] : customerFilter, [customerFilter, withoutCustomerFilter]);
 
   const currentQuarterId = currentQ?.id;
 
-  const hasInitializedQuarterFilter = React.useRef(false);
-
-  React.useEffect(() => {
-    if (hasInitializedQuarterFilter.current) return;
-    if (!quarters.length || !currentQuarterId) return;
-
-    hasInitializedQuarterFilter.current = true;
-
-    if (selectedQuarterIds.length === 0 && !withoutQuarterFilter) {
-      dispatch(setBacklogFilters({ selectedQuarterIds: [currentQuarterId] }));
-    }
-  }, [
-    quarters.length,
-    currentQuarterId,
-    selectedQuarterIds.length,
-    withoutQuarterFilter,
-    dispatch,
-  ]);
+  const persistQuarterFilter = React.useCallback((selectedQuarterIds: string[]) => {
+    dispatch(setBacklogFilters({ selectedQuarterIds }));
+  }, [dispatch, setBacklogFilters]);
+  const selectedQuarterIds = useResolvedQuarterFilter(quartersData, storedQuarterIds, persistQuarterFilter, currentQuarterId, withoutQuarterFilter);
+  const quarterFilterValues = React.useMemo(() => withoutQuarterFilter
+    ? [...selectedQuarterIds, WITHOUT_QUARTER_FILTER_VALUE] : selectedQuarterIds, [selectedQuarterIds, withoutQuarterFilter]);
 
   const sprintById = React.useMemo(() => {
     const m = new Map<string, Sprint>();
@@ -1195,13 +982,6 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
     [quarters]
   );
 
-  const defaultQuarterId = React.useMemo(() => {
-    const selectedFirst = selectedQuarterIds.find((id) => quarterIdSet.has(id));
-    if (selectedFirst) return selectedFirst;
-    if (currentQ && quarterIdSet.has(currentQ.id)) return currentQ.id;
-    return quartersSorted[0]?.id ?? "";
-  }, [selectedQuarterIds, currentQ, quartersSorted, quarterIdSet]);
-
   const participantMap = React.useMemo(() => {
     const m = new Map<string, Participant>();
     participants.forEach((p) => m.set(p.id, p));
@@ -1217,18 +997,25 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
   const normalizedSearch = React.useMemo(() => searchQuery.trim(), [searchQuery]);
   const [tasksPageNumber, setTasksPageNumber] = React.useState(0);
   const [duplicateNotice, setDuplicateNotice] = React.useState("");
-  const [pinnedTaskId, setPinnedTaskId] = React.useState<string | null>(null);
+  const handleTransferToPlanning = React.useCallback(async (task: BacklogItem) => {
+    try {
+      const item = await transferToPlanning({ taskId: task.id }).unwrap();
+      addTransferredItem(item);
+      setDuplicateNotice("Задача добавлена в текущий набор для планирования");
+      return true;
+    } catch {
+      setDuplicateNotice("Не удалось передать задачу в планирование");
+      return false;
+    }
+  }, [transferToPlanning, addTransferredItem]);
+  const handleRemoveFromPlanning = React.useCallback((task: BacklogItem) => {
+    removeSourceFromPlan(task.id);
+  }, [removeSourceFromPlan]);
+  const [pinnedTaskId, setPinnedTaskId] = React.useState<string | null>(() => linkedTaskId?.trim() || null);
   const [historyTask, setHistoryTask] = React.useState<BacklogItem | null>(null);
+  const { data: releases = EMPTY_RELEASES } = useGetReleaseOptionsQuery({ teamKey, fromDate: today }, { skip: !isJiraDialogOpen, selectFromResult: ({ data }) => ({ data }) });
   const [isAddingAllToJira, setIsAddingAllToJira] = React.useState(false);
   const [addAllToJiraError, setAddAllToJiraError] = React.useState("");
-  const [isPreparingBatchAutoDistribution, setIsPreparingBatchAutoDistribution] =
-    React.useState(false);
-  const [batchAutoDistributionError, setBatchAutoDistributionError] =
-    React.useState("");
-  const [isBatchAutoDistributionOpen, setIsBatchAutoDistributionOpen] =
-    React.useState(false);
-  const [batchAutoDistributionTasks, setBatchAutoDistributionTasks] =
-    React.useState<BacklogItem[]>([]);
   const loadMoreSentinelRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
@@ -1246,7 +1033,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
         withoutCustomerFilter,
         priorityFilter,
         statusFilter,
-        releaseSprintFilter,
+        releaseFilters,
         streamFilter: streamFilter.slice().sort(),
         customerFilter: customerFilter.slice().sort(),
         normalizedSearch,
@@ -1258,7 +1045,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
     [
       normalizedSearch,
       priorityFilter,
-      releaseSprintFilter,
+      releaseFilters,
       selectedQuarterIds,
       withoutQuarterFilter,
       withoutStreamFilter,
@@ -1290,9 +1077,8 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       priority: priorityFilter,
       teamKey,
       workspace,
-      statuses: statusFilter.filter(status => isTodo ? ["backlog", "canceled"].includes(status) : ["inprogress", "done", "canceled"].includes(status)),
-      releaseDateId: releaseSprintFilter === "all" || /^\d{4}-\d{2}-\d{2}$/.test(releaseSprintFilter) ? undefined : releaseSprintFilter.trim(),
-      releasePromDate: /^\d{4}-\d{2}-\d{2}$/.test(releaseSprintFilter) ? releaseSprintFilter : undefined,
+      statuses: visibleStatusFilters,
+      ...releaseFilterParams(releaseFilters),
       streams: streamFilter.length > 0 ? streamFilter : undefined,
       customers: customerFilter.length > 0 ? customerFilter : undefined,
       search: normalizedSearch,
@@ -1306,8 +1092,8 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       workspace, teamKey, isTodo,
       selectedQuarterIds,
       priorityFilter,
-      statusFilter,
-      releaseSprintFilter,
+      visibleStatusFilters,
+      releaseFilters,
       streamFilter,
       customerFilter,
       withoutStreamFilter,
@@ -1328,7 +1114,6 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       setTasksPageNumber(0);
     }
   }, [filtersSignature]);
-
 
   const applyTaskOrderOptimistic = React.useCallback(
     (orderedIds: string[]) =>
@@ -1375,9 +1160,11 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
   );
 
   const {
-    data: fetchedTasksPage,
-    isFetching,
-  } = useGetTasksQuery(tasksQueryArgs);
+    currentData: fetchedTasksPage,
+    isFetching: isTasksFetching,
+  } = useGetTasksQuery(quartersReady ? tasksQueryArgs : skipToken, { selectFromResult: ({ currentData, isFetching }) => ({ currentData, isFetching }) });
+
+  const isFetching = !quartersReady || isTasksFetching;
 
   const fetchedTasks = React.useMemo(
     () => fetchedTasksPage?.content ?? [],
@@ -1442,7 +1229,13 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
     Record<string, string[]>
   >({});
 
-  const [allocations, setAllocations] = React.useState<Allocations>({});
+  // RTK Query already updates allocations optimistically and rolls them back on failure.
+  const allocations = React.useMemo<Allocations>(() => Object.fromEntries(
+    allTasks.map(task => [task.id, task.allocations || EMPTY_ALLOCATIONS_ROW])
+  ), [allTasks]);
+  const selectTaskPage = React.useMemo(() => api.endpoints.getTasks.select(tasksQueryArgs), [tasksQueryArgs]);
+  const getCurrentTasks = React.useCallback(() => selectTaskPage(store.getState()).data?.content ?? [], [selectTaskPage, store]);
+  const getTaskAllocations = React.useCallback((taskId: string) => getCurrentTasks().find(task => task.id === taskId)?.allocations || EMPTY_ALLOCATIONS_ROW, [getCurrentTasks]);
   const [participantOrders, setParticipantOrders] = React.useState<
     Record<string, string[]>
   >({});
@@ -1452,7 +1245,6 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
     );
   const prevHideAllParticipants = React.useRef(hideAllParticipants);
   const prevQuarterFilterSignature = React.useRef<string | null>(null);
-  const [newTaskQuarterId, setNewTaskQuarterId] = React.useState<string>("");
 
   React.useEffect(() => {
     if (prevHideAllParticipants.current === hideAllParticipants) return;
@@ -1471,22 +1263,6 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
   }, []);
 
   React.useEffect(() => {
-    if (quarterIdSet.size === 0) return;
-    if (selectedQuarterIds.length === 0) return;
-
-    const validSelected = selectedQuarterIds.filter((id) =>
-      quarterIdSet.has(id)
-    );
-    const nextSelected =
-      validSelected.length > 0 || withoutQuarterFilter || !currentQuarterId
-        ? validSelected
-        : [currentQuarterId];
-    if (shallowArrayEqual(nextSelected, selectedQuarterIds)) return;
-
-    dispatch(setBacklogFilters({ selectedQuarterIds: nextSelected }));
-  }, [selectedQuarterIds, quarterIdSet, withoutQuarterFilter, currentQuarterId, dispatch]);
-
-  React.useEffect(() => {
     const signature = JSON.stringify({
       selectedQuarterIds: selectedQuarterIds.slice().sort(),
       withoutQuarterFilter,
@@ -1499,38 +1275,11 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       return;
     }
     prevQuarterFilterSignature.current = signature;
-    setTaskQuartersMap({});
+    setTaskQuartersMap(previous => Object.keys(previous).length ? {} : previous);
   }, [selectedQuarterIds, withoutQuarterFilter]);
 
-  React.useEffect(() => {
-    const nextQuarterId = (() => {
-      const prevValid =
-        newTaskQuarterId === NO_INITIAL_QUARTER_VALUE ||
-        (newTaskQuarterId && quarterIdSet.has(newTaskQuarterId))
-          ? newTaskQuarterId
-          : "";
-      if (prevValid) return prevValid;
-      if (withoutQuarterFilter && selectedQuarterIds.length === 0) return "";
-      const fromSelected = selectedQuarterIds.find((id) =>
-        quarterIdSet.has(id)
-      );
-      if (fromSelected) return fromSelected;
-      if (defaultQuarterId && quarterIdSet.has(defaultQuarterId)) {
-        return defaultQuarterId;
-      }
-      return "";
-    })();
-
-    if (nextQuarterId === newTaskQuarterId) return;
-    setNewTaskQuarterId(nextQuarterId);
-  }, [
-    quarterIdSet,
-    selectedQuarterIds,
-    withoutQuarterFilter,
-    defaultQuarterId,
-    newTaskQuarterId,
-    quarterIdsKey,
-  ]);
+  const creationQuarterStorageKey = `task.creationQuarter.v1:${teamKey}`;
+  const creationQuarters = React.useMemo(() => quartersSorted.filter(q => q.endDate >= today), [quartersSorted, today]);
 
   React.useEffect(() => {
     if (!quarterIdSet.size) return;
@@ -1556,41 +1305,6 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
     });
   }, [quarterIdSet, quarterIdsKey]);
 
-  // Синхронизация локального состояния allocations с данными задач
-  React.useEffect(() => {
-    setAllocations((prev) => {
-      const next: Allocations = {};
-      let changed = false;
-
-      for (const task of allTasks) {
-        const nextTask = Object.entries(task.allocations || {}).reduce<Record<string, Record<string, number>>>(
-          (acc, [participantId, row]) => {
-            const normalizedRow = normalizeSparseRow(row);
-            if (normalizedRow) {
-              acc[participantId] = normalizedRow;
-            }
-            return acc;
-          },
-          {}
-        );
-
-        if (Object.keys(nextTask).length > 0) {
-          next[task.id] = nextTask;
-        }
-
-        if (JSON.stringify(prev[task.id] || {}) !== JSON.stringify(nextTask)) {
-          changed = true;
-        }
-      }
-
-      if (Object.keys(prev).length !== Object.keys(next).length) {
-        changed = true;
-      }
-
-      return changed ? next : prev;
-    });
-  }, [allTasks]);
-
   React.useEffect(() => {
     setParticipantOrders((prev) => {
       const next = { ...prev } as Record<string, string[]>;
@@ -1598,11 +1312,8 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       for (const task of allTasks) {
         const ids = task.participantIds || [];
         const existing = next[task.id];
-        if (!existing) {
-          next[task.id] = ids.slice();
-          changed = true;
-          continue;
-        }
+        // Untouched rows already get their order from task.participantIds.
+        if (!existing) continue;
         const kept = existing.filter((id) => ids.includes(id));
         const added = ids.filter((id) => !kept.includes(id));
         const updated = [...kept, ...added];
@@ -1615,7 +1326,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
     });
   }, [allTasks]);
 
-  const { data: filtersData } = useGetFiltersQuery();
+  const { data: filtersData } = useGetFiltersQuery(undefined, { selectFromResult: ({ data }) => ({ data }) });
 
   const streamOptions = React.useMemo(
     () => (filtersData?.streams || []).slice().sort(),
@@ -1631,8 +1342,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
     (task: BacklogItem): string[] => {
       const fromMap = taskQuartersMap[task.id];
       if (fromMap && fromMap.length) return fromMap;
-      const fromFilter = selectedQuarterIds.filter((id) => quarterIdSet.has(id));
-      if (fromFilter.length) return fromFilter;
+      if (selectedQuarterIds.length) return selectedQuarterIds;
       const derived = deriveTaskQuarters(task, allSprints).filter(
         (id) => quarterIdSet.has(id)
       );
@@ -1674,14 +1384,6 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
     [quarters]
   );
 
-  const quarterFilterOptions = React.useMemo(
-    () => [
-      { value: WITHOUT_QUARTER_FILTER_VALUE, label: "Без квартала" },
-      ...taskQuarterOptions,
-    ],
-    [taskQuarterOptions]
-  );
-
   const priorityOptions = React.useMemo(
     () =>
       PRIORITY_VALUES.map((p) => ({
@@ -1716,32 +1418,6 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
     [customerOptions]
   );
 
-  const { data: releaseSuggestions = [] } = useGetReleaseOptionsQuery({ teamKey, quarterIds: [...selectedQuarterIds].sort() });
-  const releaseFilterOptions = React.useMemo(() => {
-    const entries = releaseSuggestions
-      .map((r: any) => ({
-        id: String(r.id ?? r.promId ?? ""),
-        promDate: String(r.promDate || r.prom || r.date || ""),
-      }))
-      .filter((entry) => entry.id && entry.promDate);
-
-    return entries
-      .sort((a, b) => moment(a.promDate).valueOf() - moment(b.promDate).valueOf())
-      .map((entry) => ({
-        value: entry.id,
-        label: moment(entry.promDate).format("DD.MM.YYYY"),
-      }));
-  }, [releaseSuggestions]);
-
-  const assignmentReleaseOptions = React.useMemo(() => releases
-    .filter(r => r.promDate >= today)
-    .map(r => ({ value: r.id, label: moment(r.promDate).format("DD.MM.YYYY") })), [releases, today]);
-
-  const releaseLabelById = React.useMemo(
-    () => new Map(releaseFilterOptions.map((option) => [option.value, option.label])),
-    [releaseFilterOptions]
-  );
-
   const tasksPageSizeOptions = React.useMemo(
     () =>
       [20, 50, 100].map((size) => ({
@@ -1770,20 +1446,17 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       ) {
         return;
       }
-      startFiltersTransition(() => {
-        dispatch(
-          setBacklogFilters({
-            selectedQuarterIds: filtered,
-            withoutQuarterFilter: nextWithoutQuarter,
-          })
-        );
-      });
+      dispatch(
+        setBacklogFilters({
+          selectedQuarterIds: filtered,
+          withoutQuarterFilter: nextWithoutQuarter,
+        })
+      );
     },
     [
       quarters,
       selectedQuarterIds,
       withoutQuarterFilter,
-      startFiltersTransition,
       dispatch,
     ]
   );
@@ -1794,35 +1467,24 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
         .map(Number)
         .filter((n): n is number => PRIORITY_VALUES.includes(n));
       if (shallowArrayEqual(next, priorityFilter)) return;
-      startFiltersTransition(() => {
-        dispatch(setBacklogFilters({ priorityFilter: next }));
-      });
+      dispatch(setBacklogFilters({ priorityFilter: next }));
     },
-    [dispatch, priorityFilter, startFiltersTransition]
+    [dispatch, priorityFilter]
   );
 
   const handleStatusFilterChange = React.useCallback(
     (values: string[]) => {
       const next = values as TaskStatus[];
       if (shallowArrayEqual(next, statusFilter)) return;
-      startFiltersTransition(() => {
-        dispatch(setBacklogFilters({ statusFilter: next }));
-      });
+      dispatch(setBacklogFilters({ statusFilter: next }));
     },
-    [dispatch, statusFilter, startFiltersTransition]
+    [dispatch, statusFilter]
   );
 
-  const handleReleaseFilterChange = React.useCallback(
-    (value: string) => {
-      const normalized = (value || "").trim() || "all";
-      if (normalized !== releaseSprintFilter) {
-        startFiltersTransition(() => {
-          dispatch(setBacklogFilters({ releaseSprintFilter: normalized }));
-        });
-      }
-    },
-    [dispatch, releaseSprintFilter, startFiltersTransition]
-  );
+  const handleReleaseFilterChange = React.useCallback((values: string[]) => {
+    if (shallowArrayEqual(values, releaseFilters)) return;
+    dispatch(setBacklogFilters({ releaseFilters: values }));
+  }, [dispatch, releaseFilters]);
 
   const handleStreamFilterChange = React.useCallback(
     (values: string[]) => {
@@ -1835,16 +1497,14 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       ) {
         return;
       }
-      startFiltersTransition(() => {
-        dispatch(
-          setBacklogFilters({
-            streamFilter: nextValues,
-            withoutStreamFilter: nextWithoutStream,
-          })
-        );
-      });
+      dispatch(
+        setBacklogFilters({
+          streamFilter: nextValues,
+          withoutStreamFilter: nextWithoutStream,
+        })
+      );
     },
-    [dispatch, streamFilter, startFiltersTransition, withoutStreamFilter]
+    [dispatch, streamFilter, withoutStreamFilter]
   );
 
   const handleCustomerFilterChange = React.useCallback(
@@ -1858,16 +1518,14 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       ) {
         return;
       }
-      startFiltersTransition(() => {
-        dispatch(
-          setBacklogFilters({
-            customerFilter: nextValues,
-            withoutCustomerFilter: nextWithoutCustomer,
-          })
-        );
-      });
+      dispatch(
+        setBacklogFilters({
+          customerFilter: nextValues,
+          withoutCustomerFilter: nextWithoutCustomer,
+        })
+      );
     },
-    [dispatch, customerFilter, startFiltersTransition, withoutCustomerFilter]
+    [dispatch, customerFilter, withoutCustomerFilter]
   );
 
   const handleTasksPageSizeChange = React.useCallback(
@@ -1875,45 +1533,37 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       const sanitized = value.replace(/\D/g, "");
       const normalized = sanitized.replace(/^0+(?=\d)/, "");
       if (normalized === tasksPageSize) return;
-      startFiltersTransition(() => {
-        dispatch(setBacklogFilters({ tasksPageSize: normalized }));
-      });
+      dispatch(setBacklogFilters({ tasksPageSize: normalized }));
     },
-    [dispatch, startFiltersTransition, tasksPageSize]
+    [dispatch, tasksPageSize]
   );
 
   const handleSortByChange = React.useCallback(
     (value: string) => {
       const normalized = (value || "manual") as BacklogSortBy;
       if (normalized === sortBy) return;
-      startFiltersTransition(() => {
-        dispatch(setBacklogFilters({ sortBy: normalized }));
-      });
+      dispatch(setBacklogFilters({ sortBy: normalized }));
     },
-    [dispatch, sortBy, startFiltersTransition]
+    [dispatch, sortBy]
   );
 
   const handleSortDirectionChange = React.useCallback(
     (value: string) => {
       const normalized: SortDirection = value === "desc" ? "desc" : "asc";
       if (normalized === sortDirection) return;
-      startFiltersTransition(() => {
-        dispatch(setBacklogFilters({ sortDirection: normalized }));
-      });
+      dispatch(setBacklogFilters({ sortDirection: normalized }));
     },
-    [dispatch, sortDirection, startFiltersTransition]
+    [dispatch, sortDirection]
   );
 
   const handleSearchCommit = React.useCallback(
     (value: string) => {
       const normalized = value.trim();
       if (normalized !== normalizedSearch) {
-        startFiltersTransition(() => {
-          dispatch(setBacklogFilters({ searchQuery: normalized }));
-        });
+        dispatch(setBacklogFilters({ searchQuery: normalized }));
       }
     },
-    [dispatch, normalizedSearch, startFiltersTransition]
+    [dispatch, normalizedSearch]
   );
   const filteredTasks = allTasks;
 
@@ -1976,74 +1626,27 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       totalTasksCount,
     ]);
 
-  const resolveTaskSprintsForAutoDistribution = React.useCallback(
-    (task: BacklogItem): Sprint[] => {
-      const taskQuarterIds = getTaskQuarters(task);
-      const taskHasQuarterOverride = hasTaskQuarterOverride(task.id);
-      const quarterIdsForTask = taskHasQuarterOverride
-        ? taskQuarterIds
-        : selectedQuarterIds;
-
-      if (quarterIdsForTask.length > 0) {
-        return sprintsGlobalOrdered.filter((sprint) =>
-          quarterIdsForTask.includes(sprint.quarterId)
-        );
-      }
-
-      return withoutQuarterFilter ? [] : sprintsGlobalOrdered.slice();
-    },
-    [
-      getTaskQuarters,
-      hasTaskQuarterOverride,
-      selectedQuarterIds,
-      sprintsGlobalOrdered,
-      withoutQuarterFilter,
-    ]
-  );
-
-  const handleOpenBatchAutoDistribution = React.useCallback(async () => {
-    setBatchAutoDistributionError("");
-    setIsPreparingBatchAutoDistribution(true);
-    try {
-      const tasks =
-        totalTasksCount > filteredTasks.length
-          ? await fetchAllFilteredTasks()
-          : filteredTasks;
-      setBatchAutoDistributionTasks(tasks);
-      setIsBatchAutoDistributionOpen(true);
-    } catch (error) {
-      console.error("Не удалось подготовить глобальное автораспределение", error);
-      setBatchAutoDistributionError(
-        "Не удалось загрузить все задачи по текущим фильтрам"
-      );
-    } finally {
-      setIsPreparingBatchAutoDistribution(false);
-    }
-  }, [fetchAllFilteredTasks, filteredTasks, totalTasksCount]);
-
   const handleResetBacklogFilters = React.useCallback(() => {
     setAddAllToJiraError("");
-    startFiltersTransition(() => {
-      dispatch(
-        setBacklogFilters({
-          quarterId: "all",
-          selectedQuarterIds: currentQuarterId ? [currentQuarterId] : [],
-          withoutQuarterFilter: false,
-          withoutStreamFilter: false,
-          withoutCustomerFilter: false,
-          releaseSprintFilter: "all",
-          priorityFilter: [],
-          streamFilter: [],
-          customerFilter: [],
-          statusFilter: [],
-          searchQuery: "",
-          tasksPageSize: "20",
-          sortBy: "manual",
-          sortDirection: "asc",
-        })
-      );
-    });
-  }, [currentQuarterId, dispatch, startFiltersTransition]);
+    dispatch(
+      setBacklogFilters({
+        quarterId: "all",
+        selectedQuarterIds: currentQuarterId ? [currentQuarterId] : [],
+        withoutQuarterFilter: false,
+        withoutStreamFilter: false,
+        withoutCustomerFilter: false,
+        releaseFilters: [],
+        priorityFilter: [],
+        streamFilter: [],
+        customerFilter: [],
+        statusFilter: [],
+        searchQuery: "",
+        tasksPageSize: "20",
+        sortBy: "manual",
+        sortDirection: "asc",
+      })
+    );
+  }, [currentQuarterId, dispatch]);
 
   const handleOpenTaskHistory = React.useCallback((task: BacklogItem) => {
     setHistoryTask(task);
@@ -2066,19 +1669,16 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
 
   const updateField = React.useCallback(
     (t: BacklogItem, patch: Partial<BacklogItem>) => {
-      if (!patch || !Object.keys(patch).length) return Promise.resolve();
+      if (!Object.keys(patch).length) return Promise.resolve();
       const promise = updateTask({ id: t.id, ...patch })
         .unwrap()
         .catch((e) => {
           console.error("Failed to update task", e);
           throw e;
         });
-      startTaskTransition(() => {
-        void promise;
-      });
       return promise;
     },
-    [startTaskTransition, updateTask]
+    [updateTask]
   );
 
   const handleStatusChange = React.useCallback(
@@ -2140,6 +1740,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
 
   const persistTaskOrder = React.useCallback(
     async (orderedIds: string[], movedTaskId: string) => {
+      const allTasks = getCurrentTasks();
       const completeIds = [
         ...orderedIds,
         ...allTasks.filter((t) => !orderedIds.includes(t.id)).map((t) => t.id),
@@ -2162,10 +1763,10 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
         console.error("Не удалось сохранить порядок задач", error);
       }
     },
-    [allTasks, applyTaskOrderOptimistic, updateTask]
+    [getCurrentTasks, applyTaskOrderOptimistic, updateTask]
   );
 
-  const createTask = async (quarterId?: string) => {
+  const createTask = React.useCallback(async (quarterId?: string) => {
     const created = await addTask({
       title: "Новая задача",
       description: "",
@@ -2179,28 +1780,17 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       releaseDateId: null,
       initialQuarterId: quarterId || null,
     }).unwrap();
+    writeLS(creationQuarterStorageKey, quarterId || NO_INITIAL_QUARTER_VALUE);
     if (quarterId && quarterIdSet.has(quarterId)) {
       setTaskQuartersMap((prev) => ({ ...prev, [created.id]: [quarterId] }));
     }
     setPinnedTaskId(created.id);
-  };
-
-  const handleConfirmAddTask = async () => {
-    try {
-      await createTask(
-        newTaskQuarterId && newTaskQuarterId !== NO_INITIAL_QUARTER_VALUE
-          ? newTaskQuarterId
-          : undefined
-      );
-    } catch (error) {
-      console.error("Не удалось создать задачу", error);
-    }
-  };
+  }, [addTask, workspace, isTodo, creationQuarterStorageKey, quarterIdSet]);
 
   const duplicateTask = React.useCallback(
     async (task: BacklogItem) => {
       const activeParticipantIds = task.participantIds.filter((id) => participantMap.get(id)?.active !== false);
-      const taskAllocations = allocations[task.id] || task.allocations || {};
+      const taskAllocations = task.allocations || {};
       const allocationsPayload = Object.entries(taskAllocations).reduce<
         Record<string, Record<string, number>>
       >((acc, [pid, row]) => {
@@ -2256,19 +1846,13 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
         console.error("Не удалось дублировать задачу", error);
       }
     },
-    [addTask, allocations, allTasks.length, participantMap, workspace, isTodo]
+    [addTask, allTasks.length, participantMap, workspace, isTodo]
   );
 
   const removeTask = React.useCallback(
     async (t: BacklogItem) => {
       if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
       await deleteTask({ id: t.id }).unwrap();
-
-      setAllocations((prev) => {
-        const copy = { ...prev };
-        delete copy[t.id];
-        return copy;
-      });
     },
     [deleteTask]
   );
@@ -2280,70 +1864,18 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       sprintId: string,
       value: number
     ) => {
-      startTaskTransition(() => {
-        upsertTaskAllocation({
-          taskId,
-          participantId,
-          sprintId,
-          days: normalizeDayAmount(Number(value) || 0),
-        })
-          .unwrap()
-          .catch((e) => {
-            console.error("Failed to save allocation", e);
-          });
-      });
+      upsertTaskAllocation({
+        taskId,
+        participantId,
+        sprintId,
+        days: normalizeDayAmount(Number(value) || 0),
+      })
+        .unwrap()
+        .catch((e) => {
+          console.error("Failed to save allocation", e);
+        });
     },
-    [startTaskTransition, upsertTaskAllocation]
-  );
-
-  const handleAllocChange = React.useCallback(
-    (
-      taskId: string,
-      participantId: string,
-      sprintId: string,
-      value: number
-    ) => {
-      setAllocations((prev) => {
-        const prevTask = prev[taskId] || {};
-        const prevRow = prevTask[participantId] || {};
-        const nextValue = normalizeDayAmount(Number(value) || 0);
-        const current = prevRow[sprintId] ?? 0;
-        if (current === nextValue) return prev;
-        const nextRow = { ...prevRow };
-        if (nextValue > 0) {
-          nextRow[sprintId] = nextValue;
-        } else {
-          delete nextRow[sprintId];
-        }
-        const nextTask = { ...prevTask };
-        if (Object.keys(nextRow).length > 0) {
-          nextTask[participantId] = nextRow;
-        } else {
-          delete nextTask[participantId];
-        }
-        if (Object.keys(nextTask).length === 0) {
-          const { [taskId]: _, ...rest } = prev;
-          return rest;
-        }
-        return { ...prev, [taskId]: nextTask };
-      });
-    },
-    []
-  );
-
-  const restoreTaskAllocations = React.useCallback(
-    (
-      taskId: string,
-      snapshot: Record<string, Record<string, number>> | undefined
-    ) => {
-      setAllocations((prev) => {
-        const next = { ...prev };
-        if (snapshot) next[taskId] = snapshot;
-        else delete next[taskId];
-        return next;
-      });
-    },
-    []
+    [upsertTaskAllocation]
   );
 
   const addParticipantToTask = React.useCallback(
@@ -2370,15 +1902,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
 
   const removeParticipantFromTask = React.useCallback(
     async (task: BacklogItem, pid: string) => {
-      const previousTaskAllocations = allocations[task.id];
       const previousOrder = (participantOrders[task.id] || task.participantIds).slice();
-
-      setAllocations((prev) => {
-        const prevTask = prev[task.id];
-        if (!prevTask || !prevTask[pid]) return prev;
-        const { [pid]: _, ...restRows } = prevTask;
-        return { ...prev, [task.id]: restRows };
-      });
 
       setParticipantOrders((prev) => {
         const next = { ...prev };
@@ -2391,12 +1915,11 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       try {
         await removeTaskParticipant({ taskId: task.id, participantId: pid }).unwrap();
       } catch (error) {
-        restoreTaskAllocations(task.id, previousTaskAllocations);
         setParticipantOrders((prev) => ({ ...prev, [task.id]: previousOrder }));
         console.error("Failed to remove participant from task", error);
       }
     },
-    [allocations, participantOrders, removeTaskParticipant, restoreTaskAllocations]
+    [participantOrders, removeTaskParticipant]
   );
 
   const replaceParticipantInTask = React.useCallback(
@@ -2405,22 +1928,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       if (!task.participantIds.includes(fromPid)) return;
       if (task.participantIds.includes(toPid)) return;
 
-      const previousTaskAllocations = allocations[task.id];
       const previousOrder = (participantOrders[task.id] || task.participantIds).slice();
-      const taskAllocations = previousTaskAllocations || {};
-      const rowToMove = taskAllocations[fromPid] || {};
-      setAllocations((prev) => {
-        const prevTask = prev[task.id] || {};
-        const movedRow = prevTask[fromPid] || rowToMove;
-        const { [fromPid]: _, ...rest } = prevTask;
-        return {
-          ...prev,
-          [task.id]: {
-            ...rest,
-            [toPid]: { ...movedRow },
-          },
-        };
-      });
 
       setParticipantOrders((prev) => {
         const currentOrder = prev[task.id] || task.participantIds;
@@ -2437,22 +1945,19 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
           toParticipantId: toPid,
         }).unwrap();
       } catch (error) {
-        restoreTaskAllocations(task.id, previousTaskAllocations);
         setParticipantOrders((prev) => ({ ...prev, [task.id]: previousOrder }));
         console.error("Failed to replace participant", error);
       }
     },
     [
-      allocations,
       participantOrders,
       replaceTaskParticipant,
-      restoreTaskAllocations,
     ]
   );
 
   const shiftRow = React.useCallback(
     (taskId: string, participantId: string, dir: "left" | "right") => {
-      const row = allocations[taskId]?.[participantId] || {};
+      const row = getTaskAllocations(taskId)[participantId] || {};
       const ids = sprintsGlobalOrdered.map((s) => s.id);
       if (!ids.length) return;
 
@@ -2475,13 +1980,6 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       }
       if (!hasLoad) return;
 
-      setAllocations((prev) => {
-        const prevTask = prev[taskId] || {};
-        const nextTask = { ...prevTask };
-        nextTask[participantId] = next;
-        return { ...prev, [taskId]: nextTask };
-      });
-
       (async () => {
         try {
           const bulkAllocations = ids.reduce<Record<string, number>>((acc, sid) => {
@@ -2502,14 +2000,14 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
         }
       })();
     },
-    [allocations, sprintsGlobalOrdered, upsertTaskAllocationMulti]
+    [getTaskAllocations, sprintsGlobalOrdered, upsertTaskAllocationMulti]
   );
 
   const shiftTaskAllocations = React.useCallback(
     (task: BacklogItem, dir: "left" | "right") => {
       const ids = sprintsGlobalOrdered.map((s) => s.id);
       if (!ids.length) return;
-      const taskAllocations = allocations[task.id] || {};
+      const taskAllocations = getTaskAllocations(task.id);
       const participantIds = task.participantIds || [];
       const nextTaskAllocations: Record<string, Record<string, number>> = {};
 
@@ -2540,13 +2038,6 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
 
       if (!Object.keys(nextTaskAllocations).length) return;
 
-      setAllocations((prev) => {
-        return {
-          ...prev,
-          [task.id]: nextTaskAllocations,
-        };
-      });
-
       (async () => {
         try {
           const bulkAllocations = Object.entries(nextTaskAllocations).reduce<
@@ -2575,12 +2066,12 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
         }
       })();
     },
-    [allocations, sprintsGlobalOrdered, upsertTaskAllocationMulti]
+    [getTaskAllocations, sprintsGlobalOrdered, upsertTaskAllocationMulti]
   );
 
   const copyRowToNextQuarter = React.useCallback(
     (taskId: string, participantId: string) => {
-      const row = allocations[taskId]?.[participantId] || {};
+      const row = getTaskAllocations(taskId)[participantId] || {};
       if (!Object.keys(row).length) return;
 
       const quartersWithLoad = new Set<string>();
@@ -2621,14 +2112,6 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
         }
       }
 
-      setAllocations((prev) => {
-        const prevTask = prev[taskId] || {};
-        return {
-          ...prev,
-          [taskId]: { ...prevTask, [participantId]: nextRow },
-        };
-      });
-
       (async () => {
         try {
           const bulkAllocations = Object.entries(nextRow).reduce<
@@ -2651,7 +2134,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       })();
     },
     [
-      allocations,
+      getTaskAllocations,
       sprintById,
       quartersSorted,
       sprintsByQuarter,
@@ -2661,7 +2144,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
 
   const moveTask = React.useCallback(
     (id: string, dir: "up" | "down") => {
-      const current = filteredTasks.map((t) => t.id);
+      const current = getCurrentTasks().map((t) => t.id);
       const idx = current.indexOf(id);
       if (idx < 0) return;
       const swapIdx = dir === "up" ? idx - 1 : idx + 1;
@@ -2670,7 +2153,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
       const reordered = arrayMove(current, idx, swapIdx);
       void persistTaskOrder(reordered, id);
     },
-    [filteredTasks, persistTaskOrder]
+    [getCurrentTasks, persistTaskOrder]
   );
 
   const handleParticipantOrderChange = React.useCallback(
@@ -2709,6 +2192,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
       <Stack spacing={2}>
+        {isQuartersError && <Alert severity="error" action={<Button color="inherit" onClick={() => { void refetchQuarters(); }}>Повторить</Button>}>Не удалось загрузить кварталы</Alert>}
         {/* Заголовок + добавление задачи */}
         <Stack
           direction={{ xs: "column", md: "row" }}
@@ -2721,44 +2205,8 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
             {isTodo ? "Бэклог" : "Дорожная карта"}
           </Typography>
 
-          <Stack
-            direction="row"
-            spacing={1}
-            alignItems="center"
-            flexWrap="wrap"
-          >
-            <FormControl
-              size="small"
-              sx={{ minWidth: 220 }}
-            >
-              <InputLabel id="new-task-quarter-label">
-                Квартал задачи
-              </InputLabel>
-              <Select
-                labelId="new-task-quarter-label"
-                label="Квартал задачи"
-                value={newTaskQuarterId}
-                onChange={(e) => {
-                  setNewTaskQuarterId(String(e.target.value));
-                }}
-              >
-                <MenuItem value={NO_INITIAL_QUARTER_VALUE}>Без квартала</MenuItem>
-                {quartersSorted.map((q) => (
-                  <MenuItem key={q.id} value={q.id}>
-                    {q.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            <Button
-              variant="contained"
-              startIcon={<Add />}
-              onClick={handleConfirmAddTask}
-            >
-              Добавить задачу
-            </Button>
-          </Stack>
+          {quartersReady ? <TaskCreationControls key={creationQuarterStorageKey} quarters={creationQuarters} currentQuarterId={currentQuarterId}
+            storageKey={creationQuarterStorageKey} onCreate={createTask} /> : <CircularProgress size={24} aria-label="Загрузка кварталов" />}
         </Stack>
 
         {/* Фильтры */}
@@ -2766,17 +2214,13 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
           layout="wrap"
           filters={[
             {
-              type: "autocomplete",
+              type: "quarters",
               key: "quarters",
               minWidth: 200,
               props: {
-                multiple: true,
-                allowCustom: false,
                 label: "Фильтр по кварталам",
-                options: quarterFilterOptions,
-                value: withoutQuarterFilter
-                  ? [...selectedQuarterIds, WITHOUT_QUARTER_FILTER_VALUE]
-                  : selectedQuarterIds,
+                extraOptions: WITHOUT_QUARTER_OPTIONS,
+                value: quarterFilterValues,
                 onChange: handleQuarterFilterChange,
               },
             },
@@ -2789,7 +2233,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
                 allowCustom: false,
                 label: "Приоритет",
                 options: priorityOptions,
-                value: priorityFilter.map(String),
+                value: priorityFilterValues,
                 onChange: handlePriorityFilterChange,
               },
             },
@@ -2802,18 +2246,19 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
                 allowCustom: false,
                 label: "Статусы",
                 options: statusOptions,
-                value: statusFilter.filter(st => isTodo ? ["backlog", "canceled"].includes(st) : ["inprogress", "done", "canceled"].includes(st)),
+                value: visibleStatusFilters,
                 onChange: handleStatusFilterChange,
               },
             },
             {
-              type: "releaseDate",
+              type: "releases",
               key: "release",
               minWidth: 200,
               props: {
                 label: "Релиз",
-                options: releaseFilterOptions,
-                value: releaseSprintFilter === "all" ? "" : releaseSprintFilter,
+                quarterIds: selectedQuarterIds,
+                ready: quartersReady,
+                value: releaseFilters,
                 onChange: handleReleaseFilterChange,
               },
             },
@@ -2826,9 +2271,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
                 allowCustom: false,
                 label: "Стрим по задаче",
                 options: streamFilterOptions,
-                value: withoutStreamFilter
-                  ? [...streamFilter, WITHOUT_STREAM_FILTER_VALUE]
-                  : streamFilter,
+                value: streamFilterValues,
                 onChange: handleStreamFilterChange,
               },
             },
@@ -2841,9 +2284,7 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
                 allowCustom: false,
                 label: "Заказчик",
                 options: customerFilterOptions,
-                value: withoutCustomerFilter
-                  ? [...customerFilter, WITHOUT_CUSTOMER_FILTER_VALUE]
-                  : customerFilter,
+                value: customerFilterValues,
                 onChange: handleCustomerFilterChange,
               },
             },
@@ -2930,44 +2371,40 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
           onClose={() => setDuplicateNotice("")}
         />
         {/* Список задач с DnD */}
-        <TaskCardsList
+        <DeferredTaskCardsList
+          scopeKey={`${workspace}:${filtersSignature}`}
           tasks={filteredTasks}
           allocations={allocations}
           participantOrders={participantOrders}
           hideAllParticipants={hideAllParticipants}
           hiddenParticipantsTaskIds={hiddenParticipantsTaskIds}
-          isFetching={isFetching}
+          isFetching={isFetching && !filteredTasks.length}
           onPersistTaskOrder={persistTaskOrder}
           participants={participants}
           participantMap={participantMap}
           sprintsGlobalOrdered={sprintsGlobalOrdered}
-          sprintsByQuarter={sprintsByQuarter}
-          quartersSorted={quartersSorted}
           selectedQuarterIds={selectedQuarterIds}
           withoutQuarterFilter={withoutQuarterFilter}
           quarterFilterOptions={taskQuarterOptions}
           customerOptions={customerOptions}
           streamOptions={streamOptions}
-          releaseOptions={assignmentReleaseOptions}
           onStatusChange={handleStatusChange}
           onPriorityChange={handlePriorityChange}
           onUpdateTaskPatch={handleUpdateTaskPatch}
-          onTransferToPlanning={isTodo ? async task => {
-            try { await transferToPlanning({ taskId: task.id }).unwrap(); setDuplicateNotice("Задача добавлена в общий список на странице «Планирование»"); }
-            catch { setDuplicateNotice("Не удалось передать задачу в планирование"); }
-          } : undefined}
+          onTransferToPlanning={isTodo ? handleTransferToPlanning : undefined}
+          onRemoveFromPlanning={isTodo ? handleRemoveFromPlanning : undefined}
           onDuplicateTask={duplicateTask}
           onOpenTaskHistory={handleOpenTaskHistory}
           onUpdateJiraLinks={handleUpdateJiraLinks}
           onMoveTask={moveTask}
           onRemoveTask={removeTask}
           isJiraSelected={isTaskInJiraCart}
+          isPlanningSelected={isSourceSelected}
           onToggleJiraSelection={toggleTaskInJiraCart}
           onChangeTaskQuarters={updateTaskQuarters}
           getTaskQuarters={getTaskQuarters}
           hasTaskQuarterOverride={hasTaskQuarterOverride}
-          onAllocChange={handleAllocChange}
-          onAllocCommit={commitCell}
+          onAllocChange={commitCell}
           onShiftRow={shiftRow}
           onShiftTaskAllocations={shiftTaskAllocations}
           onCopyRowToNextQuarter={copyRowToNextQuarter}
@@ -2980,13 +2417,13 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
 
         <Box ref={loadMoreSentinelRef} sx={{ height: 1 }} />
 
-        <TaskHistoryDialog
+        {historyTask && <TaskHistoryDialog
+          key={historyTask.id}
           task={historyTask}
-          open={Boolean(historyTask)}
+          open
           onClose={handleCloseTaskHistory}
           participantMap={participantMap}
-          releaseLabelById={releaseLabelById}
-        />
+        />}
 
         <JiraExportDialog
           open={isJiraDialogOpen}
@@ -3020,17 +2457,9 @@ export default function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "RO
           </Button>
         </Stack>
 
-        <Divider />
-
-        <Typography variant="caption" color="text.secondary">
-          Все поля редактируются по клику. Нагрузка задаётся в ячейках «участник
-          × спринт». Статусы/лидер/копирование — локально на этой странице.
-          Порядок задач сохраняется автоматически. Выбор релиза (ПРОМ)
-          автоматически определяет спринт и подсвечивает соответствующую
-          колонку. Дополнительно можно сдвигать нагрузку по всей сетке или
-          копировать нагрузку участника в следующий квартал одной кнопкой.
-        </Typography>
       </Stack>
     </Paper>
   );
 }
+
+export default React.memo(BacklogPage);

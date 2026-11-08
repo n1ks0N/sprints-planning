@@ -21,6 +21,7 @@
     "@mui/icons-material": "^6.1.4",
     "@mui/material": "^6.1.4",
     "@reduxjs/toolkit": "^2.2.5",
+    "@tanstack/react-virtual": "^3.14.26",
     "@types/react": "^18.3.26",
     "date-fns": "^3.6.0",
     "moment": "^2.30.1",

@@ -1,5 +1,9 @@
+import useResolvedQuarterFilter from "./useResolvedQuarterFilter";
+import { skipToken } from "@reduxjs/toolkit/query";
+import { releaseFilterParams } from "../utils/releaseFilters";
 import useToday from "./useToday";
 import * as React from "react";
+import { usePlanningSelection } from "../contexts/PlanningSelectionContext";
 import {
   Alert,
   Box,
@@ -21,14 +25,13 @@ import {
   useGetParticipantsQuery,
   useGetPlanningWorkbenchBacklogQuery,
   useGetQuartersQuery,
-  useGetReleasesQuery,
   useGetReleaseOptionsQuery,
   useGetSprintsQuery,
   usePreviewPlanningWorkbenchMutation,
   useDeletePlanningWorkbenchItemMutation,
   useUpdatePlanningWorkbenchItemMutation,
 } from "../app/api";
-import type { PlanningDemand, PlanningWorkbenchItem } from "../types";
+import type { PlanningDemand, PlanningWorkbenchItem, Quarter } from "../types";
 import PlanningWorkbenchTaskDialog, {
   PlanningWorkbenchTaskSubmitPayload,
 } from "../components/PlanningWorkbenchTaskDialog";
@@ -43,12 +46,14 @@ type SortDirection = "asc" | "desc";
 const WITHOUT_STREAM_FILTER_VALUE = "__WITHOUT_STREAM__";
 const WITHOUT_CUSTOMER_FILTER_VALUE = "__WITHOUT_CUSTOMER__";
 const DEFAULT_PLANNING_PAGE_SIZE = "20";
+const EMPTY_QUARTERS: Quarter[] = [];
+const EMPTY_RELEASES: { id: string; name?: string; promDate: string }[] = [];
 const PLANNING_FILTERS_STORAGE_KEY_PREFIX = "planning-workbench.filters.v1";
 
 type StoredPlanningFilters = {
   quarterFilterIds: string[];
   priorityFilterValues: string[];
-  releaseFilterValue: string;
+  releaseFilterValues: string[];
   streamFilterValues: string[];
   customerFilterValues: string[];
   searchQuery: string;
@@ -66,6 +71,8 @@ type PlanningBacklogQueryArgs = {
   priority?: string[];
   releaseDateId?: string;
   releasePromDate?: string;
+  releaseDateIds?: string[];
+  releasePromDates?: string[];
   streams?: string[];
   customers?: string[];
   search?: string;
@@ -83,7 +90,7 @@ type PlanningBacklogFetchPage = {
 const defaultPlanningFilters = (): StoredPlanningFilters => ({
   quarterFilterIds: [],
   priorityFilterValues: [],
-  releaseFilterValue: "",
+  releaseFilterValues: [],
   streamFilterValues: [],
   customerFilterValues: [],
   searchQuery: "",
@@ -111,6 +118,8 @@ const buildPlanningBacklogSearchParams = (args: PlanningBacklogQueryArgs) => {
   appendArray("priority", args.priority);
   if (args.releaseDateId) params.set("releaseDateId", args.releaseDateId);
   if (args.releasePromDate) params.set("releasePromDate", args.releasePromDate);
+  if (args.releaseDateIds?.length) params.set("releaseDateIds", args.releaseDateIds.join(","));
+  if (args.releasePromDates?.length) params.set("releasePromDates", args.releasePromDates.join(","));
   appendArray("streams", args.streams);
   appendArray("customers", args.customers);
   if (args.search) params.set("search", args.search);
@@ -137,8 +146,8 @@ const readPlanningFilters = (teamKey: string): StoredPlanningFilters | null => {
       priorityFilterValues: readStringArray(parsed?.priorityFilterValues).filter((value) =>
         ["1", "2", "3"].includes(value)
       ),
-      releaseFilterValue:
-        typeof parsed?.releaseFilterValue === "string" ? parsed.releaseFilterValue : "",
+      releaseFilterValues: Array.isArray(parsed?.releaseFilterValues) ? readStringArray(parsed.releaseFilterValues)
+        : typeof parsed?.releaseFilterValue === "string" && parsed.releaseFilterValue ? [parsed.releaseFilterValue] : [],
       streamFilterValues: readStringArray(parsed?.streamFilterValues),
       customerFilterValues: readStringArray(parsed?.customerFilterValues),
       searchQuery: typeof parsed?.searchQuery === "string" ? parsed.searchQuery : "",
@@ -170,13 +179,6 @@ const writePlanningFilters = (teamKey: string, filters: StoredPlanningFilters) =
   } catch {
     // ignore
   }
-};
-
-const todayISO = () => new Date().toISOString().slice(0, 10);
-
-const currentQuarterId = (quarters: { id: string; startDate: string; endDate: string }[]) => {
-  const today = todayISO();
-  return quarters.find((quarter) => quarter.startDate <= today && quarter.endDate >= today)?.id || "";
 };
 
 const normalizePageSize = (value: string) => {
@@ -256,7 +258,7 @@ const comparePlanningItems = (
   return titleResult !== 0 ? titleResult : left.id.localeCompare(right.id);
 };
 
-export default function PlanningWorkbenchPage() {
+function PlanningWorkbenchPage() {
   const { teamKey = "default" } = useParams<{ teamKey: string }>();
   const initialStoredFilters = React.useMemo(
     () => readPlanningFilters(teamKey) ?? defaultPlanningFilters(),
@@ -270,50 +272,36 @@ export default function PlanningWorkbenchPage() {
     () => participants.filter((participant) => participant.active !== false),
     [participants]
   );
-  const { data: quarters = [] } = useGetQuartersQuery();
+  const { data: quartersData } = useGetQuartersQuery(undefined, { selectFromResult: ({ data }) => ({ data }) });
+  const quarters = quartersData ?? EMPTY_QUARTERS;
+  const quartersReady = quartersData !== undefined;
   const { data: sprints = [] } = useGetSprintsQuery();
-  const { data: releases = [] } = useGetReleaseOptionsQuery({ teamKey, fromDate: today });
   const { data: filters } = useGetFiltersQuery();
   const [addItem, { isLoading: isCreating }] = useAddPlanningWorkbenchItemMutation();
   const [updateItem, { isLoading: isUpdating }] = useUpdatePlanningWorkbenchItemMutation();
   const [deleteItem, { isLoading: isDeleting }] = useDeletePlanningWorkbenchItemMutation();
   const [previewPlanning, { isLoading: isPreviewing }] = usePreviewPlanningWorkbenchMutation();
 
-  const [selectedItemIds, setSelectedItemIds] = React.useState<string[]>([]);
+  const { selectedItemIds, setSelectedItemIds, itemCacheById, setItemCacheById } = usePlanningSelection();
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  const { data: releases = EMPTY_RELEASES } = useGetReleaseOptionsQuery({ teamKey, fromDate: today }, { skip: !dialogOpen, selectFromResult: ({ data }) => ({ data }) });
   const [dialogItem, setDialogItem] = React.useState<PlanningWorkbenchItem | null>(null);
   const [selectAfterSubmit, setSelectAfterSubmit] = React.useState(false);
   const [isAddingAllToPlan, setIsAddingAllToPlan] = React.useState(false);
-  const [quarterFilterIds, setQuarterFilterIds] = React.useState<string[]>(initialStoredFilters.quarterFilterIds);
+  const [storedQuarterFilterIds, setQuarterFilterIds] = React.useState<string[]>(initialStoredFilters.quarterFilterIds);
   const [priorityFilterValues, setPriorityFilterValues] = React.useState<string[]>(initialStoredFilters.priorityFilterValues);
-  const [releaseFilterValue, setReleaseFilterValue] = React.useState(initialStoredFilters.releaseFilterValue);
+  const [releaseFilterValues, setReleaseFilterValues] = React.useState(initialStoredFilters.releaseFilterValues);
   const [streamFilterValues, setStreamFilterValues] = React.useState<string[]>(initialStoredFilters.streamFilterValues);
   const [customerFilterValues, setCustomerFilterValues] = React.useState<string[]>(initialStoredFilters.customerFilterValues);
   const [searchQuery, setSearchQuery] = React.useState(initialStoredFilters.searchQuery);
   const [planningPageSize, setPlanningPageSize] = React.useState(initialStoredFilters.planningPageSize);
   const [backlogPageNumber, setBacklogPageNumber] = React.useState(0);
-  const [itemCacheById, setItemCacheById] = React.useState<Map<string, PlanningWorkbenchItem>>(
-    () => new Map()
-  );
   const [sortBy, setSortBy] = React.useState<PlanningSortBy>(initialStoredFilters.sortBy);
   const [sortDirection, setSortDirection] = React.useState<SortDirection>(initialStoredFilters.sortDirection);
   const [error, setError] = React.useState("");
-  const hasInitializedQuarterFilter = React.useRef(false);
-
-  React.useEffect(() => {
-    const stored = readPlanningFilters(teamKey) ?? defaultPlanningFilters();
-    hasInitializedQuarterFilter.current = false;
-    setQuarterFilterIds(stored.quarterFilterIds);
-    setPriorityFilterValues(stored.priorityFilterValues);
-    setReleaseFilterValue(stored.releaseFilterValue);
-    setStreamFilterValues(stored.streamFilterValues);
-    setCustomerFilterValues(stored.customerFilterValues);
-    setSearchQuery(stored.searchQuery);
-    setPlanningPageSize(stored.planningPageSize);
-    setSortBy(stored.sortBy);
-    setSortDirection(stored.sortDirection);
-    setBacklogPageNumber(0);
-  }, [teamKey]);
+  // TeamScopedApp remounts this page for a different team; initialize local filters once.
+  const activeCurrentQuarterId = React.useMemo(() => quarters.find(q => q.startDate <= today && today <= q.endDate)?.id, [quarters, today]);
+  const quarterFilterIds = useResolvedQuarterFilter(quartersData, storedQuarterFilterIds, setQuarterFilterIds, activeCurrentQuarterId);
 
   const planningPageSizeNumber = React.useMemo(
     () => normalizePageSize(planningPageSize),
@@ -325,7 +313,7 @@ export default function PlanningWorkbenchPage() {
       JSON.stringify({
         quarterFilterIds: quarterFilterIds.slice().sort(),
         priorityFilterValues: priorityFilterValues.slice().sort(),
-        releaseFilterValue,
+        releaseFilterValues,
         streamFilterValues: streamFilterValues.slice().sort(),
         customerFilterValues: customerFilterValues.slice().sort(),
         searchQuery: searchQuery.trim(),
@@ -338,7 +326,7 @@ export default function PlanningWorkbenchPage() {
       planningPageSizeNumber,
       priorityFilterValues,
       quarterFilterIds,
-      releaseFilterValue,
+      releaseFilterValues,
       searchQuery,
       sortBy,
       sortDirection,
@@ -368,8 +356,7 @@ export default function PlanningWorkbenchPage() {
       size: planningPageSizeNumber,
       quarterIds: quarterFilterIds,
       priority: priorityFilterValues,
-      releaseDateId: /^\d{4}-\d{2}-\d{2}$/.test(releaseFilterValue) ? undefined : releaseFilterValue.trim() || undefined,
-      releasePromDate: /^\d{4}-\d{2}-\d{2}$/.test(releaseFilterValue) ? releaseFilterValue : undefined,
+      ...releaseFilterParams(releaseFilterValues),
       streams: selectedStreamFilters.length > 0 ? selectedStreamFilters : undefined,
       customers: selectedCustomerFilters.length > 0 ? selectedCustomerFilters : undefined,
       withoutStream: streamFilterValues.includes(WITHOUT_STREAM_FILTER_VALUE),
@@ -382,7 +369,7 @@ export default function PlanningWorkbenchPage() {
       planningPageSizeNumber,
       priorityFilterValues,
       quarterFilterIds,
-      releaseFilterValue,
+      releaseFilterValues,
       searchQuery,
       selectedCustomerFilters,
       selectedStreamFilters,
@@ -391,34 +378,23 @@ export default function PlanningWorkbenchPage() {
       streamFilterValues,
     ]
   );
-  const { data: backlogPage, isLoading, isFetching } = useGetPlanningWorkbenchBacklogQuery(planningBacklogQueryArgs, {
-    refetchOnMountOrArgChange: true,
+  const { data: backlogPage, isLoading: isBacklogLoading, isFetching: isBacklogFetching } = useGetPlanningWorkbenchBacklogQuery(quartersReady ? planningBacklogQueryArgs : skipToken, {
+    // Reuse recent filter results; mutations, focus and reconnect keep them fresh.
+    refetchOnMountOrArgChange: 30,
     refetchOnFocus: true,
     refetchOnReconnect: true,
   });
+  const isLoading = !quartersReady || isBacklogLoading;
+  const isFetching = !quartersReady || isBacklogFetching;
   const backlog = React.useMemo(() => backlogPage?.content ?? [], [backlogPage]);
   const totalBacklogCount = backlogPage?.page?.totalElements ?? 0;
   const hasMoreBacklog = backlog.length < totalBacklogCount;
-  const activeCurrentQuarterId = React.useMemo(() => currentQuarterId(quarters), [quarters]);
-
   React.useEffect(() => {
-    if (hasInitializedQuarterFilter.current) return;
-    if (!quarters.length || !activeCurrentQuarterId) return;
-    hasInitializedQuarterFilter.current = true;
-
-    const validQuarterIds = new Set(quarters.map((quarter) => quarter.id));
-    const validSelected = quarterFilterIds.filter((quarterId) => validQuarterIds.has(quarterId));
-    const nextQuarterIds = validSelected.length ? validSelected : [activeCurrentQuarterId];
-    if (JSON.stringify(nextQuarterIds) !== JSON.stringify(quarterFilterIds)) {
-      setQuarterFilterIds(nextQuarterIds);
-    }
-  }, [activeCurrentQuarterId, quarterFilterIds, quarters]);
-
-  React.useEffect(() => {
+    if (!quartersReady) return;
     writePlanningFilters(teamKey, {
       quarterFilterIds,
       priorityFilterValues,
-      releaseFilterValue,
+      releaseFilterValues,
       streamFilterValues,
       customerFilterValues,
       searchQuery,
@@ -427,11 +403,12 @@ export default function PlanningWorkbenchPage() {
       sortDirection,
     });
   }, [
+    quartersReady,
     customerFilterValues,
     planningPageSize,
     priorityFilterValues,
     quarterFilterIds,
-    releaseFilterValue,
+    releaseFilterValues,
     searchQuery,
     sortBy,
     sortDirection,
@@ -463,7 +440,7 @@ export default function PlanningWorkbenchPage() {
 
   React.useEffect(() => {
     const returnedIds = (location.state as { selectedItemIds?: string[] } | null)?.selectedItemIds;
-    if (Array.isArray(returnedIds) && returnedIds.length > 0) {
+    if (Array.isArray(returnedIds)) {
       setSelectedItemIds(returnedIds);
     }
   }, [location.state]);
@@ -483,17 +460,13 @@ export default function PlanningWorkbenchPage() {
     [releases]
   );
   const releasePromDateById = React.useMemo(
-    () => new Map([...releases.map((release) => [release.id, release.promDate || ""] as [string, string]), ...Array.from(itemCacheById.values()).filter(item => item.releaseDateId && item.releasePromDate).map(item => [item.releaseDateId!, item.releasePromDate!] as [string, string])]),
-    [releases, itemCacheById]
+    () => new Map([...releases.map((release) => [release.id, release.promDate || ""] as [string, string]), ...[...itemCacheById.values(), ...backlog].filter(item => item.releaseDateId && item.releasePromDate).map(item => [item.releaseDateId!, item.releasePromDate!] as [string, string])]),
+    [releases, itemCacheById, backlog]
   );
   const participantNameById = React.useMemo(
     () => new Map(participants.map((participant) => [participant.id,
       participant.active === false ? `${participant.fullName} (неактивен)` : participant.fullName])),
     [participants]
-  );
-  const quarterOptions = React.useMemo(
-    () => quarters.map((quarter) => ({ value: quarter.id, label: quarter.name })),
-    [quarters]
   );
   const priorityOptions = React.useMemo(
     () => [
@@ -522,16 +495,6 @@ export default function PlanningWorkbenchPage() {
         .map((customer) => ({ value: customer, label: customer })),
     ],
     [filters?.customers]
-  );
-  const { data: releaseSuggestions = [] } = useGetReleaseOptionsQuery({ teamKey, quarterIds: [...quarterFilterIds].sort() });
-  const releaseFilterOptions = React.useMemo(
-    () =>
-      releaseSuggestions
-        .filter((release) => release.id && release.promDate)
-        .slice()
-        .sort((a, b) => a.promDate.localeCompare(b.promDate))
-        .map((release) => ({ value: release.id, label: formatDate(release.promDate) })),
-    [releaseSuggestions]
   );
   const sortByOptions = React.useMemo(
     () => [
@@ -648,7 +611,7 @@ export default function PlanningWorkbenchPage() {
   const handleResetFilters = React.useCallback(() => {
     setQuarterFilterIds(activeCurrentQuarterId ? [activeCurrentQuarterId] : []);
     setPriorityFilterValues([]);
-    setReleaseFilterValue("");
+    setReleaseFilterValues([]);
     setStreamFilterValues([]);
     setCustomerFilterValues([]);
     setSearchQuery("");
@@ -795,16 +758,13 @@ export default function PlanningWorkbenchPage() {
               withPaper={false}
               filters={[
                 {
-                  type: "autocomplete",
+                  type: "quarters",
                   key: "quarters",
                   minWidth: 200,
                   props: {
-                    multiple: true,
-                    allowCustom: false,
                     label: "Фильтр по кварталу",
                     value: quarterFilterIds,
                     onChange: setQuarterFilterIds,
-                    options: quarterOptions,
                     placeholder: "Все кварталы",
                   },
                 },
@@ -824,14 +784,15 @@ export default function PlanningWorkbenchPage() {
                   },
                 },
                 {
-                  type: "releaseDate",
+                  type: "releases",
                   key: "release",
                   minWidth: 180,
                   props: {
                     label: "Релиз",
-                    value: releaseFilterValue,
-                    onChange: setReleaseFilterValue,
-                    options: releaseFilterOptions,
+                    ready: quartersReady,
+                    value: releaseFilterValues,
+                    onChange: setReleaseFilterValues,
+                    quarterIds: quarterFilterIds,
                   },
                 },
                 {
@@ -884,6 +845,7 @@ export default function PlanningWorkbenchPage() {
                     label: "Поиск по названию/описанию/DOD",
                     value: searchQuery,
                     onChange: setSearchQuery,
+                    debounceMs: 250,
                     placeholder: "Введите текст",
                   },
                 },
@@ -900,17 +862,18 @@ export default function PlanningWorkbenchPage() {
                 </Button>
               }
             />
-            <SortControls
-              value={sortBy}
-              onChange={(value) => setSortBy((value || "manual") as PlanningSortBy)}
-              options={sortByOptions}
-              direction={sortDirection}
-              onDirectionChange={setSortDirection}
-              sx={{ width: { xs: "100%", md: "fit-content" } }}
-            />
           </Stack>
         </Stack>
       </Paper>
+
+      <SortControls
+        value={sortBy}
+        onChange={(value) => setSortBy((value || "manual") as PlanningSortBy)}
+        options={sortByOptions}
+        direction={sortDirection}
+        onDirectionChange={setSortDirection}
+        sx={{ width: { xs: "100%", md: "fit-content" } }}
+      />
 
       {error && <Alert severity="error">{error}</Alert>}
 
@@ -1106,3 +1069,5 @@ export default function PlanningWorkbenchPage() {
     </Stack>
   );
 }
+
+export default React.memo(PlanningWorkbenchPage);

@@ -295,6 +295,7 @@ export default function JiraExportDialog({
   const batchQuery = useGetJiraExportBatchQuery(activeBatchId || "", {
     skip: !open || !activeBatchId,
     pollingInterval: batchPollingInterval,
+    skipPollingIfUnfocused: true,
   });
   const batchData = batchQuery.data;
   const batchStatus = batchData?.status || null;

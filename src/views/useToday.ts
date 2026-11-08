@@ -1,5 +1,6 @@
 import * as React from "react";
-export const businessToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const businessDateFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit" });
+export const businessToday = () => businessDateFormatter.format(new Date());
 export default function useToday() {
   const [today, setToday] = React.useState(businessToday);
   React.useEffect(() => {

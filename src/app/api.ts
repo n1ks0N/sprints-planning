@@ -1,3 +1,4 @@
+import { releaseFilterParams } from "../utils/releaseFilters";
 import { useMemo } from "react";
 import { createApi, fetchBaseQuery, BaseQueryFn } from "@reduxjs/toolkit/query/react";
 import type { FetchBaseQueryError } from "@reduxjs/toolkit/query";
@@ -298,6 +299,18 @@ type TaskAllocationsUpdateResponse = {
   loads: Record<string, number>;
   updatedAt: string;
 };
+export type ReleaseOption = { id: string; name?: string; promDate: string };
+type ReleaseOptionsArgs = { teamKey: string; quarterIds?: string[]; fromDate?: string; search?: string; ids?: string[] };
+const normalizeReleaseOptions = ({ teamKey, quarterIds, fromDate, search, ids }: ReleaseOptionsArgs): ReleaseOptionsArgs => {
+  const team = teamKey.toLowerCase();
+  const selected = ids?.length ? [...new Set(ids)].sort() : undefined;
+  const text = search?.trim();
+  // These branches match the server: explicit IDs and global search ignore date/quarter constraints.
+  if (selected) return { teamKey: team, ids: selected };
+  if (text) return { teamKey: team, search: text };
+  return { teamKey: team, ...(quarterIds?.length ? { quarterIds: [...new Set(quarterIds)].sort() } : {}), ...(fromDate ? { fromDate } : {}) };
+};
+
 type TasksQueryArgs = {
   teamKey?: string;
   workspace?: "ROADMAP" | "BACKLOG";
@@ -309,6 +322,8 @@ type TasksQueryArgs = {
   statuses?: string[];
   releaseDateId?: string;
   releasePromDate?: string;
+  releaseDateIds?: string[];
+  releasePromDates?: string[];
   streams?: string[];
   customers?: string[];
   search?: string;
@@ -321,13 +336,17 @@ type TasksQueryArgs = {
   page?: number;
   size?: number;
 };
-const tasksCacheKey = (arg: void | TasksQueryArgs, endpointName = "getTasks") => {
-  if (!arg) return endpointName;
-  const { page, ...filters } = arg;
-  return `${endpointName}-${JSON.stringify(Object.fromEntries(Object.entries(filters).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => [key, Array.isArray(value) ? [...new Set<string | number>(value)].sort() : value])))}`;
+// Equivalent filter sets share one RTK Query entry; pagination merges into that entry.
+const pageCacheKey = (arg: object | void, endpointName: string) => {
+  const filters = Object.entries(arg ?? {}).filter(([key, value]) => key !== "page" && value !== undefined && value !== "" && value !== false && !(Array.isArray(value) && !value.length));
+  if (!filters.length) return endpointName;
+  return `${endpointName}-${JSON.stringify(Object.fromEntries(filters.sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => [key, Array.isArray(value) ? [...new Set<string | number>(value)].sort() : value])))}`;
 };
+const tasksCacheKey = (arg: void | TasksQueryArgs, endpointName = "getTasks") => pageCacheKey(arg, endpointName);
 
 type ParticipantWorkloadQueryArgs = {
+  teamKey?: string;
   quarterIds: string[];
   priority?: number[];
   streams?: string[];
@@ -337,6 +356,7 @@ type ParticipantWorkloadQueryArgs = {
   page?: number;
   size?: number;
 };
+const participantWorkloadCacheKey = (arg: ParticipantWorkloadQueryArgs) => pageCacheKey(arg, "getParticipantWorkload");
 type ParticipantWorkloadPage = Page<ParticipantWorkloadRow>;
 type PlanningWorkbenchBacklogPage = Page<PlanningWorkbenchItem>;
 
@@ -349,6 +369,8 @@ type PlanningWorkbenchBacklogArgs = {
   priority?: string[];
   releaseDateId?: string;
   releasePromDate?: string;
+  releaseDateIds?: string[];
+  releasePromDates?: string[];
   streams?: string[];
   customers?: string[];
   search?: string;
@@ -375,7 +397,7 @@ const normalizePageResponse = <T>(data: any): Page<T> => {
     } as Page<T>;
   }
 
-  const size = Number(data?.size ?? content.length ?? 1) || 1;
+  const size = Number(data?.size ?? content.length) || 1;
   const number = Number(data?.number ?? 0) || 0;
   const totalElements = Number(data?.totalElements ?? content.length) || 0;
   const totalPages = Number(data?.totalPages ?? Math.max(1, Math.ceil(totalElements / size))) || 1;
@@ -434,13 +456,9 @@ const buildExcelExportUrl = (state: any, workspace: "ROADMAP" | "BACKLOG") => {
   const statuses = joinFilterValues(backlog?.statusFilter);
   if (statuses) params.set("status", statuses);
 
-  const releaseDateId =
-    typeof backlog?.releaseSprintFilter === "string"
-      ? backlog.releaseSprintFilter.trim()
-      : "";
-  if (releaseDateId && releaseDateId !== "all") {
-    params.set(/^\d{4}-\d{2}-\d{2}$/.test(releaseDateId) ? "releasePromDate" : "releaseDateId", releaseDateId);
-  }
+  const releases = releaseFilterParams(backlog?.releaseFilters ?? (backlog?.releaseSprintFilter && backlog.releaseSprintFilter !== "all" ? [backlog.releaseSprintFilter] : []));
+  if (releases.releaseDateIds?.length) params.set("releaseDateIds", releases.releaseDateIds.join(","));
+  if (releases.releasePromDates?.length) params.set("releasePromDates", releases.releasePromDates.join(","));
 
   const streams = joinFilterValues(backlog?.streamFilter);
   if (streams) params.set("stream", streams);
@@ -512,31 +530,6 @@ const updateTaskDetailDraft = (
   if (!draft) return;
   updater(draft);
 };
-
-const collectSprintsFromCache = (state: AnyState): Sprint[] => {
-  const queries = api.util
-    .selectInvalidatedBy(state as any, [listTag("Sprint")])
-    .filter((q) => q.endpointName === "getSprints");
-  const list: Sprint[] = [];
-
-  for (const q of queries) {
-    const data =
-      api.endpoints.getSprints.select(q.originalArgs as any)(state as any)
-        ?.data || [];
-    list.push(...data);
-  }
-
-  return list;
-};
-
-const findQuarterBySprint = (sprintId: string | undefined, getState: () => AnyState) => {
-  if (!sprintId) return undefined;
-  const sprints = collectSprintsFromCache(getState());
-  return sprints.find((s) => s.id === sprintId)?.quarterId;
-};
-
-const getParticipantsFromCache = (state: AnyState): Participant[] =>
-  api.endpoints.getParticipants.select()(state as any)?.data || [];
 
 const recomputeSprintLoad = (task: BacklogItem, sprintId: string) => {
   const allocations = task.allocations || {};
@@ -693,6 +686,10 @@ export const api = createApi({
             ]
           : [listTag("Quarter")],
     }),
+    getQuarterOptions: b.query<Quarter[], { teamKey: string; search?: string }>({
+      query: ({ teamKey, search }) => ({ url: `/${teamKey}/quarters/options`, skipTeamPrefix: true, params: search ? { search } : undefined }),
+      providesTags: [listTag("Quarter")],
+    }),
     addQuarter: b.mutation<Quarter, Partial<Quarter>>({
       query: (body) => ({ url: "/quarters", method: "POST", body }),
       invalidatesTags: (result) =>
@@ -734,7 +731,7 @@ export const api = createApi({
     }),
     updateQuarter: b.mutation<Quarter, Partial<Quarter> & { id: string }>({
       query: (body) => ({ url: "/quarters/update", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         entityTag("Quarter", arg.id),
         listTag("Quarter"),
         listTag("Sprint"),
@@ -764,7 +761,7 @@ export const api = createApi({
     }),
     deleteQuarter: b.mutation<Quarter, { id: string }>({
       query: (body) => ({ url: "/quarters/delete", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         entityTag("Quarter", arg.id),
         listTag("Quarter"),
         listTag("Sprint"),
@@ -857,7 +854,7 @@ export const api = createApi({
     }),
     updateSprint: b.mutation<Sprint, Partial<Sprint> & { id: string }>({
       query: (body) => ({ url: "/sprints/update", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         entityTag("Sprint", arg.id),
         listTag("Sprint"),
         listTag("Capacity"),
@@ -892,7 +889,7 @@ export const api = createApi({
     }),
     deleteSprint: b.mutation<Sprint, { id: string }>({
       query: (body) => ({ url: "/sprints/delete", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         entityTag("Sprint", arg.id),
         listTag("Sprint"),
         listTag("Capacity"),
@@ -989,7 +986,7 @@ export const api = createApi({
       Partial<Participant> & { id: string }
     >({
       query: (body) => ({ url: "/participants/update", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         entityTag("Participant", arg.id),
         listTag("Participant"),
         listTag("Capacity"),
@@ -1037,7 +1034,7 @@ export const api = createApi({
     }),
     deleteParticipant: b.mutation<Participant, { id: string }>({
       query: (body) => ({ url: "/participants/delete", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         entityTag("Participant", arg.id),
         listTag("Participant"),
         listTag("Capacity"),
@@ -1102,6 +1099,7 @@ export const api = createApi({
         }
       | void
     >({
+      serializeQueryArgs: ({ queryArgs, endpointName }) => pageCacheKey(queryArgs, endpointName),
       query: (arg) => {
         const joinOrUndefined = (values?: string[]) => {
           if (!values || values.length === 0) return undefined;
@@ -1125,7 +1123,7 @@ export const api = createApi({
           params: Object.keys(params).length ? params : undefined,
         };
       },
-      providesTags: (result, error, arg) => {
+      providesTags: (_result, _error, arg) => {
         const ids = arg?.quarterIds?.length ? arg.quarterIds.slice().sort().join(",") : "all";
         return [
           { type: "Capacity" as const, id: "LIST" as const },
@@ -1135,7 +1133,7 @@ export const api = createApi({
     }),
 
     getParticipantWorkload: b.query<ParticipantWorkloadPage, ParticipantWorkloadQueryArgs>({
-      query: (arg) => {
+      async queryFn(arg, queryApi, _extraOptions, fetchWithBaseQuery) {
         const params: Record<string, string> = {};
         const joinOrUndefined = (values?: string[] | number[]) => {
           if (!values || values.length === 0) return undefined;
@@ -1163,14 +1161,36 @@ export const api = createApi({
         if (typeof arg.page === "number") params.page = String(arg.page);
         if (typeof arg.size === "number") params.size = String(arg.size);
 
-        return {
-          url: "/participant-workload",
-          method: "GET",
-          params,
-        };
+        const cached = (queryApi.getState() as { api: { queries: Record<string, { data?: ParticipantWorkloadPage } | undefined> } }).api.queries[participantWorkloadCacheKey(arg)]?.data;
+        const requestedPage = Math.max(0, arg.page ?? 0);
+        const pageSize = Math.max(1, arg.size ?? 10);
+        const refreshPrefix = !cached || requestedPage <= cached.page.number;
+        const firstPage = refreshPrefix ? 0 : requestedPage;
+        const lastPage = refreshPrefix ? Math.max(requestedPage, Math.ceil((cached?.content.length ?? 0) / pageSize) - 1) : requestedPage;
+        const content: ParticipantWorkloadRow[] = [];
+        let result: ParticipantWorkloadPage | undefined;
+        for (let page = firstPage; page <= lastPage; page += 1) {
+          const response = await fetchWithBaseQuery({ url: arg.teamKey ? `/${arg.teamKey}/participant-workload` : "/participant-workload", skipTeamPrefix: Boolean(arg.teamKey), method: "GET", params: { ...params, page: String(page), size: String(pageSize) } });
+          if (response.error) return { error: response.error };
+          result = normalizePageResponse<ParticipantWorkloadRow>(response.data);
+          content.push(...result.content);
+          if (page + 1 >= result.page.totalPages) break;
+        }
+        const data = result!;
+        data.content = [...new Map(content.map(row => [row.participant.id, row])).values()];
+        data.first = firstPage === 0;
+        data.numberOfElements = data.content.length;
+        data.empty = data.content.length === 0;
+        return { data };
       },
-      transformResponse: (response: unknown) =>
-        normalizePageResponse<ParticipantWorkloadRow>(response),
+      serializeQueryArgs: ({ queryArgs }) => participantWorkloadCacheKey(queryArgs),
+      merge: (current, next) => {
+        if (next.first) { Object.assign(current, next); return; }
+        const rows = new Map(current.content.map(row => [row.participant.id, row]));
+        next.content.forEach(row => rows.set(row.participant.id, row));
+        Object.assign(current, next, { content: [...rows.values()], numberOfElements: rows.size, empty: rows.size === 0 });
+      },
+      forceRefetch: ({ currentArg, endpointState }) => (currentArg?.page ?? 0) > ((endpointState?.data as ParticipantWorkloadPage | undefined)?.page.number ?? -1),
       providesTags: (result) =>
         result
           ? [
@@ -1187,7 +1207,7 @@ export const api = createApi({
       TasksPage,
       void | TasksQueryArgs
     >({
-      async queryFn(arg, queryApi, extraOptions, fetchWithBaseQuery) {
+      async queryFn(arg, queryApi, _extraOptions, fetchWithBaseQuery) {
         const params: Record<string, string> = {};
 
         const joinOrUndefined = (values?: string[] | number[]) => {
@@ -1209,6 +1229,8 @@ export const api = createApi({
         const statuses = joinOrUndefined(arg?.statuses);
         if (statuses) params.status = statuses;
 
+        if (arg?.releaseDateIds?.length) params.releaseDateIds = arg.releaseDateIds.join(",");
+        if (arg?.releasePromDates?.length) params.releasePromDates = arg.releasePromDates.join(",");
         const releaseDateId = (arg?.releaseDateId || "").trim();
         if (releaseDateId) params.releaseDateId = releaseDateId;
 
@@ -1275,13 +1297,8 @@ export const api = createApi({
         return { data };
       },
       serializeQueryArgs: ({ queryArgs, endpointName }) => tasksCacheKey(queryArgs, endpointName),
-      merge: (currentCache, newData, { arg }) => {
-        if (!newData) return;
-        if (!currentCache) {
-          return newData;
-        }
-        const shouldReset = newData.first === true || !arg || typeof arg !== "object" || !("page" in arg) || (arg as any).page === 0;
-        if (shouldReset) {
+      merge: (currentCache, newData) => {
+        if (newData.first) {
           Object.assign(currentCache, newData);
           recalcPageMeta(currentCache);
           return;
@@ -1299,20 +1316,12 @@ export const api = createApi({
 
         currentCache.page = newData.page;
         currentCache._links = newData._links;
-        currentCache.first = (newData.first ?? currentCache.first) &&
-          ((arg as any).page ?? 0) === 0;
+        currentCache.first = false;
         recalcPageMeta(currentCache);
       },
-      forceRefetch({ currentArg, previousArg }) {
-        if (!currentArg || !previousArg) return true;
-        const { page: currentPage, size: currentSize, ...currentFilters } =
-          (currentArg as Record<string, unknown>) || {};
-        const { page: prevPage, size: prevSize, ...prevFilters } =
-          (previousArg as Record<string, unknown>) || {};
-
-        if (currentPage !== prevPage || currentSize !== prevSize) return true;
-        return JSON.stringify(currentFilters) !== JSON.stringify(prevFilters);
-      },
+      // Filters and size already belong to the canonical cache key. Only a new
+      // page within that same entry needs an explicit refetch for merged pagination.
+      forceRefetch: ({ currentArg, endpointState }) => (currentArg?.page ?? 0) > ((endpointState?.data as TasksPage | undefined)?.page.number ?? -1),
       providesTags: (result, _error, arg) => [
         listTag("Task"),
         entityTag("Task", tasksCacheKey(arg)),
@@ -1321,7 +1330,7 @@ export const api = createApi({
     }),
     getTask: b.query<BacklogItem, string>({
       query: (id) => ({ url: `/tasks/${id}`, method: "GET" }),
-      providesTags: (result, error, id) => [
+      providesTags: (_result, _error, id) => [
         { type: "Task" as const, id },
         { type: "Task" as const, id: "LIST" as const },
       ],
@@ -1330,7 +1339,7 @@ export const api = createApi({
       PlanningWorkbenchBacklogPage,
       void | PlanningWorkbenchBacklogArgs
     >({
-      async queryFn(arg, queryApi, extraOptions, fetchWithBaseQuery) {
+      async queryFn(arg, queryApi, _extraOptions, fetchWithBaseQuery) {
         const params: Record<string, string> = {};
         const joinOrUndefined = (values?: string[]) => {
           if (!values || values.length === 0) return undefined;
@@ -1351,6 +1360,8 @@ export const api = createApi({
         const priorities = joinOrUndefined(arg?.priority);
         if (priorities) params.priority = priorities;
 
+        if (arg?.releaseDateIds?.length) params.releaseDateIds = arg.releaseDateIds.join(",");
+        if (arg?.releasePromDates?.length) params.releasePromDates = arg.releasePromDates.join(",");
         const releaseDateId = (arg?.releaseDateId || "").trim();
         if (releaseDateId) params.releaseDateId = releaseDateId;
 
@@ -1365,8 +1376,7 @@ export const api = createApi({
         const search = (arg?.search || "").trim();
         if (search) params.search = search;
 
-        const { page: ignoredPage, ...filters } = arg || {};
-        const cacheKey = `getPlanningWorkbenchBacklog-${JSON.stringify(filters)}`;
+        const cacheKey = pageCacheKey(arg, "getPlanningWorkbenchBacklog");
         const cached = (queryApi.getState() as {
           api: { queries: Record<string, { data?: PlanningWorkbenchBacklogPage } | undefined> };
         }).api.queries[cacheKey]?.data;
@@ -1396,19 +1406,10 @@ export const api = createApi({
         data.first = firstPage === 0;
         return { data };
       },
-      serializeQueryArgs: ({ queryArgs, endpointName }) => {
-        if (!queryArgs || typeof queryArgs !== "object") return endpointName;
-        const { page, ...rest } = queryArgs as Record<string, unknown>;
-        return `${endpointName}-${JSON.stringify(rest)}`;
-      },
-      merge: (currentCache, newData, { arg }) => {
-        if (!newData) return;
-        if (!currentCache) {
-          return newData;
-        }
+      serializeQueryArgs: ({ queryArgs, endpointName }) => pageCacheKey(queryArgs, endpointName),
+      merge: (currentCache, newData) => {
 
-        const shouldReset = newData.first === true || !arg || typeof arg !== "object" || !("page" in arg) || (arg as any).page === 0;
-        if (shouldReset) {
+        if (newData.first) {
           Object.assign(currentCache, newData);
           return;
         }
@@ -1430,16 +1431,7 @@ export const api = createApi({
         currentCache.empty = currentCache.content.length === 0;
         currentCache._links = newData._links;
       },
-      forceRefetch({ currentArg, previousArg }) {
-        if (!currentArg || !previousArg) return true;
-        const { page: currentPage, size: currentSize, ...currentFilters } =
-          (currentArg as Record<string, unknown>) || {};
-        const { page: prevPage, size: prevSize, ...prevFilters } =
-          (previousArg as Record<string, unknown>) || {};
-
-        if (currentPage !== prevPage || currentSize !== prevSize) return true;
-        return JSON.stringify(currentFilters) !== JSON.stringify(prevFilters);
-      },
+      forceRefetch: ({ currentArg, endpointState }) => (currentArg?.page ?? 0) > ((endpointState?.data as PlanningWorkbenchBacklogPage | undefined)?.page.number ?? -1),
       providesTags: (result) =>
         result
           ? [
@@ -1558,7 +1550,7 @@ export const api = createApi({
       { plannerType: "ALGORITHM" | "AI"; itemIds: string[] }
     >({
       query: (body) => ({ url: "/planning-workbench/preview", method: "POST", body }),
-      async onQueryStarted(arg, { queryFulfilled }) {
+      async onQueryStarted(_arg, { queryFulfilled }) {
         try {
           await queryFulfilled;
         } catch (error) {
@@ -1602,7 +1594,7 @@ export const api = createApi({
         { type: "Capacity" as const, id: "LIST" as const },
         { type: "ParticipantWorkload" as const, id: "LIST" as const },
       ],
-      async onQueryStarted(arg, { queryFulfilled }) {
+      async onQueryStarted(_arg, { queryFulfilled }) {
         try {
           await queryFulfilled;
         } catch (error) {
@@ -1760,7 +1752,7 @@ export const api = createApi({
     updateTask: b.mutation<BacklogItem, Partial<BacklogItem> & { id: string }>(
       {
         query: (body) => ({ url: "/tasks/update", method: "POST", body }),
-        invalidatesTags: (result, error, arg) => error ? [] : [
+        invalidatesTags: (_result, error, arg) => error ? [] : [
           ...(shouldInvalidateTaskList(arg)
             ? [{ type: "Task" as const, id: "LIST" as const }]
             : []),
@@ -2077,7 +2069,7 @@ export const api = createApi({
         method: "POST",
         body: { storyUrl, participantLinks },
       }),
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         { type: "Task" as const, id: arg.taskId },
         { type: "Task" as const, id: "LIST" as const },
         { type: "ParticipantWorkload" as const, id: "LIST" as const },
@@ -2113,7 +2105,7 @@ export const api = createApi({
     }),
     deleteTask: b.mutation<BacklogItem, { id: string }>({
       query: (body) => ({ url: "/tasks/delete", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         { type: "Task" as const, id: arg.id },
         { type: "Task" as const, id: "LIST" as const },
         { type: "Capacity" as const, id: "LIST" as const },
@@ -2267,9 +2259,13 @@ export const api = createApi({
       query: ({ taskId }) => ({ url: `/planning-workbench/from-task/${taskId}`, method: "POST" }),
       invalidatesTags: [{ type: "PlanningItem", id: "LIST" }],
     }),
-    getReleaseOptions: b.query<{ id: string; name?: string; promDate: string }[], { teamKey: string; quarterIds?: string[]; fromDate?: string }>({
-      query: ({ teamKey, quarterIds, fromDate }) => ({ url: `/${teamKey}/releases/options`, skipTeamPrefix: true,
-        params: { ...(quarterIds?.length ? { quarterId: [...quarterIds].sort().join(",") } : {}), ...(fromDate ? { fromDate } : {}) } }),
+    getReleaseOptions: b.query<ReleaseOption[], ReleaseOptionsArgs>({
+      serializeQueryArgs: ({ endpointName, queryArgs }) => `${endpointName}-${JSON.stringify(normalizeReleaseOptions(queryArgs))}`,
+      query: (args) => {
+        const { teamKey, quarterIds, fromDate, search, ids } = normalizeReleaseOptions(args);
+        return { url: `/${teamKey}/releases/options`, skipTeamPrefix: true,
+          params: { ...(quarterIds?.length ? { quarterId: quarterIds.join(",") } : {}), ...(fromDate ? { fromDate } : {}), ...(search ? { search } : {}), ...(ids?.length ? { ids: ids.join(",") } : {}) } };
+      },
       providesTags: [{ type: "Release", id: "LIST" }],
     }),
     // ---- Releases ----
@@ -2343,7 +2339,7 @@ export const api = createApi({
       }
     >({
       query: (body) => ({ url: "/releases/update", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         { type: "Release" as const, id: arg.id },
         { type: "Release" as const, id: "LIST" as const },
       ],
@@ -2374,7 +2370,7 @@ export const api = createApi({
     }),
     deleteRelease: b.mutation<Release, { id: string }>({
       query: (body) => ({ url: "/releases/delete", method: "POST", body }),
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         { type: "Release" as const, id: arg.id },
         { type: "Release" as const, id: "LIST" as const },
       ],
@@ -2468,7 +2464,7 @@ export const api = createApi({
         body: { name, jiraBoardId },
         skipTeamPrefix: true,
       }),
-      invalidatesTags: (r, e, arg) => [
+      invalidatesTags: (_r, _e, arg) => [
         { type: "Team", id: arg.key },
         listTag("Team"),
       ],
@@ -2502,7 +2498,7 @@ export const api = createApi({
         params: { deleteData },
         skipTeamPrefix: true,
       }),
-      invalidatesTags: (r, e, arg) => [
+      invalidatesTags: (_r, _e, arg) => [
         { type: "Team", id: arg.key },
         listTag("Team"),
       ],
@@ -2527,6 +2523,7 @@ export const api = createApi({
 
 export const {
   useGetQuartersQuery,
+  useGetQuarterOptionsQuery,
   useAddQuarterMutation,
   useUpdateQuarterMutation,
   useDeleteQuarterMutation,
@@ -2592,7 +2589,7 @@ const EMPTY_PARTICIPANTS: Participant[] = [];
 
 /** Active choices share the complete directory cache used by task cards. */
 export function useActiveParticipantsQuery() {
-  const result = useGetParticipantsQuery();
+  const result = useGetParticipantsQuery(undefined, { selectFromResult: ({ data }) => ({ data }) });
   const data = useMemo(
     () => result.data?.filter((participant) => participant.active !== false) ?? EMPTY_PARTICIPANTS,
     [result.data]

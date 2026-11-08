@@ -1,3 +1,6 @@
+import { skipToken } from "@reduxjs/toolkit/query";
+import useResolvedQuarterFilter from "./useResolvedQuarterFilter";
+import useToday from "./useToday";
 // src/views/CapacityPage.tsx
 import * as React from "react";
 import {
@@ -13,7 +16,7 @@ import {
   useGetCapacityQuery,
   useActiveParticipantsQuery,
 } from "../app/api";
-import type { Quarter, Sprint } from "../types";
+import type { Quarter, Sprint, CapacityRow } from "../types";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import CapacityTable from "../components/CapacityTable";
 import { useAppDispatch, useAppSelector } from "./hooks";
@@ -21,15 +24,9 @@ import { setCapacityFilters, setCapacitySelectedQuarterIds } from "../app/uiSlic
 
 moment.locale("ru");
 
-const ruDate = (iso: string) =>
-  moment(iso, "YYYY-MM-DD", true).format("DD.MM.YYYY");
-const round1 = (v: number) => Math.round(v * 10) / 10;
-
-function getCurrentQuarterId(quarters: Quarter[]) {
-  const today = moment().format("YYYY-MM-DD");
-  const q = quarters.find((x) => x.startDate <= today && today <= x.endDate);
-  return q ? q.id : null;
-}
+const EMPTY_QUARTERS: Quarter[] = [];
+const EMPTY_SPRINTS: Sprint[] = [];
+const EMPTY_CAPACITY: CapacityRow[] = [];
 
 function collectSprintIds(
   selectedQuarterIds: string[],
@@ -54,61 +51,35 @@ function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
   return true;
 }
 
-export default function CapacityPage() {
-  const { data: quarters = [], isLoading: isQuartersLoading } =
-    useGetQuartersQuery();
-  const { data: sprints = [], isLoading: isSprintsLoading } =
-    useGetSprintsQuery(undefined);
+function CapacityPage() {
+  const { data: quartersData } = useGetQuartersQuery(undefined, { selectFromResult: ({ data }) => ({ data }) });
+  const quarters = quartersData ?? EMPTY_QUARTERS;
+  const { data: sprints = EMPTY_SPRINTS } = useGetSprintsQuery(undefined, { selectFromResult: ({ data }) => ({ data }) });
   const { data: participantList = [] } = useActiveParticipantsQuery();
   const dispatch = useAppDispatch();
   const capacityFilters = useAppSelector((state) => state.ui.capacity);
   const {
-    selectedQuarterIds,
+    selectedQuarterIds: storedQuarterIds,
     selectedParticipantIds,
     rolesFilter,
     userStreamsFilter,
   } = capacityFilters;
 
-  const { data: capacityRows = [], isLoading: isCapacityLoading } =
-    useGetCapacityQuery({
-      quarterIds: selectedQuarterIds.length ? selectedQuarterIds : undefined,
-      participantIds: selectedParticipantIds.length
-        ? selectedParticipantIds
-        : undefined,
-      roles: rolesFilter.length ? rolesFilter : undefined,
-      userStreams: userStreamsFilter.length ? userStreamsFilter : undefined,
-    });
-
-  React.useEffect(() => {
-    if (!quarters.length) return;
-    const actualIds = new Set(quarters.map((q) => q.id));
-    const filtered = selectedQuarterIds.filter((id) => actualIds.has(id));
-    if (!shallowStringArrayEqual(filtered, selectedQuarterIds)) {
-      dispatch(setCapacitySelectedQuarterIds(filtered));
-    }
-  }, [quarters, selectedQuarterIds, dispatch]);
-
-  React.useEffect(() => {
-    if (!quarters.length || selectedQuarterIds.length > 0) return;
-    const currentId = getCurrentQuarterId(quarters);
-    if (currentId) {
-      dispatch(setCapacitySelectedQuarterIds([currentId]));
-    }
-  }, [quarters, selectedQuarterIds.length, dispatch]);
+  const today = useToday();
+  const currentQuarterId = React.useMemo(() => quarters.find(q => q.startDate <= today && today <= q.endDate)?.id, [quarters, today]);
+  const persistQuarters = React.useCallback((ids: string[]) => { dispatch(setCapacitySelectedQuarterIds(ids)); }, [dispatch]);
+  const selectedQuarterIds = useResolvedQuarterFilter(quartersData, storedQuarterIds, persistQuarters, currentQuarterId);
+  const { data: capacityRows = EMPTY_CAPACITY } = useGetCapacityQuery(quartersData ? {
+    quarterIds: selectedQuarterIds,
+    participantIds: selectedParticipantIds,
+    roles: rolesFilter,
+    userStreams: userStreamsFilter,
+  } : skipToken);
 
   const displaySprints = React.useMemo(() => {
     return collectSprintIds(selectedQuarterIds, sprints);
   }, [selectedQuarterIds, sprints]);
 
-  const quarterFilterOptions = React.useMemo(() => {
-    return quarters
-      .slice()
-      .sort((a, b) => a.endDate.localeCompare(b.endDate))
-      .map((q) => ({
-        value: q.id,
-        label: `${q.name} — ${ruDate(q.startDate)} → ${ruDate(q.endDate)}`,
-      }));
-  }, [quarters]);
 
   const participantOptions = React.useMemo(
     () =>
@@ -189,14 +160,11 @@ export default function CapacityPage() {
             }}
             filters={[
               {
-                type: "autocomplete",
+                type: "quarters",
                 key: "quarters",
                 minWidth: 280,
                 props: {
-                  multiple: true,
-                  allowCustom: false,
                   label: "Фильтр по кварталам",
-                  options: quarterFilterOptions,
                   value: selectedQuarterIds,
                   onChange: handleQuarterFilterChange,
                 },
@@ -247,3 +215,5 @@ export default function CapacityPage() {
     </Paper>
   );
 }
+
+export default React.memo(CapacityPage);

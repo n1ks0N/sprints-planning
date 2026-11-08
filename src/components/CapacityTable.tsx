@@ -30,7 +30,7 @@ type CapacityTableProps = {
   emptyText?: string;
 };
 
-export default function CapacityTable({
+function CapacityTable({
   rows,
   sprints,
   emptyText = "Нет участников для отображения",
@@ -168,3 +168,5 @@ export default function CapacityTable({
     </Box>
   );
 }
+
+export default React.memo(CapacityTable);

@@ -211,6 +211,9 @@ Legacy statuses migrate with `notdone → canceled` and `partial → done`. A da
 
 Task lists apply workspace and other predicates before pagination, and pinned tasks cannot bypass team/workspace.
 Order updates are scoped by team and workspace. Backlog allocations are retained as estimates and excluded from committed capacity.
+Task inclusion in committed workload depends only on `workspace = 'ROADMAP'`, without a status predicate.
+All roadmap allocations count, including completed and canceled tasks. Capacity, planning's committed load, and
+participant workload use this rule; the participant workload UI does not discard tasks by status.
 Jira export checks workspace both when scheduling and processing the batch. Inactive participants stay in historical assignments,
 while create/replace/copy/planning operations do not make new inactive assignments.
 
@@ -218,6 +221,8 @@ The planning backlog has an optional unique `source_task_id` and source revision
 Apply locks the draft and source, rejects stale data, updates the original ID, and preserves inactive assignments and their data.
 Independent planning items still create new tasks. Solver rules are unchanged. Planning backlog filtering, sorting and pagination
 run in PostgreSQL (`PlanningBacklogPageRepository`), without loading all items or querying sprint quarters per item.
+Native planning queries and release insertion qualify table references using Hibernate's `{h-schema}` placeholder.
+This keeps them aligned with JPQL when `hibernate.default_schema` differs from the connection's `search_path`.
 
 `GET /{teamKey}/releases/options` projects only ID, name and date and supports quarter/date constraints for suggestions.
 The task/date picker accepts valid manual dates outside the suggestions. `releasePromDate` filters by exact date without creating

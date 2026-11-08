@@ -9,6 +9,28 @@ import org.junit.jupiter.api.Test;
 class TaskFilterTest {
 
     @Test
+    void releaseSelectionCombinesLegacyIdAndMultipleDates() {
+        UUID legacyId = UUID.randomUUID();
+        TaskFilter filter = TaskFilter.from(null, null, null, legacyId.toString(), null, null,
+            null, null, null, null, null, null, null, null).withScope("ROADMAP", null)
+            .withReleases(null, "2030-01-15,2030-04-20,2030-01-15");
+        assertThat(filter.releases().ids()).containsExactly(legacyId);
+        assertThat(filter.releases().dates()).containsExactlyInAnyOrder(java.time.LocalDate.parse("2030-01-15"), java.time.LocalDate.parse("2030-04-20"));
+        assertThat(ReleaseSelection.decode(filter.releases().encode())).isEqualTo(filter.releases());
+        assertThat(filter.releases().matches(null, java.time.LocalDate.parse("2030-04-20"))).isTrue();
+        assertThat(filter.releases().matches(null, null)).isFalse();
+    }
+
+    @Test
+    void releaseSelectionRejectsInvalidDatesAndIds() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ReleaseSelection.parse(null, "2030-02-30"))
+            .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ReleaseSelection.parse("not-an-id", null))
+            .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        assertThat(ReleaseSelection.decode(null).isEmpty()).isTrue();
+    }
+
+    @Test
     void fromParsesFlagsIdsAndStatuses() {
         String quarterId = "11111111-1111-1111-1111-111111111111";
         String participantId = "22222222-2222-2222-2222-222222222222";

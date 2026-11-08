@@ -681,6 +681,7 @@ class PlanningWorkbenchServiceTest {
 
     private PlanningBacklogItemRepository planningRepo() {
         return proxy(PlanningBacklogItemRepository.class, (method, args) -> switch (method.getName()) {
+            case "findSourceTaskIds" -> List.of();
             case "findAllByTeamKeyOrderByDisplayOrderAscCreatedAtAsc" -> items.values().stream()
                 .filter(item -> args[0].equals(item.getTeamKey()))
                 .sorted((left, right) -> Integer.compare(left.getDisplayOrder(), right.getDisplayOrder()))
@@ -736,6 +737,12 @@ class PlanningWorkbenchServiceTest {
 
     private SprintRepository sprintRepo() {
         return proxy(SprintRepository.class, (method, args) -> switch (method.getName()) {
+            case "findPlanningWindowSprints" -> {
+                @SuppressWarnings("unchecked") Collection<UUID> ids = (Collection<UUID>) args[1];
+                @SuppressWarnings("unchecked") Collection<UUID> quarterIds = (Collection<UUID>) args[2];
+                yield sprints.values().stream().filter(sprint -> args[0].equals(sprint.getTeamKey())
+                    && (ids.contains(sprint.getId()) || quarterIds.contains(sprint.getQuarter().getId()))).toList();
+            }
             case "findByTeamKeyAndIdIn" -> {
                 String teamKey = (String) args[0];
                 @SuppressWarnings("unchecked")
@@ -898,6 +905,12 @@ class PlanningWorkbenchServiceTest {
 
         private CapturingTaskService() {
             super(null, null, null, null, null, null, null, null, null, null, null, null, null);
+        }
+
+        @Override
+        public List<TaskDto> applyPlanningBatch(String teamKey, List<TaskService.PlanningMutation> mutations,
+            Map<UUID, com.sber.isu.sprints_planning.model.TaskEntity> lockedTasks) {
+            return applyPlanningBatch(teamKey, mutations);
         }
 
         @Override

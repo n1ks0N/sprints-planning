@@ -15,6 +15,7 @@ import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
 
 @Entity
+@org.hibernate.annotations.Immutable
 @Table(name = "api_call_history")
 public class ApiCallHistoryEntity {
 

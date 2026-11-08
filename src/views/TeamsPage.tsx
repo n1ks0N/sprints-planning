@@ -39,7 +39,7 @@ import PageHelpDialog, {
   PageHelpContent,
 } from "../components/PageHelpDialog";
 
-export default function TeamsPage() {
+function TeamsPage() {
   const dispatch = useDispatch();
   const { data: teams } = useGetTeamsQuery();
   const [addTeam, { isLoading: isAdding }] = useAddTeamMutation();
@@ -336,3 +336,5 @@ export default function TeamsPage() {
     </Box>
   );
 }
+
+export default React.memo(TeamsPage);

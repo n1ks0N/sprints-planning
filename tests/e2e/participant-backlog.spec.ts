@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { buildPlanningScenario, urls } from "./planning.mock";
 
-async function setup(page: Page, taskCount = 1) {
+async function setup(page: Page, taskCount = 1, workspace: "ROADMAP" | "BACKLOG" = "ROADMAP") {
   const scenario = buildPlanningScenario();
   const participants = scenario.participants.map((participant) => ({ ...participant, active: true }));
   const tasks = Array.from({ length: taskCount }, (_, index) => ({
@@ -10,7 +10,8 @@ async function setup(page: Page, taskCount = 1) {
     description: "Описание",
     dod: "Готово",
     priority: 2,
-    status: "inprogress",
+    workspace,
+    status: workspace === "BACKLOG" ? "backlog" : "inprogress",
     customers: ["Customer"],
     streams: ["Core"],
     participantIds: participants.map((participant) => participant.id),
@@ -29,7 +30,8 @@ async function setup(page: Page, taskCount = 1) {
     createdAt: "2026-04-17",
     updatedAt: "2026-04-17",
   }));
-  const state = { participants, tasks, taskPages: [] as number[], creates: [] as any[], failNextCreate: false };
+  const state = { participants, tasks, taskPages: [] as number[], creates: [] as any[], failNextCreate: false,
+    transfers: [] as string[], failNextTransfer: false, transferGate: null as Promise<void> | null };
   await page.addInitScript((quarterId) => {
     localStorage.setItem("sprints-planning-user-name", "E2E User");
     localStorage.setItem("uiState_v1", JSON.stringify({ backlog: {
@@ -52,7 +54,7 @@ async function setup(page: Page, taskCount = 1) {
       participant.active = false;
       return respond(participant);
     }
-    if (resource === "/quarters") return respond(scenario.quarters);
+    if (resource === "/quarters" || resource === "/quarters/options") return respond(scenario.quarters);
     if (resource === "/sprints") return respond(scenario.sprints);
     if (resource === "/releases" || resource === "/releases/options") return respond(scenario.releases);
     if (resource === "/filters") return respond({ ...scenario.filters,
@@ -76,12 +78,25 @@ async function setup(page: Page, taskCount = 1) {
       const size = Number(url.searchParams.get("size") || 20);
       state.taskPages.push(page);
       const search = url.searchParams.get("search")?.toLowerCase();
-      const ordered = tasks.filter((task) => !search || task.title.toLowerCase().includes(search))
+      const requestedWorkspace = url.searchParams.get("workspace");
+      const ordered = tasks.filter((task) => (!requestedWorkspace || task.workspace === requestedWorkspace)
+        && (!search || task.title.toLowerCase().includes(search)))
         .sort((left, right) => left.order - right.order);
       return respond({ content: ordered.slice(page * size, (page + 1) * size), page: {
         number: page, size, totalElements: ordered.length, totalPages: Math.ceil(ordered.length / size),
       }, first: page === 0, last: (page + 1) * size >= ordered.length });
     }
+    if (resource.startsWith("/planning-workbench/from-task/")) {
+      const taskId = resource.split("/").at(-1)!;
+      state.transfers.push(taskId);
+      if (state.transferGate) await state.transferGate;
+      if (state.failNextTransfer) {
+        state.failNextTransfer = false;
+        return respond({ error: "Не удалось передать задачу" }, 500);
+      }
+      return respond({ ...tasks.find(task => task.id === taskId), id: `planning-${taskId}`, sourceTaskId: taskId, estimateDays: 5, planningDemands: [] });
+    }
+    if (resource === "/planning-workbench/backlog") return respond({ content: [], page: { number: 0, size: 20, totalElements: 0, totalPages: 0 } });
     if (resource === "/capacity") return respond([]);
     return respond({ message: `Unexpected request: ${request.method()} ${resource}` }, 500);
   });
@@ -116,8 +131,14 @@ test("duplicate refreshes earlier pages after additional pages have loaded", asy
   await expect(page.getByTestId("backlog-task-copy-1")).toBeVisible();
   await expect.poll(() => state.taskPages.slice(requestsBeforeCopy)).toContain(0);
   const cards = page.locator('[data-testid^="backlog-task-"]');
-  await expect.poll(() => cards.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-testid"))))
-    .toEqual(["backlog-task-task-1", "backlog-task-copy-1", "backlog-task-task-2", "backlog-task-task-3", "backlog-task-task-4"]);
+  await expect.poll(() => cards.evaluateAll((nodes) => nodes.slice(0, 3).map((node) => node.getAttribute("data-testid"))))
+    .toEqual(["backlog-task-task-1", "backlog-task-copy-1", "backlog-task-task-2"]);
+  await expect(page.getByText("Загружено 5 задач из 5", { exact: true })).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await expect(page.getByTestId("backlog-task-task-4")).toBeVisible();
+  const previous = await page.getByTestId("backlog-task-task-3").boundingBox();
+  const last = await page.getByTestId("backlog-task-task-4").boundingBox();
+  expect(previous && last && previous.y < last.y).toBeTruthy();
 });
 
 test("duplicating the last loaded row keeps the copy visible across a page boundary", async ({ page }) => {
@@ -163,4 +184,81 @@ test("deactivation hides the participant from the team and preserves the task ro
   await expect(page.getByTestId("backlog-task-copy-1")).toBeVisible();
   expect(state.creates[0].participantIds).not.toContain(participant.id);
   expect(state.creates[0].allocations).not.toHaveProperty(participant.id);
+});
+
+
+test("header highlights only the current section, including planning review and trailing slashes", async ({ page }) => {
+  await setup(page);
+  await page.goto(urls.backlog);
+  const header = page.getByRole("banner");
+  const selected = header.locator('a[aria-current="page"]');
+  await expect(selected).toHaveText("Дорожная карта");
+  await expect(selected).toHaveCSS("background-color", "rgb(0, 160, 0)");
+  await expect(selected).toHaveCount(1);
+  await header.getByRole("link", { name: "Бэклог", exact: true }).click();
+  await expect(selected).toHaveText("Бэклог");
+  await expect(header.getByRole("link", { name: "Дорожная карта", exact: true })).not.toHaveAttribute("aria-current", "page");
+  await page.goto("/#/customlab/backlog/");
+  await expect(selected).toHaveText("Бэклог");
+  await header.getByRole("link", { name: "Планирование", exact: true }).click();
+  await expect(selected).toHaveText("Планирование");
+  await page.goto("/#/customlab/planning/review");
+  await expect(selected).toHaveText("Планирование");
+  await expect(selected).toHaveCount(1);
+});
+
+test("backlog quick action transfers once and shows progress and success without a menu", async ({ page }) => {
+  const state = await setup(page, 2, "BACKLOG");
+  let releaseTransfer!: () => void;
+  state.transferGate = new Promise<void>(resolve => { releaseTransfer = resolve; });
+  await page.goto("/#/customlab/backlog");
+  const card = page.getByTestId("backlog-task-task-1");
+  const action = card.getByTestId("transfer-to-planning-task-1");
+  await expect(action).toHaveAccessibleName("Добавить в планирование: Задача 1");
+  await expect(card.getByRole("button", { name: /Добавить.*корзину Jira/ })).toHaveCount(0);
+  await action.click();
+  await expect(action).toBeDisabled();
+  await expect(action.getByRole("progressbar")).toBeVisible();
+  await expect.poll(() => state.transfers).toEqual(["task-1"]);
+  releaseTransfer();
+  await expect(action).toHaveAccessibleName("Убрать из планирования: Задача 1");
+  await expect(action).toBeEnabled();
+  await expect(page.getByText("Задача добавлена в текущий набор для планирования", { exact: true })).toBeVisible();
+  await expect(card).toBeVisible();
+  expect(state.transfers).toEqual(["task-1"]);
+  await page.getByRole("banner").getByRole("link", { name: "Планирование", exact: true }).click();
+  await expect(page.getByTestId("planning-selected-count")).toHaveText("1");
+  await expect(page.getByTestId("planning-item-planning-task-1")).toBeVisible();
+  await page.getByRole("banner").getByRole("link", { name: "Бэклог", exact: true }).click();
+  await expect(page.getByTestId("transfer-to-planning-task-1")).toBeEnabled();
+  await page.getByTestId("transfer-to-planning-task-1").click();
+  await expect(page.getByTestId("transfer-to-planning-task-1")).toHaveAccessibleName("Добавить в планирование: Задача 1");
+  expect(state.transfers).toEqual(["task-1"]);
+  await page.getByRole("banner").getByRole("link", { name: "Планирование", exact: true }).click();
+  await expect(page.getByTestId("planning-selected-count")).toHaveText("0");
+  await page.getByRole("banner").getByRole("link", { name: "Бэклог", exact: true }).click();
+  await page.getByTestId("transfer-to-planning-task-1").click();
+  await expect(page.getByTestId("transfer-to-planning-task-1")).toHaveAccessibleName("Убрать из планирования: Задача 1");
+  await page.getByTestId("transfer-to-planning-task-2").click();
+  await expect(page.getByTestId("transfer-to-planning-task-2")).toHaveAccessibleName("Убрать из планирования: Задача 2");
+  await page.getByRole("banner").getByRole("link", { name: "Планирование", exact: true }).click();
+  await expect(page.getByTestId("planning-selected-count")).toHaveText("2");
+  expect(state.transfers).toEqual(["task-1", "task-1", "task-2"]);
+  await page.getByRole("banner").getByRole("link", { name: "Дорожная карта", exact: true }).click();
+  await expect(page.getByTestId("transfer-to-planning-task-1")).toHaveCount(0);
+});
+
+test("failed quick transfer can be retried and canceled backlog tasks cannot transfer", async ({ page }) => {
+  const state = await setup(page, 2, "BACKLOG");
+  state.tasks[1].status = "canceled";
+  state.failNextTransfer = true;
+  await page.goto("/#/customlab/backlog");
+  const action = page.getByTestId("transfer-to-planning-task-1");
+  await expect(page.getByTestId("transfer-to-planning-task-2")).toBeDisabled();
+  await action.click();
+  await expect(page.getByText("Не удалось передать задачу в планирование", { exact: true })).toBeVisible();
+  await expect(action).toBeEnabled();
+  await action.click();
+  await expect(action).toHaveAccessibleName("Убрать из планирования: Задача 1");
+  expect(state.transfers).toEqual(["task-1", "task-1"]);
 });

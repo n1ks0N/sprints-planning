@@ -309,7 +309,6 @@ class TaskServiceAllocationTest {
         when(participantRepository.findByIdAndTeamKey(participant.getId(), "team-a")).thenReturn(Optional.of(participant));
         when(sprintRepository.findByIdAndTeamKey(sprint.getId(), "team-a")).thenReturn(Optional.of(sprint));
         when(taskAllocationRepository.findById(allocationId)).thenAnswer(invocation -> findAllocation(task, allocationId));
-        when(taskLoadRepository.findById(loadId)).thenAnswer(invocation -> findLoad(task, loadId));
 
         TaskDto result = taskService.upsertAllocation(
             "team-a",
@@ -336,7 +335,6 @@ class TaskServiceAllocationTest {
         when(participantRepository.findByIdAndTeamKey(participant.getId(), "team-a")).thenReturn(Optional.of(participant));
         when(sprintRepository.findByIdAndTeamKey(sprint.getId(), "team-a")).thenReturn(Optional.of(sprint));
         when(taskAllocationRepository.findById(allocationId)).thenAnswer(invocation -> findAllocation(task, allocationId));
-        when(taskLoadRepository.findById(loadId)).thenAnswer(invocation -> findLoad(task, loadId));
 
         taskService.upsertAllocation(
             "team-a",
@@ -360,7 +358,6 @@ class TaskServiceAllocationTest {
         ParticipantEntity oldParticipant = participant("22222222-2222-2222-2222-222222222222");
         ParticipantEntity newParticipant = participant("44444444-4444-4444-4444-444444444444");
         SprintEntity sprint = sprint("33333333-3333-3333-3333-333333333333");
-        TaskAllocationId newAllocationId = new TaskAllocationId(task.getId(), newParticipant.getId(), sprint.getId());
         TaskLoadId loadId = new TaskLoadId(task.getId(), sprint.getId());
 
         task.getParticipants().add(participantLink(task, oldParticipant, "team-a"));
@@ -370,8 +367,7 @@ class TaskServiceAllocationTest {
         when(taskRepository.findWithDetailsById(task.getId(), "team-a")).thenReturn(task);
         when(taskRepository.findByIdAndTeamKeyForUpdate(task.getId(), "team-a")).thenReturn(Optional.of(task));
         when(sprintRepository.findByTeamKeyOrderByQuarterAndOrder("team-a")).thenReturn(List.of(sprint));
-        when(participantRepository.findByIdAndTeamKey(newParticipant.getId(), "team-a")).thenReturn(Optional.of(newParticipant));
-        when(taskAllocationRepository.findById(newAllocationId)).thenAnswer(invocation -> findAllocation(task, newAllocationId));
+        when(participantRepository.findByTeamKeyAndIdIn("team-a", Set.of(newParticipant.getId()))).thenReturn(List.of(newParticipant));
         lenient().when(taskJiraIssueRepository.findAllByTeamKeyAndTaskIdIn("team-a", Set.of(task.getId()))).thenReturn(List.of());
 
         TaskDto result = taskService.update("team-a", new TaskUpdateRequest(
@@ -513,7 +509,6 @@ class TaskServiceAllocationTest {
     @Test
     void createSynchronizesLegacyCustomerAndStreamFields() {
         AtomicReference<TaskEntity> savedTask = new AtomicReference<>();
-        lenient().when(taskRepository.findMaxDisplayOrder("team-a")).thenReturn(0);
         lenient().when(taskRepository.save(org.mockito.ArgumentMatchers.any(TaskEntity.class))).thenAnswer(invocation -> {
             TaskEntity entity = invocation.getArgument(0);
             if (entity.getId() == null) {

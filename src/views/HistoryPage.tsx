@@ -9,7 +9,7 @@ import {
   Typography,
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { useGetHistoryQuery } from "../app/api";
 import type { ApiSessionHistory } from "../types";
 
@@ -22,12 +22,12 @@ const formatDateTime = (value: string) =>
     minute: "2-digit",
   });
 
-export default function HistoryPage() {
+function HistoryPage() {
   const pageSize = 10;
   const [page, setPage] = useState(0);
   const [sessions, setSessions] = useState<ApiSessionHistory[]>([]);
   const [hasMore, setHasMore] = useState(true);
-  const { data, isLoading, isError, isFetching } = useGetHistoryQuery(
+  const { currentData: data, isLoading, isError, isFetching } = useGetHistoryQuery(
     { page, size: pageSize },
     {
       refetchOnMountOrArgChange: true,
@@ -38,7 +38,12 @@ export default function HistoryPage() {
 
   useEffect(() => {
     if (!data) return;
-    setSessions((prev) => (page === 0 ? data : [...prev, ...data]));
+    setSessions((prev) => {
+      if (page === 0) return data;
+      const sessionsById = new Map(prev.map(session => [session.sessionId, session]));
+      data.forEach(session => sessionsById.set(session.sessionId, session));
+      return [...sessionsById.values()];
+    });
     setHasMore(data.length === pageSize);
   }, [data, page, pageSize]);
 
@@ -123,3 +128,5 @@ export default function HistoryPage() {
     </Stack>
   );
 }
+
+export default memo(HistoryPage);

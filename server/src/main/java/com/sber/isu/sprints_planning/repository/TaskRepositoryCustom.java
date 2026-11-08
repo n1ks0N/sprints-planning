@@ -9,6 +9,10 @@ import java.util.UUID;
 
 public interface TaskRepositoryCustom {
 
+    TaskEntity findWithDetailsById(UUID id, String teamKey);
+
+    List<TaskEntity> findAllByIdInAndTeamKey(List<UUID> ids, String teamKey);
+
     List<TaskEntity> findFilteredWithDetails(String teamKey, TaskFilter filter);
 
     Page<TaskEntity> findFilteredPageWithDetails(String teamKey, TaskFilter filter, int page, int size);

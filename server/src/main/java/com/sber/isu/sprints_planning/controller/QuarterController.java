@@ -30,6 +30,12 @@ public class QuarterController {
         return quarterService.findAll(TeamKeyNormalizer.normalize(teamKey));
     }
 
+    @GetMapping("/quarters/options")
+    public List<QuarterDto> getOptions(@PathVariable String teamKey,
+        @org.springframework.web.bind.annotation.RequestParam(required = false) String search) {
+        return quarterService.options(TeamKeyNormalizer.normalize(teamKey), search);
+    }
+
     @PostMapping("/quarters")
     public QuarterDto createQuarter(@PathVariable String teamKey, @RequestBody @Valid QuarterCreateRequest request) {
         String normalizedTeamKey = TeamKeyNormalizer.normalize(teamKey);

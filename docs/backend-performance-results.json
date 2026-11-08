@@ -1,0 +1,1442 @@
+{
+  "environment": {
+    "date": "2026-11-08",
+    "host_arch": "x86_64",
+    "jvm": "OpenJDK 21.0.13 Temurin 21.0.13+9",
+    "image_id": "sha256:3cfdbb0f75d10b24e237c078910bd0340cb75828e1c91e2a0b770a8408dae0ad",
+    "image_digests": [
+      "eclipse-temurin@sha256:0b99b3376fbb50dbf9c0af8535fdd5b8eb0d3fdfc8b1e4967f383b6919f6901a"
+    ],
+    "api_limits": {
+      "cpu": 2,
+      "memory_gib": 2,
+      "xmx_mib": 1024
+    },
+    "postgres": "15.15",
+    "java_target": 17,
+    "spring_boot": "3.4.6",
+    "ortools": "9.11.4210",
+    "jars": {
+      "before": {
+        "sha256": "1a77e3a3635f220b30c0a58c12b13642464ebf72b1d6cc52bba06d4222d53962",
+        "class_file_major": 61
+      },
+      "final": {
+        "sha256": "677e975dcf0b922092d8c888e5f0a932bbba80b050969ff9ef65bc8b87c17975",
+        "class_file_major": 61
+      }
+    }
+  },
+  "dataset": {
+    "participants": 50,
+    "tasks": 500,
+    "max_assignees": 10,
+    "allocations": 16500,
+    "planning_items": 500,
+    "history": 20000
+  },
+  "methodology": {
+    "read_warmup": 5,
+    "read_samples": 20,
+    "write_warmup": 2,
+    "write_samples": 10,
+    "concurrency": 1,
+    "reads_with_session_headers": false,
+    "writes_with_session_headers": true,
+    "baseline_linked_apply_samples": 3,
+    "baseline_linked_apply_warmup": 0
+  },
+  "reads": [
+    {
+      "name": "tasks_first20",
+      "before": {
+        "name": "tasks_first20",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 116.49,
+        "p95_ms": 154.78,
+        "sql_calls_per_request": 12.0,
+        "sql_rows_per_request": 1327.0,
+        "db_exec_ms_per_request": 23.5,
+        "response_bytes": 121114,
+        "select_calls_per_request": 12.0
+      },
+      "after": {
+        "name": "tasks_first20",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 49.08,
+        "p95_ms": 69.65,
+        "sql_calls_per_request": 10.0,
+        "sql_rows_per_request": 1275.0,
+        "db_exec_ms_per_request": 24.31,
+        "response_bytes": 121114,
+        "select_calls_per_request": 10.0
+      }
+    },
+    {
+      "name": "tasks_page10",
+      "before": {
+        "name": "tasks_page10",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&page=10&size=20",
+        "samples": 20,
+        "p50_ms": 89.25,
+        "p95_ms": 112.45,
+        "sql_calls_per_request": 12.0,
+        "sql_rows_per_request": 1327.0,
+        "db_exec_ms_per_request": 23.73,
+        "response_bytes": 121400,
+        "select_calls_per_request": 12.0
+      },
+      "after": {
+        "name": "tasks_page10",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&page=10&size=20",
+        "samples": 20,
+        "p50_ms": 45.07,
+        "p95_ms": 48.95,
+        "sql_calls_per_request": 10.0,
+        "sql_rows_per_request": 1275.0,
+        "db_exec_ms_per_request": 22.86,
+        "response_bytes": 121400,
+        "select_calls_per_request": 10.0
+      }
+    },
+    {
+      "name": "tasks_200",
+      "before": {
+        "name": "tasks_200",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&page=0&size=200",
+        "samples": 20,
+        "p50_ms": 543.97,
+        "p95_ms": 588.06,
+        "sql_calls_per_request": 12.0,
+        "sql_rows_per_request": 12637.0,
+        "db_exec_ms_per_request": 183.03,
+        "response_bytes": 1212206,
+        "select_calls_per_request": 12.0
+      },
+      "after": {
+        "name": "tasks_200",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&page=0&size=200",
+        "samples": 20,
+        "p50_ms": 308.13,
+        "p95_ms": 366.0,
+        "sql_calls_per_request": 10.0,
+        "sql_rows_per_request": 12525.0,
+        "db_exec_ms_per_request": 183.44,
+        "response_bytes": 1212206,
+        "select_calls_per_request": 10.0
+      }
+    },
+    {
+      "name": "tasks_quarter",
+      "before": {
+        "name": "tasks_quarter",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 104.53,
+        "p95_ms": 109.76,
+        "sql_calls_per_request": 12.0,
+        "sql_rows_per_request": 1408.0,
+        "db_exec_ms_per_request": 42.97,
+        "response_bytes": 129056,
+        "select_calls_per_request": 12.0
+      },
+      "after": {
+        "name": "tasks_quarter",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 65.12,
+        "p95_ms": 73.06,
+        "sql_calls_per_request": 10.0,
+        "sql_rows_per_request": 1365.0,
+        "db_exec_ms_per_request": 41.32,
+        "response_bytes": 129056,
+        "select_calls_per_request": 10.0
+      }
+    },
+    {
+      "name": "tasks_search",
+      "before": {
+        "name": "tasks_search",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&search=task%2001&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 57.71,
+        "p95_ms": 66.31,
+        "sql_calls_per_request": 12.0,
+        "sql_rows_per_request": 680.0,
+        "db_exec_ms_per_request": 17.49,
+        "response_bytes": 60637,
+        "select_calls_per_request": 12.0
+      },
+      "after": {
+        "name": "tasks_search",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&search=task%2001&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 41.74,
+        "p95_ms": 59.5,
+        "sql_calls_per_request": 10.0,
+        "sql_rows_per_request": 650.0,
+        "db_exec_ms_per_request": 20.42,
+        "response_bytes": 60637,
+        "select_calls_per_request": 10.0
+      }
+    },
+    {
+      "name": "tasks_load_sort",
+      "before": {
+        "name": "tasks_load_sort",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&sortBy=load&sortDirection=desc&quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd&size=20",
+        "samples": 20,
+        "p50_ms": 128.49,
+        "p95_ms": 177.18,
+        "sql_calls_per_request": 12.0,
+        "sql_rows_per_request": 2098.0,
+        "db_exec_ms_per_request": 56.03,
+        "response_bytes": 192328,
+        "select_calls_per_request": 12.0
+      },
+      "after": {
+        "name": "tasks_load_sort",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&sortBy=load&sortDirection=desc&quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd&size=20",
+        "samples": 20,
+        "p50_ms": 89.93,
+        "p95_ms": 108.97,
+        "sql_calls_per_request": 10.0,
+        "sql_rows_per_request": 2085.0,
+        "db_exec_ms_per_request": 57.88,
+        "response_bytes": 192328,
+        "select_calls_per_request": 10.0
+      }
+    },
+    {
+      "name": "tasks_release_sort",
+      "before": {
+        "name": "tasks_release_sort",
+        "error": 409,
+        "body": "{\"error\":\"Операция нарушает целостность данных\"}"
+      },
+      "after": {
+        "name": "tasks_release_sort",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=ROADMAP&sortBy=releaseDate&size=20",
+        "samples": 20,
+        "p50_ms": 45.44,
+        "p95_ms": 51.69,
+        "sql_calls_per_request": 10.0,
+        "sql_rows_per_request": 1185.0,
+        "db_exec_ms_per_request": 22.56,
+        "response_bytes": 113477,
+        "select_calls_per_request": 10.0
+      }
+    },
+    {
+      "name": "backlog_first20",
+      "before": {
+        "name": "backlog_first20",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=BACKLOG&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 72.02,
+        "p95_ms": 119.1,
+        "sql_calls_per_request": 12.0,
+        "sql_rows_per_request": 1197.0,
+        "db_exec_ms_per_request": 21.88,
+        "response_bytes": 67368,
+        "select_calls_per_request": 12.0
+      },
+      "after": {
+        "name": "backlog_first20",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks?workspace=BACKLOG&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 40.36,
+        "p95_ms": 58.16,
+        "sql_calls_per_request": 10.0,
+        "sql_rows_per_request": 1145.0,
+        "db_exec_ms_per_request": 20.89,
+        "response_bytes": 67368,
+        "select_calls_per_request": 10.0
+      }
+    },
+    {
+      "name": "task_detail_10_assignees",
+      "before": {
+        "name": "task_detail_10_assignees",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks/c9924161-40d5-a28f-14d8-5f97391e1ce2",
+        "samples": 20,
+        "p50_ms": 856.99,
+        "p95_ms": 1015.83,
+        "sql_calls_per_request": 4.0,
+        "sql_rows_per_request": 28836.0,
+        "db_exec_ms_per_request": 717.74,
+        "response_bytes": 9594,
+        "select_calls_per_request": 4.0
+      },
+      "after": {
+        "name": "task_detail_10_assignees",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks/c9924161-40d5-a28f-14d8-5f97391e1ce2",
+        "samples": 20,
+        "p50_ms": 12.63,
+        "p95_ms": 14.48,
+        "sql_calls_per_request": 8.0,
+        "sql_rows_per_request": 126.0,
+        "db_exec_ms_per_request": 2.35,
+        "response_bytes": 9594,
+        "select_calls_per_request": 8.0
+      }
+    },
+    {
+      "name": "participant_workload_10",
+      "before": {
+        "name": "participant_workload_10",
+        "method": "GET",
+        "endpoint": "/backend-audit/participant-workload?quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd&page=0&size=10",
+        "samples": 20,
+        "p50_ms": 48.35,
+        "p95_ms": 61.63,
+        "sql_calls_per_request": 4.0,
+        "sql_rows_per_request": 1471.0,
+        "db_exec_ms_per_request": 28.0,
+        "response_bytes": 56871,
+        "select_calls_per_request": 4.0
+      },
+      "after": {
+        "name": "participant_workload_10",
+        "method": "GET",
+        "endpoint": "/backend-audit/participant-workload?quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd&page=0&size=10",
+        "samples": 20,
+        "p50_ms": 36.64,
+        "p95_ms": 38.99,
+        "sql_calls_per_request": 4.0,
+        "sql_rows_per_request": 1471.0,
+        "db_exec_ms_per_request": 24.53,
+        "response_bytes": 56871,
+        "select_calls_per_request": 4.0
+      }
+    },
+    {
+      "name": "participant_workload_50",
+      "before": {
+        "name": "participant_workload_50",
+        "method": "GET",
+        "endpoint": "/backend-audit/participant-workload?quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd&page=0&size=50",
+        "samples": 20,
+        "p50_ms": 90.73,
+        "p95_ms": 94.54,
+        "sql_calls_per_request": 4.0,
+        "sql_rows_per_request": 7351.0,
+        "db_exec_ms_per_request": 61.74,
+        "response_bytes": 283969,
+        "select_calls_per_request": 4.0
+      },
+      "after": {
+        "name": "participant_workload_50",
+        "method": "GET",
+        "endpoint": "/backend-audit/participant-workload?quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd&page=0&size=50",
+        "samples": 20,
+        "p50_ms": 85.39,
+        "p95_ms": 97.1,
+        "sql_calls_per_request": 4.0,
+        "sql_rows_per_request": 7351.0,
+        "db_exec_ms_per_request": 61.57,
+        "response_bytes": 283969,
+        "select_calls_per_request": 4.0
+      }
+    },
+    {
+      "name": "capacity_quarter",
+      "before": {
+        "name": "capacity_quarter",
+        "method": "GET",
+        "endpoint": "/backend-audit/capacity?quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd",
+        "samples": 20,
+        "p50_ms": 20.27,
+        "p95_ms": 24.51,
+        "sql_calls_per_request": 4.0,
+        "sql_rows_per_request": 456.0,
+        "db_exec_ms_per_request": 3.85,
+        "response_bytes": 82941,
+        "select_calls_per_request": 4.0
+      },
+      "after": {
+        "name": "capacity_quarter",
+        "method": "GET",
+        "endpoint": "/backend-audit/capacity?quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd",
+        "samples": 20,
+        "p50_ms": 17.91,
+        "p95_ms": 24.41,
+        "sql_calls_per_request": 4.0,
+        "sql_rows_per_request": 456.0,
+        "db_exec_ms_per_request": 3.88,
+        "response_bytes": 82941,
+        "select_calls_per_request": 4.0
+      }
+    },
+    {
+      "name": "capacity_all",
+      "before": {
+        "name": "capacity_all",
+        "method": "GET",
+        "endpoint": "/backend-audit/capacity",
+        "samples": 20,
+        "p50_ms": 42.28,
+        "p95_ms": 84.16,
+        "sql_calls_per_request": 4.0,
+        "sql_rows_per_request": 1374.0,
+        "db_exec_ms_per_request": 14.3,
+        "response_bytes": 292741,
+        "select_calls_per_request": 4.0
+      },
+      "after": {
+        "name": "capacity_all",
+        "method": "GET",
+        "endpoint": "/backend-audit/capacity",
+        "samples": 20,
+        "p50_ms": 34.24,
+        "p95_ms": 36.64,
+        "sql_calls_per_request": 4.0,
+        "sql_rows_per_request": 1374.0,
+        "db_exec_ms_per_request": 12.73,
+        "response_bytes": 292741,
+        "select_calls_per_request": 4.0
+      }
+    },
+    {
+      "name": "participants",
+      "before": {
+        "name": "participants",
+        "method": "GET",
+        "endpoint": "/backend-audit/participants",
+        "samples": 20,
+        "p50_ms": 7.13,
+        "p95_ms": 8.66,
+        "sql_calls_per_request": 2.0,
+        "sql_rows_per_request": 150.0,
+        "db_exec_ms_per_request": 0.16,
+        "response_bytes": 8891,
+        "select_calls_per_request": 2.0
+      },
+      "after": {
+        "name": "participants",
+        "method": "GET",
+        "endpoint": "/backend-audit/participants",
+        "samples": 20,
+        "p50_ms": 6.1,
+        "p95_ms": 9.13,
+        "sql_calls_per_request": 2.0,
+        "sql_rows_per_request": 150.0,
+        "db_exec_ms_per_request": 0.17,
+        "response_bytes": 8891,
+        "select_calls_per_request": 2.0
+      }
+    },
+    {
+      "name": "filters",
+      "before": {
+        "name": "filters",
+        "method": "GET",
+        "endpoint": "/backend-audit/filters",
+        "samples": 20,
+        "p50_ms": 9.5,
+        "p95_ms": 11.12,
+        "sql_calls_per_request": 6.0,
+        "sql_rows_per_request": 41.0,
+        "db_exec_ms_per_request": 0.3,
+        "response_bytes": 2249,
+        "select_calls_per_request": 6.0
+      },
+      "after": {
+        "name": "filters",
+        "method": "GET",
+        "endpoint": "/backend-audit/filters",
+        "samples": 20,
+        "p50_ms": 7.3,
+        "p95_ms": 8.29,
+        "sql_calls_per_request": 6.0,
+        "sql_rows_per_request": 41.0,
+        "db_exec_ms_per_request": 0.3,
+        "response_bytes": 2249,
+        "select_calls_per_request": 6.0
+      }
+    },
+    {
+      "name": "release_options",
+      "before": {
+        "name": "release_options",
+        "method": "GET",
+        "endpoint": "/backend-audit/releases/options?quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd",
+        "samples": 20,
+        "p50_ms": 6.52,
+        "p95_ms": 7.25,
+        "sql_calls_per_request": 1.0,
+        "sql_rows_per_request": 6.0,
+        "db_exec_ms_per_request": 0.09,
+        "response_bytes": 547,
+        "select_calls_per_request": 1.0
+      },
+      "after": {
+        "name": "release_options",
+        "method": "GET",
+        "endpoint": "/backend-audit/releases/options?quarterId=216c9280-6fa8-d985-13e5-6edef8776dbd",
+        "samples": 20,
+        "p50_ms": 5.97,
+        "p95_ms": 6.84,
+        "sql_calls_per_request": 1.0,
+        "sql_rows_per_request": 6.0,
+        "db_exec_ms_per_request": 0.12,
+        "response_bytes": 547,
+        "select_calls_per_request": 1.0
+      }
+    },
+    {
+      "name": "quarter_options",
+      "before": {
+        "name": "quarter_options",
+        "method": "GET",
+        "endpoint": "/backend-audit/quarters/options",
+        "samples": 20,
+        "p50_ms": 6.62,
+        "p95_ms": 9.05,
+        "sql_calls_per_request": 1.0,
+        "sql_rows_per_request": 3.0,
+        "db_exec_ms_per_request": 0.03,
+        "response_bytes": 403,
+        "select_calls_per_request": 1.0
+      },
+      "after": {
+        "name": "quarter_options",
+        "method": "GET",
+        "endpoint": "/backend-audit/quarters/options",
+        "samples": 20,
+        "p50_ms": 4.54,
+        "p95_ms": 5.05,
+        "sql_calls_per_request": 1.0,
+        "sql_rows_per_request": 3.0,
+        "db_exec_ms_per_request": 0.03,
+        "response_bytes": 403,
+        "select_calls_per_request": 1.0
+      }
+    },
+    {
+      "name": "sprints",
+      "before": {
+        "name": "sprints",
+        "method": "GET",
+        "endpoint": "/backend-audit/sprints",
+        "samples": 20,
+        "p50_ms": 7.99,
+        "p95_ms": 9.02,
+        "sql_calls_per_request": 1.0,
+        "sql_rows_per_request": 24.0,
+        "db_exec_ms_per_request": 0.13,
+        "response_bytes": 4561,
+        "select_calls_per_request": 1.0
+      },
+      "after": {
+        "name": "sprints",
+        "method": "GET",
+        "endpoint": "/backend-audit/sprints",
+        "samples": 20,
+        "p50_ms": 4.57,
+        "p95_ms": 5.31,
+        "sql_calls_per_request": 1.0,
+        "sql_rows_per_request": 24.0,
+        "db_exec_ms_per_request": 0.11,
+        "response_bytes": 4561,
+        "select_calls_per_request": 1.0
+      }
+    },
+    {
+      "name": "planning_first20",
+      "before": {
+        "name": "planning_first20",
+        "method": "GET",
+        "endpoint": "/backend-audit/planning-workbench/backlog?page=0&size=20",
+        "samples": 20,
+        "p50_ms": 13.06,
+        "p95_ms": 19.72,
+        "sql_calls_per_request": 3.0,
+        "sql_rows_per_request": 41.0,
+        "db_exec_ms_per_request": 0.85,
+        "response_bytes": 29009,
+        "select_calls_per_request": 3.0
+      },
+      "after": {
+        "name": "planning_first20",
+        "method": "GET",
+        "endpoint": "/backend-audit/planning-workbench/backlog?page=0&size=20",
+        "samples": 20,
+        "p50_ms": 9.99,
+        "p95_ms": 11.57,
+        "sql_calls_per_request": 3.0,
+        "sql_rows_per_request": 41.0,
+        "db_exec_ms_per_request": 0.83,
+        "response_bytes": 29009,
+        "select_calls_per_request": 3.0
+      }
+    },
+    {
+      "name": "planning_quarter_load",
+      "before": {
+        "name": "planning_quarter_load",
+        "method": "GET",
+        "endpoint": "/backend-audit/planning-workbench/backlog?quarterIds=216c9280-6fa8-d985-13e5-6edef8776dbd&sortBy=load&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 21.35,
+        "p95_ms": 23.55,
+        "sql_calls_per_request": 3.0,
+        "sql_rows_per_request": 41.0,
+        "db_exec_ms_per_request": 9.36,
+        "response_bytes": 21006,
+        "select_calls_per_request": 3.0
+      },
+      "after": {
+        "name": "planning_quarter_load",
+        "method": "GET",
+        "endpoint": "/backend-audit/planning-workbench/backlog?quarterIds=216c9280-6fa8-d985-13e5-6edef8776dbd&sortBy=load&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 17.27,
+        "p95_ms": 18.26,
+        "sql_calls_per_request": 3.0,
+        "sql_rows_per_request": 41.0,
+        "db_exec_ms_per_request": 8.21,
+        "response_bytes": 21006,
+        "select_calls_per_request": 3.0
+      }
+    },
+    {
+      "name": "planning_release_sort",
+      "before": {
+        "name": "planning_release_sort",
+        "method": "GET",
+        "endpoint": "/backend-audit/planning-workbench/backlog?sortBy=releaseDate&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 11.08,
+        "p95_ms": 12.56,
+        "sql_calls_per_request": 3.0,
+        "sql_rows_per_request": 41.0,
+        "db_exec_ms_per_request": 1.33,
+        "response_bytes": 27899,
+        "select_calls_per_request": 3.0
+      },
+      "after": {
+        "name": "planning_release_sort",
+        "method": "GET",
+        "endpoint": "/backend-audit/planning-workbench/backlog?sortBy=releaseDate&page=0&size=20",
+        "samples": 20,
+        "p50_ms": 10.43,
+        "p95_ms": 13.55,
+        "sql_calls_per_request": 3.0,
+        "sql_rows_per_request": 41.0,
+        "db_exec_ms_per_request": 1.4,
+        "response_bytes": 27899,
+        "select_calls_per_request": 3.0
+      }
+    },
+    {
+      "name": "planning_preview20",
+      "before": {
+        "name": "planning_preview20",
+        "method": "POST",
+        "endpoint": "/backend-audit/planning-workbench/preview",
+        "samples": 20,
+        "p50_ms": 159.21,
+        "p95_ms": 207.14,
+        "sql_calls_per_request": 45.0,
+        "sql_rows_per_request": 1634.0,
+        "db_exec_ms_per_request": 14.66,
+        "response_bytes": 277952,
+        "select_calls_per_request": 45.0
+      },
+      "after": {
+        "name": "planning_preview20",
+        "method": "POST",
+        "endpoint": "/backend-audit/planning-workbench/preview",
+        "samples": 20,
+        "p50_ms": 124.89,
+        "p95_ms": 280.45,
+        "sql_calls_per_request": 5.0,
+        "sql_rows_per_request": 1394.0,
+        "db_exec_ms_per_request": 14.01,
+        "response_bytes": 277952,
+        "select_calls_per_request": 5.0
+      }
+    },
+    {
+      "name": "planning_preview100",
+      "before": {
+        "name": "planning_preview100",
+        "method": "POST",
+        "endpoint": "/backend-audit/planning-workbench/preview",
+        "samples": 20,
+        "p50_ms": 626.28,
+        "p95_ms": 770.07,
+        "sql_calls_per_request": 205.0,
+        "sql_rows_per_request": 2674.0,
+        "db_exec_ms_per_request": 19.63,
+        "response_bytes": 437614,
+        "select_calls_per_request": 205.0
+      },
+      "after": {
+        "name": "planning_preview100",
+        "method": "POST",
+        "endpoint": "/backend-audit/planning-workbench/preview",
+        "samples": 20,
+        "p50_ms": 501.37,
+        "p95_ms": 577.04,
+        "sql_calls_per_request": 5.0,
+        "sql_rows_per_request": 1474.0,
+        "db_exec_ms_per_request": 15.41,
+        "response_bytes": 437614,
+        "select_calls_per_request": 5.0
+      }
+    },
+    {
+      "name": "history_sessions10",
+      "before": {
+        "name": "history_sessions10",
+        "method": "GET",
+        "endpoint": "/backend-audit/history?page=0&size=10",
+        "samples": 20,
+        "p50_ms": 31.61,
+        "p95_ms": 38.34,
+        "sql_calls_per_request": 11.0,
+        "sql_rows_per_request": 2010.0,
+        "db_exec_ms_per_request": 15.48,
+        "response_bytes": 6088,
+        "select_calls_per_request": 11.0
+      },
+      "after": {
+        "name": "history_sessions10",
+        "method": "GET",
+        "endpoint": "/backend-audit/history?page=0&size=10",
+        "samples": 20,
+        "p50_ms": 29.24,
+        "p95_ms": 34.47,
+        "sql_calls_per_request": 2.0,
+        "sql_rows_per_request": 2010.0,
+        "db_exec_ms_per_request": 15.18,
+        "response_bytes": 6088,
+        "select_calls_per_request": 2.0
+      }
+    },
+    {
+      "name": "history_sessions25",
+      "before": {
+        "name": "history_sessions25",
+        "method": "GET",
+        "endpoint": "/backend-audit/history?page=0&size=25",
+        "samples": 20,
+        "p50_ms": 48.6,
+        "p95_ms": 54.1,
+        "sql_calls_per_request": 26.0,
+        "sql_rows_per_request": 5025.0,
+        "db_exec_ms_per_request": 21.73,
+        "response_bytes": 15223,
+        "select_calls_per_request": 26.0
+      },
+      "after": {
+        "name": "history_sessions25",
+        "method": "GET",
+        "endpoint": "/backend-audit/history?page=0&size=25",
+        "samples": 20,
+        "p50_ms": 50.73,
+        "p95_ms": 68.95,
+        "sql_calls_per_request": 2.0,
+        "sql_rows_per_request": 5025.0,
+        "db_exec_ms_per_request": 26.17,
+        "response_bytes": 15223,
+        "select_calls_per_request": 2.0
+      }
+    },
+    {
+      "name": "history_task",
+      "before": {
+        "name": "history_task",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks/c9924161-40d5-a28f-14d8-5f97391e1ce2/history?page=0&size=30",
+        "samples": 20,
+        "p50_ms": 7.06,
+        "p95_ms": 7.65,
+        "sql_calls_per_request": 1.0,
+        "sql_rows_per_request": 20.0,
+        "db_exec_ms_per_request": 0.12,
+        "response_bytes": 7277,
+        "select_calls_per_request": 1.0
+      },
+      "after": {
+        "name": "history_task",
+        "method": "GET",
+        "endpoint": "/backend-audit/tasks/c9924161-40d5-a28f-14d8-5f97391e1ce2/history?page=0&size=30",
+        "samples": 20,
+        "p50_ms": 6.93,
+        "p95_ms": 8.47,
+        "sql_calls_per_request": 1.0,
+        "sql_rows_per_request": 20.0,
+        "db_exec_ms_per_request": 0.15,
+        "response_bytes": 7277,
+        "select_calls_per_request": 1.0
+      }
+    },
+    {
+      "name": "excel_export",
+      "before": {
+        "name": "excel_export",
+        "method": "GET",
+        "endpoint": "/backend-audit/export/excel?workspace=ROADMAP",
+        "samples": 20,
+        "p50_ms": 1419.87,
+        "p95_ms": 1524.66,
+        "sql_calls_per_request": 17.0,
+        "sql_rows_per_request": 26508.0,
+        "db_exec_ms_per_request": 374.77,
+        "response_bytes": 147501,
+        "select_calls_per_request": 17.0
+      },
+      "after": {
+        "name": "excel_export",
+        "method": "GET",
+        "endpoint": "/backend-audit/export/excel?workspace=ROADMAP",
+        "samples": 20,
+        "p50_ms": 747.25,
+        "p95_ms": 891.95,
+        "sql_calls_per_request": 16.0,
+        "sql_rows_per_request": 26496.0,
+        "db_exec_ms_per_request": 390.95,
+        "response_bytes": 147500,
+        "select_calls_per_request": 16.0
+      }
+    }
+  ],
+  "writes": [
+    {
+      "name": "update_task_metadata",
+      "before": {
+        "name": "update_task_metadata",
+        "samples": 10,
+        "p50_ms": 865.62,
+        "p95_ms": 1023.65,
+        "sql_calls_per_request": 9.0,
+        "sql_rows_per_request": 28841.0,
+        "db_exec_ms_per_request": 728.88,
+        "response_bytes": 9597,
+        "warmup": 2,
+        "select_calls_per_request": 6.0
+      },
+      "after": {
+        "name": "update_task_metadata",
+        "samples": 10,
+        "p50_ms": 28.83,
+        "p95_ms": 36.58,
+        "sql_calls_per_request": 13.0,
+        "sql_rows_per_request": 131.0,
+        "db_exec_ms_per_request": 3.3,
+        "response_bytes": 9597,
+        "select_calls_per_request": 10.0
+      }
+    },
+    {
+      "name": "allocation_one_cell",
+      "before": {
+        "name": "allocation_one_cell",
+        "samples": 10,
+        "p50_ms": 20.83,
+        "p95_ms": 26.35,
+        "sql_calls_per_request": 16.0,
+        "sql_rows_per_request": 17.0,
+        "db_exec_ms_per_request": 0.92,
+        "response_bytes": 256,
+        "warmup": 2,
+        "select_calls_per_request": 10.0
+      },
+      "after": {
+        "name": "allocation_one_cell",
+        "samples": 10,
+        "p50_ms": 18.42,
+        "p95_ms": 21.87,
+        "sql_calls_per_request": 15.0,
+        "sql_rows_per_request": 16.0,
+        "db_exec_ms_per_request": 0.93,
+        "response_bytes": 256,
+        "select_calls_per_request": 10.0
+      }
+    },
+    {
+      "name": "legacy_allocation_60_cells",
+      "before": {
+        "name": "legacy_allocation_60_cells",
+        "samples": 10,
+        "p50_ms": 71.88,
+        "p95_ms": 108.74,
+        "sql_calls_per_request": 103.0,
+        "sql_rows_per_request": 226.0,
+        "db_exec_ms_per_request": 5.48,
+        "response_bytes": 9534,
+        "warmup": 2,
+        "select_calls_per_request": 32.0
+      },
+      "after": {
+        "name": "legacy_allocation_60_cells",
+        "samples": 10,
+        "p50_ms": 29.5,
+        "p95_ms": 31.6,
+        "sql_calls_per_request": 82.0,
+        "sql_rows_per_request": 223.0,
+        "db_exec_ms_per_request": 4.33,
+        "response_bytes": 9534,
+        "select_calls_per_request": 13.0
+      }
+    },
+    {
+      "name": "create_task_10_assignees",
+      "before": {
+        "name": "create_task_10_assignees",
+        "samples": 10,
+        "p50_ms": 106.28,
+        "p95_ms": 139.24,
+        "sql_calls_per_request": 194.0,
+        "sql_rows_per_request": 190.0,
+        "db_exec_ms_per_request": 10.95,
+        "response_bytes": 4854,
+        "warmup": 2,
+        "select_calls_per_request": 108.0
+      },
+      "after": {
+        "name": "create_task_10_assignees",
+        "samples": 10,
+        "p50_ms": 28.67,
+        "p95_ms": 30.41,
+        "sql_calls_per_request": 29.0,
+        "sql_rows_per_request": 177.0,
+        "db_exec_ms_per_request": 5.41,
+        "response_bytes": 4854,
+        "select_calls_per_request": 14.0
+      }
+    },
+    {
+      "name": "planning_apply20_new",
+      "before": {
+        "name": "planning_apply20_new",
+        "samples": 10,
+        "p50_ms": 336.91,
+        "p95_ms": 384.11,
+        "sql_calls_per_request": 648.0,
+        "sql_rows_per_request": 819.0,
+        "db_exec_ms_per_request": 45.25,
+        "response_bytes": 32901,
+        "warmup": 2,
+        "select_calls_per_request": 187.0
+      },
+      "after": {
+        "name": "planning_apply20_new",
+        "samples": 10,
+        "p50_ms": 89.3,
+        "p95_ms": 107.92,
+        "sql_calls_per_request": 87.0,
+        "sql_rows_per_request": 681.0,
+        "db_exec_ms_per_request": 21.98,
+        "response_bytes": 32901,
+        "select_calls_per_request": 20.0
+      }
+    },
+    {
+      "name": "planning_apply20_linked",
+      "before": {
+        "name": "planning_apply20_linked",
+        "samples": 3,
+        "p50_ms": 16199.6,
+        "p95_ms": 16440.34,
+        "sql_calls_per_request": 1308.0,
+        "sql_rows_per_request": 445030.0,
+        "db_exec_ms_per_request": 11519.6,
+        "response_bytes": 38651,
+        "warmup": 0,
+        "select_calls_per_request": 136.0
+      },
+      "after": {
+        "name": "planning_apply20_linked",
+        "samples": 10,
+        "p50_ms": 181.61,
+        "p95_ms": 255.61,
+        "sql_calls_per_request": 720.0,
+        "sql_rows_per_request": 2074.0,
+        "db_exec_ms_per_request": 32.99,
+        "response_bytes": 38651,
+        "select_calls_per_request": 26.0
+      }
+    }
+  ],
+  "history": {
+    "passed": 28,
+    "failed": 0,
+    "cases": [
+      {
+        "name": "create_with_allocations",
+        "passed": true,
+        "event_types": [
+          "task.create"
+        ]
+      },
+      {
+        "name": "update_metadata",
+        "passed": true,
+        "event_types": [
+          "task.update"
+        ]
+      },
+      {
+        "name": "update_allocations_via_task",
+        "passed": true,
+        "event_types": [
+          "task.update"
+        ]
+      },
+      {
+        "name": "clear_metadata",
+        "passed": true,
+        "event_types": [
+          "task.update"
+        ]
+      },
+      {
+        "name": "move_to_backlog",
+        "passed": true,
+        "event_types": [
+          "task.update"
+        ]
+      },
+      {
+        "name": "return_to_roadmap",
+        "passed": true,
+        "event_types": [
+          "task.update"
+        ]
+      },
+      {
+        "name": "no_op_metadata",
+        "passed": true,
+        "event_types": []
+      },
+      {
+        "name": "allocation_cells",
+        "passed": true,
+        "event_types": [
+          "task.allocations.update"
+        ]
+      },
+      {
+        "name": "no_op_allocation_cells",
+        "passed": true,
+        "event_types": []
+      },
+      {
+        "name": "legacy_single_allocation",
+        "passed": true,
+        "event_types": [
+          "task.allocations.update"
+        ]
+      },
+      {
+        "name": "legacy_row_allocation",
+        "passed": true,
+        "event_types": [
+          "task.allocations.bulk.update"
+        ]
+      },
+      {
+        "name": "legacy_multi_allocation",
+        "passed": true,
+        "event_types": [
+          "task.allocations.multi.update"
+        ]
+      },
+      {
+        "name": "add_zero_load_participant",
+        "passed": true,
+        "event_types": [
+          "task.update"
+        ]
+      },
+      {
+        "name": "replace_participant",
+        "passed": true,
+        "event_types": [
+          "task.update"
+        ]
+      },
+      {
+        "name": "remove_participant",
+        "passed": true,
+        "event_types": [
+          "task.update"
+        ]
+      },
+      {
+        "name": "manual_jira_links",
+        "passed": true,
+        "event_types": [
+          "task.jira.update"
+        ]
+      },
+      {
+        "name": "no_op_manual_jira_links",
+        "passed": true,
+        "event_types": []
+      },
+      {
+        "name": "unassigned_load",
+        "passed": true,
+        "event_types": [
+          "task.loads.update"
+        ]
+      },
+      {
+        "name": "clear_unassigned_load",
+        "passed": true,
+        "event_types": [
+          "task.loads.update"
+        ]
+      },
+      {
+        "name": "no_op_unassigned_load",
+        "passed": true,
+        "event_types": []
+      },
+      {
+        "name": "failed_update_rolls_back_without_event",
+        "passed": true,
+        "event_types": []
+      },
+      {
+        "name": "apply_linked_planning",
+        "passed": true,
+        "event_types": [
+          "task.update"
+        ]
+      },
+      {
+        "name": "apply_independent_planning",
+        "passed": true,
+        "event_types": [
+          "task.create"
+        ]
+      },
+      {
+        "name": "reorder_task",
+        "passed": true,
+        "event_types": [
+          "task.update"
+        ]
+      },
+      {
+        "name": "delete_task_retains_history",
+        "passed": true,
+        "event_types": [
+          "task.delete"
+        ]
+      },
+      {
+        "name": "mock_jira_export_history",
+        "passed": true,
+        "event_types": [
+          "task.jira.export",
+          "task.jira.export",
+          "task.jira.export"
+        ]
+      },
+      {
+        "name": "apply_twice",
+        "passed": true,
+        "event_types": [
+          "task.update"
+        ],
+        "statuses": [
+          400,
+          200
+        ]
+      },
+      {
+        "name": "apply_and_delete",
+        "passed": true,
+        "event_types": [
+          "task.delete"
+        ],
+        "statuses": [
+          409,
+          200
+        ]
+      }
+    ]
+  },
+  "contracts": {
+    "passed": 6,
+    "checks": [
+      "ROADMAP: exact IDs, count, pagination, workspace",
+      "BACKLOG: exact IDs, count, pagination, workspace",
+      "Capacity equals SQL for all ROADMAP statuses; BACKLOG allocations excluded",
+      "Participant workload: 50 participants, ROADMAP tasks only",
+      "Missing quarter returns 400; foreign-team task returns 404",
+      "EXPLAIN ANALYZE uses composite PKs after removal of the three standalone indexes"
+    ],
+    "plans": {
+      "task_participants": [
+        {
+          "Plan": {
+            "Node Type": "Bitmap Heap Scan",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Relation Name": "task_participants",
+            "Alias": "task_participants",
+            "Startup Cost": 4.36,
+            "Total Cost": 28.13,
+            "Plan Rows": 10,
+            "Plan Width": 50,
+            "Actual Startup Time": 0.032,
+            "Actual Total Time": 0.04,
+            "Actual Rows": 10,
+            "Actual Loops": 1,
+            "Recheck Cond": "(task_id = 'c9924161-40d5-a28f-14d8-5f97391e1ce2'::uuid)",
+            "Rows Removed by Index Recheck": 0,
+            "Exact Heap Blocks": 6,
+            "Lossy Heap Blocks": 0,
+            "Shared Hit Blocks": 8,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "I/O Read Time": 0.0,
+            "I/O Write Time": 0.0,
+            "Temp I/O Read Time": 0.0,
+            "Temp I/O Write Time": 0.0,
+            "Plans": [
+              {
+                "Node Type": "Bitmap Index Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Index Name": "task_participants_pkey",
+                "Startup Cost": 0.0,
+                "Total Cost": 4.36,
+                "Plan Rows": 10,
+                "Plan Width": 0,
+                "Actual Startup Time": 0.018,
+                "Actual Total Time": 0.018,
+                "Actual Rows": 10,
+                "Actual Loops": 1,
+                "Index Cond": "(task_id = 'c9924161-40d5-a28f-14d8-5f97391e1ce2'::uuid)",
+                "Shared Hit Blocks": 2,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "I/O Read Time": 0.0,
+                "I/O Write Time": 0.0,
+                "Temp I/O Read Time": 0.0,
+                "Temp I/O Write Time": 0.0
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 103,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "I/O Read Time": 0.0,
+            "I/O Write Time": 0.0,
+            "Temp I/O Read Time": 0.0,
+            "Temp I/O Write Time": 0.0
+          },
+          "Planning Time": 0.474,
+          "Triggers": [],
+          "Execution Time": 0.096
+        }
+      ],
+      "task_allocations": [
+        {
+          "Plan": {
+            "Node Type": "Index Scan",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Scan Direction": "Forward",
+            "Index Name": "task_allocations_pkey",
+            "Relation Name": "task_allocations",
+            "Alias": "task_allocations",
+            "Startup Cost": 0.41,
+            "Total Cost": 157.14,
+            "Plan Rows": 78,
+            "Plan Width": 67,
+            "Actual Startup Time": 0.032,
+            "Actual Total Time": 0.065,
+            "Actual Rows": 60,
+            "Actual Loops": 1,
+            "Index Cond": "(task_id = 'c9924161-40d5-a28f-14d8-5f97391e1ce2'::uuid)",
+            "Rows Removed by Index Recheck": 0,
+            "Shared Hit Blocks": 14,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "I/O Read Time": 0.0,
+            "I/O Write Time": 0.0,
+            "Temp I/O Read Time": 0.0,
+            "Temp I/O Write Time": 0.0
+          },
+          "Planning": {
+            "Shared Hit Blocks": 133,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "I/O Read Time": 0.0,
+            "I/O Write Time": 0.0,
+            "Temp I/O Read Time": 0.0,
+            "Temp I/O Write Time": 0.0
+          },
+          "Planning Time": 0.477,
+          "Triggers": [],
+          "Execution Time": 0.118
+        }
+      ],
+      "task_loads": [
+        {
+          "Plan": {
+            "Node Type": "Bitmap Heap Scan",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Relation Name": "task_loads",
+            "Alias": "task_loads",
+            "Startup Cost": 4.33,
+            "Total Cost": 21.97,
+            "Plan Rows": 6,
+            "Plan Width": 51,
+            "Actual Startup Time": 0.025,
+            "Actual Total Time": 0.032,
+            "Actual Rows": 6,
+            "Actual Loops": 1,
+            "Recheck Cond": "(task_id = 'c9924161-40d5-a28f-14d8-5f97391e1ce2'::uuid)",
+            "Rows Removed by Index Recheck": 0,
+            "Exact Heap Blocks": 2,
+            "Lossy Heap Blocks": 0,
+            "Shared Hit Blocks": 4,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "I/O Read Time": 0.0,
+            "I/O Write Time": 0.0,
+            "Temp I/O Read Time": 0.0,
+            "Temp I/O Write Time": 0.0,
+            "Plans": [
+              {
+                "Node Type": "Bitmap Index Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Index Name": "task_loads_pkey",
+                "Startup Cost": 0.0,
+                "Total Cost": 4.33,
+                "Plan Rows": 6,
+                "Plan Width": 0,
+                "Actual Startup Time": 0.017,
+                "Actual Total Time": 0.017,
+                "Actual Rows": 6,
+                "Actual Loops": 1,
+                "Index Cond": "(task_id = 'c9924161-40d5-a28f-14d8-5f97391e1ce2'::uuid)",
+                "Shared Hit Blocks": 2,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "I/O Read Time": 0.0,
+                "I/O Write Time": 0.0,
+                "Temp I/O Read Time": 0.0,
+                "Temp I/O Write Time": 0.0
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 110,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "I/O Read Time": 0.0,
+            "I/O Write Time": 0.0,
+            "Temp I/O Read Time": 0.0,
+            "Temp I/O Write Time": 0.0
+          },
+          "Planning Time": 0.381,
+          "Triggers": [],
+          "Execution Time": 0.095
+        }
+      ]
+    }
+  },
+  "validation": {
+    "unit_tests": 95,
+    "repeated_changed_unit_tests_on_java21": 22,
+    "postgres_integration_tests": 1,
+    "real_ui_tests": 29,
+    "api_benchmark_cases": 33,
+    "history_cases": 28,
+    "api_sql_contract_groups": 6,
+    "failures": 0,
+    "optional_legacy_planning_schema_test": "not run"
+  }
+}

@@ -1,5 +1,6 @@
 import useToday from "./useToday";
 import * as React from "react";
+import { usePlanningSelection } from "../contexts/PlanningSelectionContext";
 import {
   Alert,
   Box,
@@ -23,7 +24,7 @@ import {
 } from "../app/api";
 import BacklogTaskCard from "../components/BacklogTaskCard";
 import CapacityTable from "../components/CapacityTable";
-import type { BacklogItem, CapacityRow, PlanningWorkbenchPreview, Sprint, TaskPriority } from "../types";
+import type { BacklogItem, CapacityRow, PlanningWorkbenchPreview, Sprint } from "../types";
 import {
   clearPlanningWorkbenchPreview,
   consumePlanningWorkbenchPreview,
@@ -31,7 +32,7 @@ import {
   savePlanningWorkbenchReviewState,
   setPlanningWorkbenchPreview,
 } from "./planningWorkbenchPreviewStore";
-import { formatDayAmount, normalizeDayAmount } from "../utils/dayAmount";
+import { normalizeDayAmount } from "../utils/dayAmount";
 
 const sumLoads = (allocations: Record<string, Record<string, number>> = {}) => {
   const next: Record<string, number> = {};
@@ -176,10 +177,11 @@ const toApplyItemPatch = (task: BacklogItem, originalNotes: Record<string, strin
   order: task.order,
 });
 
-export default function PlanningWorkbenchReviewPage() {
+function PlanningWorkbenchReviewPage() {
   const { teamKey = "default" } = useParams<{ teamKey: string }>();
   const navigate = useNavigate();
   const today = useToday();
+  const { removeItemsFromPlan } = usePlanningSelection();
   const { data: participants = [] } = useGetParticipantsQuery();
   const { data: quarters = [] } = useGetQuartersQuery();
   const { data: sprints = [] } = useGetSprintsQuery();
@@ -238,10 +240,6 @@ export default function PlanningWorkbenchReviewPage() {
 
   const participantMap = React.useMemo(
     () => new Map(participants.map((participant) => [participant.id, participant])),
-    [participants]
-  );
-  const participantNameById = React.useMemo(
-    () => new Map(participants.map((participant) => [participant.id, participant.fullName])),
     [participants]
   );
   const sprintById = React.useMemo(
@@ -395,9 +393,10 @@ export default function PlanningWorkbenchReviewPage() {
   }, []);
 
   const handleRemovePreviewTask = React.useCallback((task: BacklogItem) => {
+    removeItemsFromPlan([task.id]);
     setDraftTasks((prev) => prev.filter((candidate) => candidate.id !== task.id));
     setDraftAllocations((prev) => {
-      const next = structuredClone(prev);
+      const next = { ...prev };
       delete next[task.id];
       return next;
     });
@@ -407,16 +406,13 @@ export default function PlanningWorkbenchReviewPage() {
       next.delete(task.id);
       return next;
     });
-  }, []);
+  }, [removeItemsFromPlan]);
 
   const handleCellChange = React.useCallback((taskId: string, participantId: string, sprintId: string, value: number | string) => {
     const days = normalizeDayAmount(value);
     setDraftAllocations((prev) => {
-      const next = structuredClone(prev);
-      next[taskId] ??= {};
-      next[taskId][participantId] ??= {};
-      next[taskId][participantId][sprintId] = days;
-      return next;
+      if (prev[taskId]?.[participantId]?.[sprintId] === days) return prev;
+      return { ...prev, [taskId]: { ...prev[taskId], [participantId]: { ...prev[taskId]?.[participantId], [sprintId]: days } } };
     });
   }, []);
 
@@ -425,9 +421,7 @@ export default function PlanningWorkbenchReviewPage() {
       if (!participantId || task.participantIds.includes(participantId)) return;
       updateDraftTask(task.id, { participantIds: [...task.participantIds, participantId] });
       setDraftAllocations((prev) => {
-        const next = structuredClone(prev);
-        next[task.id] ??= {};
-        next[task.id][participantId] ??= {};
+        const next = { ...prev, [task.id]: { ...prev[task.id], [participantId]: { ...prev[task.id]?.[participantId] } } };
         sprintsGlobalOrdered.forEach((sprint) => {
           next[task.id][participantId][sprint.id] ??= 0;
         });
@@ -440,7 +434,7 @@ export default function PlanningWorkbenchReviewPage() {
   const handleRemoveParticipant = React.useCallback(
     (task: BacklogItem, participantId: string) => {
       setDraftAllocations((prev) => {
-        const next = structuredClone(prev);
+        const next = { ...prev, [task.id]: { ...prev[task.id] } };
         if (next[task.id]) {
           delete next[task.id][participantId];
         }
@@ -464,8 +458,8 @@ export default function PlanningWorkbenchReviewPage() {
       if (task.participantIds.includes(toParticipantId)) return;
 
       setDraftAllocations((prev) => {
-        const next = structuredClone(prev);
-        const taskRows = next[task.id] || {};
+        const next = { ...prev };
+        const taskRows = { ...prev[task.id] };
         const rowToMove = taskRows[fromParticipantId] || {};
         delete taskRows[fromParticipantId];
         taskRows[toParticipantId] = { ...rowToMove };
@@ -516,10 +510,7 @@ export default function PlanningWorkbenchReviewPage() {
       }
 
       setDraftAllocations((prev) => {
-        const next = structuredClone(prev);
-        next[taskId] ??= {};
-        next[taskId][participantId] = shifted;
-        return next;
+        return { ...prev, [taskId]: { ...prev[taskId], [participantId]: shifted } };
       });
     },
     [draftAllocations, sprintsGlobalOrdered]
@@ -601,10 +592,7 @@ export default function PlanningWorkbenchReviewPage() {
       }
 
       setDraftAllocations((prev) => {
-        const next = structuredClone(prev);
-        next[taskId] ??= {};
-        next[taskId][participantId] = nextRow;
-        return next;
+        return { ...prev, [taskId]: { ...prev[taskId], [participantId]: nextRow } };
       });
     },
     [draftAllocations, sprintById, quartersSorted, sprintsByQuarter]
@@ -645,11 +633,13 @@ export default function PlanningWorkbenchReviewPage() {
     if (!selectedItemIds.length) return;
     try {
       setError("");
+      const previewItemsById = new Map(preview?.items.map(item => [item.id, item]));
       await applyPlanning({
         itemIds: selectedItemIds,
         allocations: draftAllocations,
-        itemPatches: Object.fromEntries(draftTasks.map((task) => [task.id, toApplyItemPatch(task, preview?.items.find(item => item.id === task.id)?.notes)])),
+        itemPatches: Object.fromEntries(draftTasks.map((task) => [task.id, toApplyItemPatch(task, previewItemsById.get(task.id)?.notes)])),
       }).unwrap();
+      removeItemsFromPlan(selectedItemIds);
       clearPlanningWorkbenchPreview();
       navigate(`/${teamKey}/`);
     } catch (err: any) {
@@ -788,8 +778,6 @@ export default function PlanningWorkbenchReviewPage() {
                     participantMap={participantMap}
                     participantOrder={task.participantIds || []}
                     sprintsGlobalOrdered={sprintsGlobalOrdered}
-                    sprintsByQuarter={sprintsByQuarter}
-                    quartersSorted={quartersSorted}
                     selectedQuarterIds={[]}
                     withoutQuarterFilter={false}
                     quarterFilterOptions={quarterFilterOptions}
@@ -833,3 +821,5 @@ export default function PlanningWorkbenchReviewPage() {
     </Stack>
   );
 }
+
+export default React.memo(PlanningWorkbenchReviewPage);

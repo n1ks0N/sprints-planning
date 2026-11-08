@@ -57,7 +57,7 @@ export function JiraExportProvider({
   const [dialogOpen, setDialogOpen] = React.useState(false);
 
   React.useEffect(() => {
-    setSelectedTasks([]);
+    setSelectedTasks(previous => previous.length ? [] : previous);
     setDialogOpen(false);
   }, [scopeKey]);
 
@@ -93,7 +93,7 @@ export function JiraExportProvider({
   }, []);
 
   const removeTask = React.useCallback((taskId: string) => {
-    setSelectedTasks((prev) => prev.filter((task) => task.id !== taskId));
+    setSelectedTasks((prev) => prev.some(task => task.id === taskId) ? prev.filter((task) => task.id !== taskId) : prev);
   }, []);
 
   const toggleTask = React.useCallback((task: BacklogItem) => {
@@ -106,7 +106,7 @@ export function JiraExportProvider({
   }, []);
 
   const clearTasks = React.useCallback(() => {
-    setSelectedTasks([]);
+    setSelectedTasks(previous => previous.length ? [] : previous);
   }, []);
 
   const openDialog = React.useCallback(() => {
@@ -117,12 +117,13 @@ export function JiraExportProvider({
     setDialogOpen(false);
   }, []);
 
+  const isSelected = React.useCallback((taskId: string) => selectedTaskIds.has(taskId), [selectedTaskIds]);
   const value = React.useMemo<JiraExportContextValue>(
     () => ({
       selectedTasks,
       selectedCount: selectedTasks.length,
       dialogOpen,
-      isSelected: (taskId: string) => selectedTaskIds.has(taskId),
+      isSelected,
       addTask,
       addTasks,
       syncTasks,
@@ -140,7 +141,7 @@ export function JiraExportProvider({
       dialogOpen,
       openDialog,
       removeTask,
-      selectedTaskIds,
+      isSelected,
       selectedTasks,
       syncTasks,
       toggleTask,

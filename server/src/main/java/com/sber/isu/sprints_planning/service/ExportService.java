@@ -9,7 +9,7 @@ import com.sber.isu.sprints_planning.model.SprintEntity;
 import com.sber.isu.sprints_planning.repository.ParticipantRepository;
 import com.sber.isu.sprints_planning.repository.ReleaseRepository;
 import com.sber.isu.sprints_planning.repository.SprintRepository;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -69,12 +69,12 @@ public class ExportService {
         this.capacityService = capacityService;
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public byte[] exportToExcel(String teamKey) {
         return exportToExcel(teamKey, TaskFilter.empty());
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public byte[] exportToExcel(String teamKey, TaskFilter filter) {
         TaskFilter effectiveFilter = filter == null ? TaskFilter.empty() : filter;
         List<UUID> quarterIds = new ArrayList<>(effectiveFilter.quarterIds());

@@ -1,3 +1,6 @@
+import useResolvedQuarterFilter from "./useResolvedQuarterFilter";
+import useToday from "./useToday";
+import QuarterFilter from "../components/filters/QuarterFilter";
 // src/views/TimeSetupPage.tsx
 import * as React from "react";
 import {
@@ -32,7 +35,6 @@ import {
   useDeleteSprintMutation,
 } from "../app/api";
 import type { Quarter, Sprint } from "../types";
-import FilterAutocomplete from "../components/filters/FilterAutocomplete";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import { setTimeSelectedQuarterIds } from "../app/uiSlice";
 
@@ -71,10 +73,8 @@ function shallowStringArrayEqual(a: readonly string[], b: readonly string[]) {
   return true;
 }
 
-function getCurrentQuarterId(quarters: Quarter[]) {
-  const today = moment().format(fmt);
-  return quarters.find((quarter) => quarter.startDate <= today && today <= quarter.endDate)?.id || "";
-}
+const EMPTY_QUARTERS: Quarter[] = [];
+const EMPTY_SPRINTS: Sprint[] = [];
 
 const LS_HIDE_PAST = "timeSetup.hidePast";
 
@@ -130,12 +130,13 @@ const openDatePickerOnMouseDown: React.MouseEventHandler<HTMLInputElement> = (
   e.preventDefault();
 };
 
-export default function TimeSetupPage() {
-  const { data: quarters = [] } = useGetQuartersQuery();
-  const { data: allSprints = [] } = useGetSprintsQuery(undefined);
+function TimeSetupPage() {
+  const { data: quartersData } = useGetQuartersQuery(undefined, { selectFromResult: ({ data }) => ({ data }) });
+  const quarters = quartersData ?? EMPTY_QUARTERS;
+  const { data: allSprints = EMPTY_SPRINTS } = useGetSprintsQuery(undefined, { selectFromResult: ({ data }) => ({ data }) });
 
   const [addQuarter, { isLoading: addingQuarter }] = useAddQuarterMutation();
-  const [updateQuarter] = useUpdateQuarterMutation();
+  const [updateQuarter, { isLoading: updatingQuarter }] = useUpdateQuarterMutation();
   const [deleteQuarter] = useDeleteQuarterMutation();
 
   const [addSprint, { isLoading: addingSprint }] = useAddSprintMutation();
@@ -143,7 +144,7 @@ export default function TimeSetupPage() {
   const [deleteSprint] = useDeleteSprintMutation();
 
   const dispatch = useAppDispatch();
-  const selectedQuarterIds = useAppSelector(
+  const storedQuarterIds = useAppSelector(
     (state) => state.ui.time.selectedQuarterIds
   );
   const [hidePast, setHidePast] = React.useState<boolean>(() => {
@@ -156,15 +157,10 @@ export default function TimeSetupPage() {
     }
   });
 
-  React.useEffect(() => {
-    if (!quarters.length) return;
-    const actualIds = new Set(quarters.map((q) => q.id));
-    const filtered = selectedQuarterIds.filter((id) => actualIds.has(id));
-    const nextQuarterIds = filtered.length ? filtered : [getCurrentQuarterId(quarters)].filter(Boolean);
-    if (!shallowStringArrayEqual(nextQuarterIds, selectedQuarterIds)) {
-      dispatch(setTimeSelectedQuarterIds(nextQuarterIds));
-    }
-  }, [quarters, selectedQuarterIds, dispatch]);
+  const today = useToday();
+  const currentQuarterId = React.useMemo(() => quarters.find(q => q.startDate <= today && today <= q.endDate)?.id, [quarters, today]);
+  const persistQuarters = React.useCallback((ids: string[]) => { dispatch(setTimeSelectedQuarterIds(ids)); }, [dispatch]);
+  const selectedQuarterIds = useResolvedQuarterFilter(quartersData, storedQuarterIds, persistQuarters, currentQuarterId);
 
   const onToggleHidePast = (e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.checked;
@@ -206,6 +202,7 @@ export default function TimeSetupPage() {
   );
   const [qEditStart, setQEditStart] = React.useState<string>("");
   const [qEditEnd, setQEditEnd] = React.useState<string>("");
+  const [qEditName, setQEditName] = React.useState<string>("");
   const [qEditError, setQEditError] = React.useState<string>("");
 
   const [editingSprintId, setEditingSprintId] = React.useState<string | null>(
@@ -228,15 +225,6 @@ export default function TimeSetupPage() {
   const sortedQuarters = React.useMemo(
     () => quarters.slice().sort((a, b) => a.endDate.localeCompare(b.endDate)),
     [quarters]
-  );
-
-  const quarterFilterOptions = React.useMemo(
-    () =>
-      sortedQuarters.map((q) => ({
-        value: q.id,
-        label: `${q.name} — ${fmtRU(q.startDate)} → ${fmtRU(q.endDate)}`,
-      })),
-    [sortedQuarters]
   );
 
   const sprintsByQuarter = React.useMemo(() => {
@@ -545,32 +533,34 @@ export default function TimeSetupPage() {
     setEditingQuarterId(q.id);
     setQEditStart(q.startDate);
     setQEditEnd(q.endDate);
+    setQEditName(q.name);
     setQEditError("");
   };
   const cancelEditQuarter = () => {
     setEditingQuarterId(null);
     setQEditStart("");
     setQEditEnd("");
+    setQEditName("");
     setQEditError("");
   };
   const saveEditQuarter = async () => {
-    if (!editingQuarterId || !qEditStart || !qEditEnd || qEditError) return;
-
+    const quarter = quarters.find(q => q.id === editingQuarterId);
+    const name = qEditName.trim();
+    if (!quarter || !name || !qEditStart || !qEditEnd || qEditError || updatingQuarter) return;
     const start = parseISO(qEditStart);
-    const year = start.year();
-    const number = quarterOfMonth0(start.month());
-    const newName = `Q${number} ${year}`;
-
-    await updateQuarter({
-      id: editingQuarterId,
-      startDate: qEditStart,
-      endDate: qEditEnd,
-      year,
-      number,
-      name: newName,
-    }).unwrap();
-
-    cancelEditQuarter();
+    try {
+      await updateQuarter({
+        id: quarter.id,
+        name,
+        ...(qEditStart !== quarter.startDate ? {
+          startDate: qEditStart, year: start.year(), number: quarterOfMonth0(start.month()),
+        } : {}),
+        ...(qEditEnd !== quarter.endDate ? { endDate: qEditEnd } : {}),
+      }).unwrap();
+      cancelEditQuarter();
+    } catch {
+      // The mutation reports the error; keep the draft open for correction or retry.
+    }
   };
   const removeQuarter = async (id: string) => {
     if (!window.confirm("Удалить квартал и все его спринты?")) return;
@@ -887,7 +877,7 @@ export default function TimeSetupPage() {
               </Typography>
               <Stack direction="row" spacing={1}>
                 <Tooltip title="Редактировать квартал">
-                  <IconButton size="small" onClick={() => startEditQuarter(q)}>
+                  <IconButton size="small" aria-label="Редактировать квартал" disabled={updatingQuarter} onClick={() => startEditQuarter(q)}>
                     <EditIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
@@ -905,26 +895,38 @@ export default function TimeSetupPage() {
               Редактирование квартала
             </Typography>
             <Grid container spacing={1} alignItems="center">
-              <Grid item xs={6} md={3}>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Название квартала"
+                  value={qEditName}
+                  onChange={(e) => setQEditName(e.target.value)}
+                  disabled={updatingQuarter}
+                />
+              </Grid>
+              <Grid item xs={6} md={2}>
                 <TextField
                   fullWidth
                   size="small"
                   type="date"
                   label="Дата начала"
                   value={qEditStart}
+                  disabled={updatingQuarter}
                   onChange={(e) => setQEditStart(e.target.value)}
                   InputLabelProps={{ shrink: true }}
                   inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
                   error={!!qEditError}
                 />
               </Grid>
-              <Grid item xs={6} md={3}>
+              <Grid item xs={6} md={2}>
                 <TextField
                   fullWidth
                   size="small"
                   type="date"
                   label="Дата окончания"
                   value={qEditEnd}
+                  disabled={updatingQuarter}
                   onChange={(e) => setQEditEnd(e.target.value)}
                   InputLabelProps={{ shrink: true }}
                   inputProps={{ onMouseDown: openDatePickerOnMouseDown }}
@@ -934,13 +936,14 @@ export default function TimeSetupPage() {
               <Grid
                 item
                 xs={12}
-                md={6}
-                sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}
+                md={4}
+                sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "flex-end" }}
               >
                 <Button
                   variant="outlined"
                   startIcon={<CloseIcon />}
                   onClick={cancelEditQuarter}
+                  disabled={updatingQuarter}
                 >
                   Отмена
                 </Button>
@@ -948,7 +951,7 @@ export default function TimeSetupPage() {
                   variant="contained"
                   startIcon={<SaveIcon />}
                   onClick={saveEditQuarter}
-                  disabled={!!qEditError || !qEditStart || !qEditEnd}
+                  disabled={!!qEditError || !qEditName.trim() || !qEditStart || !qEditEnd || updatingQuarter}
                 >
                   Сохранить
                 </Button>
@@ -990,11 +993,8 @@ export default function TimeSetupPage() {
         alignItems="center"
         sx={{ mb: 2, flexWrap: { xs: "wrap", md: "nowrap" } }}
       >
-        <FilterAutocomplete
-          multiple
-          allowCustom={false}
+        <QuarterFilter
           label="Фильтр по кварталам"
-          options={quarterFilterOptions}
           value={selectedQuarterIds}
           onChange={handleQuarterFilterChange}
           sx={{ minWidth: 280, flex: 1 }}
@@ -1104,3 +1104,5 @@ export default function TimeSetupPage() {
     </Paper>
   );
 }
+
+export default React.memo(TimeSetupPage);

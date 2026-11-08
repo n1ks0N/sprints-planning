@@ -22,13 +22,14 @@ test("selected release keeps its date after quarter change and reload", async ({
     await page.goto(`/#/${key}/`);
     const filter = page.getByRole("combobox", { name: "Релиз", exact: true });
     await filter.click(); await page.getByRole("option", { name: "15.02.2032", exact: true }).click();
-    await expect(filter).toHaveValue("15.02.2032");
-    await page.getByRole("combobox", { name: "Фильтр по кварталам", exact: true }).click();
+    await expect(page.getByRole("button", { name: "15.02.2032", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.getByRole("combobox", { name: "Фильтр по кварталам", exact: true }).fill("Q2 2032");
     await page.getByRole("option", { name: "Q2 2032", exact: true }).click();
     await page.keyboard.press("Escape");
-    await expect(filter).toHaveValue("15.02.2032");
+    await expect(page.getByRole("button", { name: "15.02.2032", exact: true })).toBeVisible();
     await page.reload();
-    await expect(page.getByRole("combobox", { name: "Релиз", exact: true })).toHaveValue("15.02.2032");
+    await expect(page.getByRole("button", { name: "15.02.2032", exact: true })).toBeVisible();
   } finally { await clean(request, key); }
 });
 

@@ -24,28 +24,31 @@ public interface ApiCallHistoryRepository extends JpaRepository<ApiCallHistoryEn
           and h.httpMethod <> 'GET'
           and (h.entityType is null or h.entityType = '')
         group by h.sessionId, h.userName
-        order by max(h.createdAt) desc
+        order by max(h.createdAt) desc, h.sessionId, h.userName
         """)
     List<ApiHistorySessionSummaryProjection> findActionSessionSummaries(
         @Param("teamKey") String teamKey,
         Pageable pageable
     );
 
-    @Query("""
-        select h
-        from ApiCallHistoryEntity h
-        where h.teamKey = :teamKey
-          and h.sessionId = :sessionId
-          and h.userName = :userName
-          and h.httpMethod <> 'GET'
-          and (h.entityType is null or h.entityType = '')
-        order by h.createdAt desc
-        """)
-    List<ApiCallHistoryEntity> findActionHistoryByTeamKeyAndSession(
+    // One indexed top-N lookup per selected pair, in one database round trip.
+    @Query(value = """
+        select actions.*
+        from unnest(cast(:sessionIds as text[]), cast(:userNames as text[])) as sessions(session_id, user_name)
+        cross join lateral (
+            select h.* from {h-schema}api_call_history h
+            where h.team_key = :teamKey
+              and h.session_id = sessions.session_id and h.user_name = sessions.user_name
+              and h.http_method <> 'GET' and (h.entity_type is null or h.entity_type = '')
+            order by h.created_at desc, h.id desc
+            limit :actionLimit
+        ) actions
+        """, nativeQuery = true)
+    List<ApiCallHistoryEntity> findActionHistoryForSessions(
         @Param("teamKey") String teamKey,
-        @Param("sessionId") String sessionId,
-        @Param("userName") String userName,
-        Pageable pageable
+        @Param("sessionIds") String[] sessionIds,
+        @Param("userNames") String[] userNames,
+        @Param("actionLimit") int actionLimit
     );
 
     Page<ApiCallHistoryEntity> findAllByTeamKeyAndEntityTypeAndEntityId(

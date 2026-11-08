@@ -778,7 +778,7 @@ export const installPlanningApiMocks = async (
       if (pathname === "/teams" && method === "GET") {
         return respond([{ key: mockScenario.teamKey, name: "CustomLab" }]);
       }
-      if (pathname === `/${mockScenario.teamKey}/quarters` && method === "GET") {
+      if ([`/${mockScenario.teamKey}/quarters`, `/${mockScenario.teamKey}/quarters/options`].includes(pathname) && method === "GET") {
         return respond(mockScenario.quarters);
       }
       if (pathname === `/${mockScenario.teamKey}/sprints` && method === "GET") {
@@ -868,7 +868,7 @@ export const installPlanningApiMocks = async (
           });
         const page = Number(url.searchParams.get("page") || 0);
         const size = Number(url.searchParams.get("size") || ordered.length || 1);
-        return respond(buildPage(ordered, page, size));
+        return respond(buildPage(ordered.map((item: any) => ({ ...item, releasePromDate: item.releaseDateId ? releasePromDateById.get(item.releaseDateId) ?? null : null })), page, size));
       }
       if (pathname === `/${mockScenario.teamKey}/planning-workbench/items` && method === "POST") {
         const body = (await parseBody(input, init)) || {};

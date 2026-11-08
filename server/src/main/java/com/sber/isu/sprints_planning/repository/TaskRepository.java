@@ -5,7 +5,6 @@ import jakarta.persistence.LockModeType;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -14,74 +13,15 @@ import org.springframework.data.repository.query.Param;
 
 public interface TaskRepository extends JpaRepository<TaskEntity, UUID>, TaskRepositoryCustom {
 
-    @EntityGraph(
-        attributePaths = {
-            "participants",
-            "participants.participant",
-            "participants.participant.userStreams",
-            "leaderParticipant",
-            "leaderParticipant.userStreams",
-            "releaseDate",
-            "customers",
-            "streams",
-            "loads",
-            "loads.sprint",
-            "allocations",
-            "allocations.participant",
-            "allocations.participant.userStreams",
-            "allocations.sprint"
-        }
-    )
-    List<TaskEntity> findAllByTeamKeyOrderByDisplayOrderAsc(String teamKey);
-
-    @EntityGraph(attributePaths = {"participants", "loads", "allocations"})
-    @Query("""
-        select distinct t from TaskEntity t
-        join t.loads l
-        join l.sprint s
-        where s.quarter.id = :quarterId and t.teamKey = :teamKey and l.days > 0
-        order by t.displayOrder
-        """)
-    List<TaskEntity> findByQuarterWithLoad(@Param("quarterId") UUID quarterId, @Param("teamKey") String teamKey);
-
-    @EntityGraph(attributePaths = {
-        "participants",
-        "participants.participant",
-        "participants.participant.userStreams",
-        "customers",
-        "streams",
-        "loads",
-        "loads.sprint",
-        "allocations",
-        "allocations.participant",
-        "allocations.sprint",
-        "leaderParticipant",
-        "releaseDate"
-    })
-    @Query("select t from TaskEntity t where t.id = :id and t.teamKey = :teamKey")
-    TaskEntity findWithDetailsById(@Param("id") UUID id, @Param("teamKey") String teamKey);
-
-    @EntityGraph(attributePaths = {
-        "participants",
-        "participants.participant",
-        "participants.participant.userStreams",
-        "customers",
-        "streams",
-        "loads",
-        "loads.sprint",
-        "allocations",
-        "allocations.participant",
-        "allocations.sprint",
-        "leaderParticipant",
-        "releaseDate"
-    })
-    List<TaskEntity> findAllByIdInAndTeamKey(List<UUID> ids, String teamKey);
-
     Optional<TaskEntity> findByIdAndTeamKey(UUID id, String teamKey);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select t from TaskEntity t where t.id = :id and t.teamKey = :teamKey")
     Optional<TaskEntity> findByIdAndTeamKeyForUpdate(@Param("id") UUID id, @Param("teamKey") String teamKey);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from TaskEntity t where t.teamKey = :teamKey and t.id in :ids order by t.id")
+    List<TaskEntity> lockAllByIdInAndTeamKey(@Param("ids") List<UUID> ids, @Param("teamKey") String teamKey);
 
     @Query("select coalesce(max(t.displayOrder), 0) from TaskEntity t where t.teamKey = :teamKey and t.workspace = :workspace")
     int findMaxWorkspaceOrder(@Param("teamKey") String teamKey, @Param("workspace") String workspace);
@@ -98,38 +38,4 @@ public interface TaskRepository extends JpaRepository<TaskEntity, UUID>, TaskRep
     @Query("update TaskEntity t set t.displayOrder = t.displayOrder - 1 where t.teamKey = :teamKey and t.workspace = :workspace and t.displayOrder > :order")
     void decrementWorkspaceOrderAfter(@Param("teamKey") String teamKey, @Param("workspace") String workspace, @Param("order") int order);
 
-    @Query("select coalesce(max(t.displayOrder), 0) from TaskEntity t where t.teamKey = :teamKey")
-    int findMaxDisplayOrder(@Param("teamKey") String teamKey);
-
-    @Modifying(flushAutomatically = true)
-    @Query("update TaskEntity t set t.displayOrder = t.displayOrder + 1 where t.id <> :taskId and t.teamKey = :teamKey and t.displayOrder >= :start and t.displayOrder < :end")
-    void incrementDisplayOrderRange(
-        @Param("taskId") UUID taskId,
-        @Param("teamKey") String teamKey,
-        @Param("start") int start,
-        @Param("end") int end
-    );
-
-    @Modifying(flushAutomatically = true)
-    @Query("update TaskEntity t set t.displayOrder = t.displayOrder + 1 where t.teamKey = :teamKey and t.displayOrder >= :start")
-    void incrementDisplayOrderFrom(
-        @Param("teamKey") String teamKey,
-        @Param("start") int start
-    );
-
-    @Modifying(flushAutomatically = true)
-    @Query("update TaskEntity t set t.displayOrder = t.displayOrder - 1 where t.id <> :taskId and t.teamKey = :teamKey and t.displayOrder > :start and t.displayOrder <= :end")
-    void decrementDisplayOrderRange(
-        @Param("taskId") UUID taskId,
-        @Param("teamKey") String teamKey,
-        @Param("start") int start,
-        @Param("end") int end
-    );
-
-    @Modifying(flushAutomatically = true)
-    @Query("update TaskEntity t set t.displayOrder = t.displayOrder - 1 where t.teamKey = :teamKey and t.displayOrder > :start")
-    void decrementDisplayOrderAfter(
-        @Param("teamKey") String teamKey,
-        @Param("start") int start
-    );
 }

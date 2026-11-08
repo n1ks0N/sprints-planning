@@ -53,7 +53,7 @@ import com.sber.isu.sprints_planning.repository.TaskRepository;
 import com.sber.isu.sprints_planning.repository.TaskStreamRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -551,12 +551,12 @@ public class TaskService {
         return new TaskAllocationsUpdateDto(taskId.toString(), cells, loads, task.getUpdatedAt());
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public List<TaskDto> findAll(String teamKey, TaskFilter filter) {
         return findFilteredTasks(teamKey, filter);
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public Page<ParticipantWorkloadRowDto> findParticipantWorkloadPage(
         String teamKey,
         TaskFilter filter,
@@ -603,12 +603,12 @@ public class TaskService {
         );
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public Page<TaskDto> findPage(String teamKey, TaskFilter filter, Integer page, Integer size) {
         return findPage(teamKey, filter, page, size, null, null);
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public Page<TaskDto> findPage(
         String teamKey,
         TaskFilter filter,
@@ -632,6 +632,7 @@ public class TaskService {
         return new PageImpl<>(content, filtered.getPageable(), filtered.getTotalElements());
     }
 
+    @Transactional(readOnly = true)
     public TaskDto findById(String teamKey, UUID id) {
         TaskEntity entity = taskRepository.findWithDetailsById(id, teamKey);
         if (entity == null) {
@@ -752,24 +753,46 @@ public class TaskService {
         Map<UUID, ParticipantEntity> participants,
         Map<UUID, ReleaseEntity> releases,
         Map<String, QuarterEntity> quarters,
-        Map<String, Integer> maxOrders
+        Map<String, Integer> maxOrders,
+        Map<UUID, TaskEntity> lockedTasks,
+        Map<String, TaskCustomerEntity> customers,
+        Map<String, TaskStreamEntity> streams
     ) {}
 
     @Transactional
     public List<TaskDto> applyPlanningBatch(String teamKey, List<PlanningMutation> mutations) {
+        return applyPlanningBatch(teamKey, mutations, Map.of());
+    }
+
+    /** Reuses source entities already locked and loaded by the planning transaction. */
+    @Transactional
+    public List<TaskDto> applyPlanningBatch(String teamKey, List<PlanningMutation> mutations, Map<UUID, TaskEntity> lockedTasks) {
         if (mutations.isEmpty()) return List.of();
         List<SprintEntity> sprints = fetchAllSprints(teamKey);
         var participants = participantRepository.findAllByTeamKeyOrderByDisplayOrderAsc(teamKey).stream()
             .collect(Collectors.toMap(ParticipantEntity::getId, Function.identity()));
         var releases = releaseRepository.findAllByTeamKeyOrderByPromDateAsc(teamKey).stream()
             .collect(Collectors.toMap(ReleaseEntity::getId, Function.identity()));
-        MutationContext context = new MutationContext(sprints, participants, releases, new HashMap<>(), new HashMap<>());
+        Set<String> customerNames = new LinkedHashSet<>();
+        Set<String> streamNames = new LinkedHashSet<>();
+        for (PlanningMutation mutation : mutations) {
+            customerNames.addAll(normalizeReferenceNames(mutation.create() != null ? mutation.create().customers() : mutation.update().customers()));
+            streamNames.addAll(normalizeReferenceNames(mutation.create() != null ? mutation.create().streams() : mutation.update().streams()));
+        }
+        Map<String, TaskCustomerEntity> customers = customerNames.isEmpty() ? new HashMap<>()
+            : taskCustomerRepository.findByNamesAndTeamKey(customerNames, teamKey).stream()
+                .collect(Collectors.toMap(TaskCustomerEntity::getName, Function.identity()));
+        Map<String, TaskStreamEntity> streams = streamNames.isEmpty() ? new HashMap<>()
+            : taskStreamRepository.findByNamesAndTeamKey(streamNames, teamKey).stream()
+                .collect(Collectors.toMap(TaskStreamEntity::getName, Function.identity()));
+        MutationContext context = new MutationContext(sprints, participants, releases, new HashMap<>(), new HashMap<>(), lockedTasks, customers, streams);
         List<TaskEntity> tasks = new ArrayList<>(mutations.size());
         for (PlanningMutation mutation : mutations) {
             tasks.add(mutation.create() != null
                 ? createEntity(teamKey, mutation.create(), context)
                 : updateEntity(teamKey, mutation.update(), context));
         }
+        taskRepository.flush();
         cleanupUnusedTaskReferenceValues(teamKey);
         Map<UUID, LocalDate> dates = releases.values().stream()
             .collect(Collectors.toMap(ReleaseEntity::getId, ReleaseEntity::getPromDate));
@@ -816,11 +839,11 @@ public class TaskService {
 
         // Handle customers (multi-value)
         if (request.customers() != null) {
-            updateTaskCustomers(teamKey, saved, request.customers());
+            updateTaskCustomers(teamKey, saved, request.customers(), context);
         }
         // Handle streams (multi-value)
         if (request.streams() != null) {
-            updateTaskStreams(teamKey, saved, request.streams());
+            updateTaskStreams(teamKey, saved, request.streams(), context);
         }
         syncLegacyCustomerAndStream(saved);
 
@@ -856,10 +879,13 @@ public class TaskService {
 
     private TaskEntity updateEntity(String teamKey, TaskUpdateRequest request, MutationContext context) {
         UUID taskId = UUID.fromString(request.id());
-        taskRepository.findByIdAndTeamKeyForUpdate(taskId, teamKey)
-            .orElseThrow(() -> new EntityNotFoundException("Task not found"));
-        TaskEntity entity = taskRepository.findWithDetailsById(taskId, teamKey);
+        TaskEntity entity = context == null ? null : context.lockedTasks().get(taskId);
         if (entity == null) {
+            taskRepository.findByIdAndTeamKeyForUpdate(taskId, teamKey)
+                .orElseThrow(() -> new EntityNotFoundException("Task not found"));
+            entity = taskRepository.findWithDetailsById(taskId, teamKey);
+        }
+        if (entity == null || !teamKey.equals(entity.getTeamKey())) {
             throw new EntityNotFoundException("Task not found");
         }
         TaskHistorySnapshot beforeSnapshot = snapshotTask(entity);
@@ -883,10 +909,10 @@ public class TaskService {
             }
         }
         if (request.customers() != null) {
-            updateTaskCustomers(teamKey, entity, request.customers());
+            updateTaskCustomers(teamKey, entity, request.customers(), context);
         }
         if (request.streams() != null) {
-            updateTaskStreams(teamKey, entity, request.streams());
+            updateTaskStreams(teamKey, entity, request.streams(), context);
         }
         syncLegacyCustomerAndStream(entity);
         if (request.planningQuarterIds() != null) {
@@ -937,7 +963,7 @@ public class TaskService {
             reorderTask(teamKey, entity, request.order());
         }
         entity.setUpdatedAt(LocalDate.now());
-        taskRepository.flush();
+        if (context == null) taskRepository.flush();
         if (context == null && (request.customers() != null || request.streams() != null)) cleanupUnusedTaskReferenceValues(teamKey);
         TaskHistorySnapshot afterSnapshot = snapshotTask(entity);
         List<TaskHistoryChangeDto> changes = buildTaskUpdateChanges(beforeSnapshot, afterSnapshot);
@@ -960,6 +986,8 @@ public class TaskService {
     @Transactional
     public TaskDto delete(String teamKey, IdRequest request) {
         UUID taskId = UUID.fromString(request.id());
+        taskRepository.findByIdAndTeamKeyForUpdate(taskId, teamKey)
+            .orElseThrow(() -> new EntityNotFoundException("Task not found"));
         TaskEntity entity = taskRepository.findWithDetailsById(taskId, teamKey);
         if (entity == null) {
             throw new EntityNotFoundException("Task not found");
@@ -994,6 +1022,7 @@ public class TaskService {
             throw new EntityNotFoundException("Task not found");
         }
 
+        TaskJiraIssues previousLinks = fetchJiraIssuesByTask(teamKey, List.of(task)).getOrDefault(taskId, new TaskJiraIssues());
         TaskJiraIssueEntity story = upsertStoryJiraLink(teamKey, task, request.storyUrl());
         if (story != null) {
             attachParticipantJiraIssuesToStory(teamKey, task.getId(), story);
@@ -1007,7 +1036,13 @@ public class TaskService {
 
         task.setUpdatedAt(LocalDate.now());
         taskRepository.flush();
-        return findById(teamKey, taskId);
+        TaskDto result = findById(teamKey, taskId);
+        List<TaskHistoryChangeDto> changes = new ArrayList<>();
+        addTaskHistoryChange(changes, "jiraStoryIssue", "Story Jira", previousLinks.storyIssue(), result.jiraStoryIssue());
+        addTaskHistoryChange(changes, "jiraIssues", "Задачи Jira участников", previousLinks.participantIssues(), result.jiraIssues());
+        if (!changes.isEmpty()) apiHistoryService.logTaskChange(teamKey, taskId, "task.jira.update", "Изменены ссылки Jira", changes,
+            Map.of("source", "POST /tasks/{id}/jira-links", "changedFields", changes.size()));
+        return result;
     }
 
     private void attachParticipantJiraIssuesToStory(String teamKey, UUID taskId, TaskJiraIssueEntity story) {
@@ -1212,11 +1247,14 @@ public class TaskService {
         ParticipantEntity participant = participantRepository.findByIdAndTeamKey(UUID.fromString(request.participantId()), teamKey)
             .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
         Map<UUID, SprintEntity> sprints = fetchSprintsForBulk(teamKey, request.allocations());
+        Map<TaskAllocationId, TaskAllocationEntity> existingAllocations = task.getAllocations().stream()
+            .collect(Collectors.toMap(TaskAllocationEntity::getId, Function.identity()));
+        Set<UUID> affectedSprintIds = new LinkedHashSet<>();
         List<TaskHistoryChangeDto> changes = new ArrayList<>();
         for (Map.Entry<String, BigDecimal> allocationEntry : request.allocations().entrySet()) {
             SprintEntity sprint = resolveSprint(teamKey, sprints, allocationEntry.getKey());
             TaskAllocationId id = new TaskAllocationId(task.getId(), participant.getId(), sprint.getId());
-            TaskAllocationEntity allocation = taskAllocationRepository.findById(id).orElse(null);
+            TaskAllocationEntity allocation = existingAllocations.get(id);
             BigDecimal beforeDays = allocation != null ? maxOrZero(allocation.getDays()) : BigDecimal.ZERO;
             BigDecimal afterDays = normalizeHalfDays(allocationEntry.getValue());
             if (beforeDays.compareTo(afterDays) == 0) {
@@ -1235,8 +1273,9 @@ public class TaskService {
                 allocation.setDays(afterDays);
             }
             addAllocationHistoryChange(changes, participant, sprint, beforeDays, afterDays);
-            recalcLoad(task, sprint);
+            affectedSprintIds.add(sprint.getId());
         }
+        recalcLoads(task, affectedSprintIds, sprints);
         task.setUpdatedAt(LocalDate.now());
         if (!changes.isEmpty()) {
             apiHistoryService.logTaskChange(
@@ -1263,14 +1302,21 @@ public class TaskService {
             return toDto(teamKey, task);
         }
         Map<UUID, SprintEntity> sprints = fetchSprintsForMulti(teamKey, allocationsByParticipant);
+        Set<UUID> participantIds = allocationsByParticipant.keySet().stream().filter(id -> id != null && !id.isBlank())
+            .map(UUID::fromString).collect(Collectors.toSet());
+        Map<UUID, ParticipantEntity> participants = participantRepository.findByTeamKeyAndIdIn(teamKey, participantIds).stream()
+            .collect(Collectors.toMap(ParticipantEntity::getId, Function.identity()));
+        if (participants.size() != participantIds.size()) throw new EntityNotFoundException("Participant not found");
+        Map<TaskAllocationId, TaskAllocationEntity> existingAllocations = task.getAllocations().stream()
+            .collect(Collectors.toMap(TaskAllocationEntity::getId, Function.identity()));
+        Set<UUID> affectedSprintIds = new LinkedHashSet<>();
         List<TaskHistoryChangeDto> changes = new ArrayList<>();
         for (Map.Entry<String, Map<String, BigDecimal>> participantEntry : allocationsByParticipant.entrySet()) {
             String participantId = participantEntry.getKey();
             if (participantId == null || participantId.isBlank()) {
                 continue;
             }
-            ParticipantEntity participant = participantRepository.findByIdAndTeamKey(UUID.fromString(participantId), teamKey)
-                .orElseThrow(() -> new EntityNotFoundException("Participant not found"));
+            ParticipantEntity participant = participants.get(UUID.fromString(participantId));
             Map<String, BigDecimal> row = participantEntry.getValue();
             if (row == null) {
                 continue;
@@ -1278,7 +1324,7 @@ public class TaskService {
             for (Map.Entry<String, BigDecimal> allocationEntry : row.entrySet()) {
                 SprintEntity sprint = resolveSprint(teamKey, sprints, allocationEntry.getKey());
                 TaskAllocationId id = new TaskAllocationId(task.getId(), participant.getId(), sprint.getId());
-                TaskAllocationEntity allocation = taskAllocationRepository.findById(id).orElse(null);
+                TaskAllocationEntity allocation = existingAllocations.get(id);
                 BigDecimal beforeDays = allocation != null ? maxOrZero(allocation.getDays()) : BigDecimal.ZERO;
                 BigDecimal afterDays = normalizeHalfDays(allocationEntry.getValue());
                 if (beforeDays.compareTo(afterDays) == 0) {
@@ -1297,9 +1343,10 @@ public class TaskService {
                     allocation.setDays(afterDays);
                 }
                 addAllocationHistoryChange(changes, participant, sprint, beforeDays, afterDays);
-                recalcLoad(task, sprint);
+                affectedSprintIds.add(sprint.getId());
             }
         }
+        recalcLoads(task, affectedSprintIds, sprints);
         task.setUpdatedAt(LocalDate.now());
         if (!changes.isEmpty()) {
             apiHistoryService.logTaskChange(
@@ -1332,6 +1379,11 @@ public class TaskService {
         BigDecimal nextDays = normalizeHalfDays(request.days());
         TaskLoadEntity load = task.getLoads().stream().filter(existing -> isSameLoad(existing, sprint.getId()))
             .findFirst().orElseGet(() -> taskLoadRepository.findById(id).orElse(null));
+        BigDecimal beforeDays = load == null ? BigDecimal.ZERO : maxOrZero(load.getDays());
+        if (beforeDays.compareTo(nextDays) == 0) return toDto(teamKey, task);
+        apiHistoryService.logTaskChange(teamKey, task.getId(), "task.loads.update", "Изменена суммарная нагрузка задачи",
+            List.of(new TaskHistoryChangeDto("loadDays", "Суммарная нагрузка: " + resolveSprintHistoryLabel(sprint), beforeDays, nextDays)),
+            Map.of("source", "POST /taskload", "changedFields", 1));
         if (nextDays.compareTo(BigDecimal.ZERO) == 0) {
             if (load != null) {
                 task.getLoads().removeIf(existing -> isSameLoad(existing, sprint.getId()));
@@ -1496,12 +1548,15 @@ public class TaskService {
 
         Map<UUID, TaskParticipantEntity> existing = entity.getParticipants().stream()
             .collect(Collectors.toMap(tp -> tp.getParticipant().getId(), tp -> tp));
+        Set<UUID> addedIds = new HashSet<>(newIds);
+        addedIds.removeAll(existing.keySet());
+        Map<UUID, ParticipantEntity> addedParticipants = fetchMutationParticipants(teamKey, addedIds, context);
 
         int order = 0;
         for (UUID id : newIds) {
             TaskParticipantEntity link = existing.get(id);
             if (link == null) {
-                ParticipantEntity participant = fetchParticipant(teamKey, id.toString(), context);
+                ParticipantEntity participant = addedParticipants.get(id);
                 requireActiveParticipant(participant);
                 link = new TaskParticipantEntity();
                 link.setId(new TaskParticipantId(entity.getId(), participant.getId()));
@@ -1526,10 +1581,9 @@ public class TaskService {
         }
         for (Map.Entry<String, BigDecimal> entry : loads.entrySet()) {
             SprintEntity sprint = resolveSprint(entity.getTeamKey(), sprints, entry.getKey());
-            TaskLoadId id = new TaskLoadId(entity.getId(), sprint.getId());
             BigDecimal nextDays = normalizeHalfDays(entry.getValue());
             TaskLoadEntity load = entity.getLoads().stream().filter(existing -> isSameLoad(existing, sprint.getId()))
-            .findFirst().orElseGet(() -> taskLoadRepository.findById(id).orElse(null));
+                .findFirst().orElse(null);
             if (nextDays.compareTo(BigDecimal.ZERO) == 0) {
                 if (load != null) {
                     entity.getLoads().removeIf(existing -> isSameLoad(existing, sprint.getId()));
@@ -1550,27 +1604,36 @@ public class TaskService {
         if (allocations == null) {
             return affectedSprintIds;
         }
+        Map<TaskAllocationId, TaskAllocationEntity> existingAllocations = entity.getAllocations().stream()
+            .collect(Collectors.toMap(TaskAllocationEntity::getId, Function.identity()));
+        Map<UUID, ParticipantEntity> participants = entity.getParticipants().stream()
+            .map(TaskParticipantEntity::getParticipant).collect(Collectors.toMap(ParticipantEntity::getId, Function.identity()));
+        Set<UUID> missingIds = allocations.entrySet().stream().filter(entry -> entry.getValue() != null)
+            .map(entry -> UUID.fromString(entry.getKey())).filter(id -> !participants.containsKey(id)).collect(Collectors.toSet());
+        participants.putAll(fetchMutationParticipants(entity.getTeamKey(), missingIds, context));
         for (Map.Entry<String, Map<String, BigDecimal>> participantEntry : allocations.entrySet()) {
             if (participantEntry.getValue() == null) {
                 continue;
             }
-            ParticipantEntity participant = fetchParticipant(entity.getTeamKey(), participantEntry.getKey(), context);
+            ParticipantEntity participant = participants.get(UUID.fromString(participantEntry.getKey()));
             for (Map.Entry<String, BigDecimal> sprintEntry : participantEntry.getValue().entrySet()) {
                 SprintEntity sprint = resolveSprint(entity.getTeamKey(), sprints, sprintEntry.getKey());
                 affectedSprintIds.add(sprint.getId());
                 TaskAllocationId id = new TaskAllocationId(entity.getId(), participant.getId(), sprint.getId());
                 BigDecimal nextDays = normalizeHalfDays(sprintEntry.getValue());
-                TaskAllocationEntity allocation = taskAllocationRepository.findById(id).orElse(null);
+                TaskAllocationEntity allocation = existingAllocations.get(id);
                 if (nextDays.compareTo(BigDecimal.ZERO) == 0) {
                     if (allocation != null) {
                         entity.getAllocations().removeIf(existing ->
                             isSameAllocation(existing, participant.getId(), sprint.getId()));
                         taskAllocationRepository.delete(allocation);
+                        existingAllocations.remove(id);
                     }
                     continue;
                 }
                 if (allocation == null) {
                     allocation = createTaskAllocation(entity, participant, sprint, entity.getTeamKey());
+                    existingAllocations.put(id, allocation);
                 }
                 allocation.setDays(nextDays);
             }
@@ -1621,11 +1684,13 @@ public class TaskService {
         return ids;
     }
 
-    private void updateTaskCustomers(String teamKey, TaskEntity entity, List<String> customerNames) {
-        Set<String> newNames = customerNames.stream()
-            .filter(name -> name != null && !name.isBlank())
-            .map(String::trim)
-            .collect(Collectors.toCollection(LinkedHashSet::new));
+    private Set<String> normalizeReferenceNames(List<String> names) {
+        return names == null ? Set.of() : names.stream().filter(name -> name != null && !name.isBlank())
+            .map(String::trim).collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private void updateTaskCustomers(String teamKey, TaskEntity entity, List<String> customerNames, MutationContext context) {
+        Set<String> newNames = normalizeReferenceNames(customerNames);
 
         entity.getCustomers().clear();
 
@@ -1634,9 +1699,9 @@ public class TaskService {
         }
 
         // Find existing customers
-        List<TaskCustomerEntity> existing = taskCustomerRepository.findByNamesAndTeamKey(newNames, teamKey);
-        Map<String, TaskCustomerEntity> existingByName = existing.stream()
-            .collect(Collectors.toMap(TaskCustomerEntity::getName, Function.identity()));
+        Map<String, TaskCustomerEntity> existingByName = context == null
+            ? taskCustomerRepository.findByNamesAndTeamKey(newNames, teamKey).stream()
+                .collect(Collectors.toMap(TaskCustomerEntity::getName, Function.identity())) : context.customers();
 
         // Add or create customers
         for (String name : newNames) {
@@ -1647,17 +1712,15 @@ public class TaskService {
                 customer.setTeamKey(teamKey);
                 customer.setCreatedAt(LocalDateTime.now());
                 customer = taskCustomerRepository.save(customer);
+                existingByName.put(name, customer);
             }
             entity.getCustomers().add(customer);
         }
         syncLegacyCustomerAndStream(entity);
     }
 
-    private void updateTaskStreams(String teamKey, TaskEntity entity, List<String> streamNames) {
-        Set<String> newNames = streamNames.stream()
-            .filter(name -> name != null && !name.isBlank())
-            .map(String::trim)
-            .collect(Collectors.toCollection(LinkedHashSet::new));
+    private void updateTaskStreams(String teamKey, TaskEntity entity, List<String> streamNames, MutationContext context) {
+        Set<String> newNames = normalizeReferenceNames(streamNames);
 
         entity.getStreams().clear();
 
@@ -1666,9 +1729,9 @@ public class TaskService {
         }
 
         // Find existing streams
-        List<TaskStreamEntity> existing = taskStreamRepository.findByNamesAndTeamKey(newNames, teamKey);
-        Map<String, TaskStreamEntity> existingByName = existing.stream()
-            .collect(Collectors.toMap(TaskStreamEntity::getName, Function.identity()));
+        Map<String, TaskStreamEntity> existingByName = context == null
+            ? taskStreamRepository.findByNamesAndTeamKey(newNames, teamKey).stream()
+                .collect(Collectors.toMap(TaskStreamEntity::getName, Function.identity())) : context.streams();
 
         // Add or create streams
         for (String name : newNames) {
@@ -1679,6 +1742,7 @@ public class TaskService {
                 stream.setTeamKey(teamKey);
                 stream.setCreatedAt(LocalDateTime.now());
                 stream = taskStreamRepository.save(stream);
+                existingByName.put(name, stream);
             }
             entity.getStreams().add(stream);
         }
@@ -1781,9 +1845,8 @@ public class TaskService {
             .map(TaskAllocationEntity::getDays)
             .filter(Objects::nonNull)
             .reduce(BigDecimal.ZERO, BigDecimal::add);
-        TaskLoadId id = new TaskLoadId(task.getId(), sprint.getId());
         TaskLoadEntity load = task.getLoads().stream().filter(existing -> isSameLoad(existing, sprint.getId()))
-            .findFirst().orElseGet(() -> taskLoadRepository.findById(id).orElse(null));
+            .findFirst().orElse(null);
         if (total.compareTo(BigDecimal.ZERO) <= 0) {
             if (load != null) {
                 task.getLoads().removeIf(existing -> isSameLoad(existing, sprint.getId()));
@@ -1795,12 +1858,6 @@ public class TaskService {
             load = createTaskLoad(task, sprint, task.getTeamKey());
         }
         load.setDays(total);
-    }
-
-    private void recalcAllLoads(TaskEntity task, List<SprintEntity> sprints) {
-        for (SprintEntity sprint : sprints) {
-            recalcLoad(task, sprint);
-        }
     }
 
     private void recalcLoads(TaskEntity task, Set<UUID> sprintIds, Map<UUID, SprintEntity> sprints) {
@@ -1890,6 +1947,15 @@ public class TaskService {
         ParticipantEntity participant = context.participants().get(UUID.fromString(participantId));
         if (participant == null) throw new EntityNotFoundException("Participant not found");
         return participant;
+    }
+
+    private Map<UUID, ParticipantEntity> fetchMutationParticipants(String teamKey, Set<UUID> ids, MutationContext context) {
+        if (ids.isEmpty()) return Map.of();
+        Map<UUID, ParticipantEntity> participants = context == null
+            ? participantRepository.findByTeamKeyAndIdIn(teamKey, ids).stream()
+                .collect(Collectors.toMap(ParticipantEntity::getId, Function.identity())) : context.participants();
+        if (!participants.keySet().containsAll(ids)) throw new EntityNotFoundException("Participant not found");
+        return participants;
     }
 
     private QuarterEntity resolveQuarter(String teamKey, String quarterId, MutationContext context) {
@@ -2035,6 +2101,7 @@ public class TaskService {
         Set<UUID> releaseIds = tasks.stream()
             .map(TaskEntity::getReleaseDate)
             .filter(Objects::nonNull)
+            .filter(release -> !org.hibernate.Hibernate.isInitialized(release))
             .map(ReleaseEntity::getId)
             .filter(Objects::nonNull)
             .collect(Collectors.toSet());
@@ -2106,8 +2173,30 @@ public class TaskService {
             initialQuarterId,
             leaderId,
             entity.getDisplayOrder(),
-            extractNotes(entity)
+            extractNotes(entity),
+            entity.getWorkspace(),
+            snapshotAllocations(entity),
+            snapshotLoads(entity)
         );
+    }
+
+    private Map<String, Map<String, BigDecimal>> snapshotAllocations(TaskEntity task) {
+        Map<String, Map<String, BigDecimal>> result = new LinkedHashMap<>();
+        for (TaskAllocationEntity allocation : task.getAllocations()) {
+            BigDecimal days = maxOrZero(allocation.getDays()).stripTrailingZeros();
+            if (days.signum() > 0) result.computeIfAbsent(allocation.getParticipant().getId().toString(), key -> new LinkedHashMap<>())
+                .put(allocation.getSprint().getId().toString(), days);
+        }
+        return result;
+    }
+
+    private Map<String, BigDecimal> snapshotLoads(TaskEntity task) {
+        Map<String, BigDecimal> result = new LinkedHashMap<>();
+        for (TaskLoadEntity load : task.getLoads()) {
+            BigDecimal days = maxOrZero(load.getDays()).stripTrailingZeros();
+            if (days.signum() > 0) result.put(load.getSprint().getId().toString(), days);
+        }
+        return result;
     }
 
     private TaskHistorySnapshot emptyTaskHistorySnapshot() {
@@ -2126,6 +2215,9 @@ public class TaskService {
             null,
             null,
             null,
+            Map.of(),
+            null,
+            Map.of(),
             Map.of()
         );
     }
@@ -2147,6 +2239,9 @@ public class TaskService {
         addTaskHistoryChange(changes, "leaderId", "Лидер", before.leaderId(), after.leaderId());
         addTaskHistoryChange(changes, "order", "Порядок", before.displayOrder(), after.displayOrder());
         addTaskHistoryChange(changes, "notes", "Заметки", before.notes(), after.notes());
+        addTaskHistoryChange(changes, "workspace", "Раздел задачи", before.workspace(), after.workspace());
+        addTaskHistoryChange(changes, "allocations", "Нагрузка участников", before.allocations(), after.allocations());
+        addTaskHistoryChange(changes, "loads", "Суммарная нагрузка", before.loads(), after.loads());
         return changes;
     }
 
@@ -2271,7 +2366,10 @@ public class TaskService {
         String initialQuarterId,
         String leaderId,
         Integer displayOrder,
-        Map<String, String> notes
+        Map<String, String> notes,
+        String workspace,
+        Map<String, Map<String, BigDecimal>> allocations,
+        Map<String, BigDecimal> loads
     ) {
     }
 

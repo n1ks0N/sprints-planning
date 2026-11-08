@@ -33,7 +33,7 @@ const editAllocation = async (page: Page, testId: string, value: string) => {
 };
 
 const clearPlanningQuarterFilter = async (page: Page) => {
-  await page.getByLabel("Фильтр по кварталу").click();
+  await page.getByRole("combobox", { name: "Фильтр по кварталу", exact: true }).click();
   const clearButton = page.getByRole("button", { name: "Clear" });
   if (await clearButton.isVisible()) {
     await clearButton.click();
@@ -156,7 +156,7 @@ test.describe("Planning Workbench", () => {
     await clearPlanningQuarterFilter(page);
     await expect(availableCards).toHaveCount(3);
 
-    await page.getByLabel("Фильтр по кварталу").click();
+    await page.getByRole("combobox", { name: "Фильтр по кварталу", exact: true }).click();
     await page.getByRole("option", { name: "Q3 2026" }).click();
 
     await expect(page.getByTestId("planning-backlog-count")).toHaveText("1");

@@ -1,11 +1,11 @@
 import * as React from "react";
+import { PlanningSelectionProvider } from "../contexts/PlanningSelectionContext";
 import {
   Link,
   Navigate,
   Route,
   Routes,
   useLocation,
-  useNavigate,
   useParams,
 } from "react-router-dom";
 import {
@@ -17,32 +17,31 @@ import {
   Tooltip,
   IconButton,
   Badge,
+  CircularProgress,
 } from "@mui/material";
 import { AddTask, Visibility, VisibilityOff } from "@mui/icons-material";
 
-import TimeSetupPage from "./TimeSetupPage";
-import TeamPage from "./TeamPage";
-import CapacityPage from "./CapacityPage";
-import BacklogPage from "./BacklogPage";
-import ParticipantWorkloadPage from "./ParticipantWorkloadPage";
-import ReleasesPage from "./ReleasesPage";
-import HistoryPage from "./HistoryPage";
-import PlanningWorkbenchPage from "./PlanningWorkbenchPage";
-import PlanningWorkbenchReviewPage from "./PlanningWorkbenchReviewPage";
+const TimeSetupPage = React.lazy(() => import(/* webpackChunkName: "TimeSetupPage" */ "./TimeSetupPage"));
+const TeamPage = React.lazy(() => import(/* webpackChunkName: "TeamPage" */ "./TeamPage"));
+const CapacityPage = React.lazy(() => import(/* webpackChunkName: "CapacityPage" */ "./CapacityPage"));
+const BacklogPage = React.lazy(() => import(/* webpackChunkName: "BacklogPage" */ "./BacklogPage"));
+const ParticipantWorkloadPage = React.lazy(() => import(/* webpackChunkName: "ParticipantWorkloadPage" */ "./ParticipantWorkloadPage"));
+const ReleasesPage = React.lazy(() => import(/* webpackChunkName: "ReleasesPage" */ "./ReleasesPage"));
+const HistoryPage = React.lazy(() => import(/* webpackChunkName: "HistoryPage" */ "./HistoryPage"));
+const PlanningWorkbenchPage = React.lazy(() => import(/* webpackChunkName: "PlanningWorkbenchPage" */ "./PlanningWorkbenchPage"));
+const PlanningWorkbenchReviewPage = React.lazy(() => import(/* webpackChunkName: "PlanningWorkbenchReviewPage" */ "./PlanningWorkbenchReviewPage"));
 import { useDispatch, useSelector, useStore } from "react-redux";
 import { undoLast } from "../app/undoSlice";
 import { exportExcelFile } from "../app/api";
 import moment from "moment";
-import TeamSwitcher from "../components/TeamSwitcher";
 import {
-  selectAvailableTeams,
   selectCurrentTeamKey,
   setAvailableTeams,
   setCurrentTeam,
 } from "../app/teamSlice";
 import { useGetTeamsQuery } from "../app/api";
 import { DEFAULT_TEAM_KEY } from "../teams";
-import TeamsPage from "./TeamsPage";
+const TeamsPage = React.lazy(() => import(/* webpackChunkName: "TeamsPage" */ "./TeamsPage"));
 import { PAGE_TITLES, buildTabTitle } from "../constants/pageTitles";
 import PageHelpDialog, {
   PageHelpContent,
@@ -52,6 +51,10 @@ import {
   JiraExportProvider,
   useJiraExport,
 } from "../contexts/JiraExportContext";
+
+function PageLoading() {
+  return <Stack alignItems="center" sx={{ py: 4 }}><CircularProgress aria-label="Загрузка страницы" /></Stack>;
+}
 
 function Hotkeys() {
   const dispatch = useDispatch();
@@ -73,11 +76,9 @@ function Hotkeys() {
 
 function TeamScopedApp() {
   const { teamKey: rawTeamKey } = useParams<{ teamKey: string }>();
-  const navigate = useNavigate();
   const location = useLocation();
   const dispatch = useDispatch();
   const store = useStore();
-  const teams = useSelector(selectAvailableTeams);
   const currentTeamKey = useSelector(selectCurrentTeamKey);
   const isTodoPath = /\/backlog\/?$/.test(location.pathname);
   const hideAllParticipants = useSelector((state: any) =>
@@ -161,7 +162,7 @@ function TeamScopedApp() {
           "Story создается один раз на задачу. Название задачи участника в Jira имеет вид «Роль: название задачи», название Story сохраняется.",
         ],
       },
-      "/backlog": { title: "Справка: Бэклог", description: "Будущие задачи: участники, оценки и спринты сохраняются, но не занимают рабочую ёмкость.", bullets: ["Создание и копирование дают статус «В бэклоге».", "В работе / Выполнено переводят задачу на дорожную карту; отмена сохраняет страницу.", "В меню задачи выберите «В планирование» для подготовки автораспределения.", "Создание задач Jira доступно на дорожной карте.", "Дату релиза можно выбрать или ввести вручную."] },
+      "/backlog": { title: "Справка: Бэклог", description: "Будущие задачи: участники, оценки и спринты сохраняются, но не занимают рабочую ёмкость.", bullets: ["Создание и копирование дают статус «В бэклоге».", "В работе / Выполнено переводят задачу на дорожную карту; отмена сохраняет страницу.", "Нажмите иконку «Перенос в планирование» в карточке задачи для подготовки автораспределения.", "Создание задач Jira доступно на дорожной карте.", "Дату релиза можно выбрать или ввести вручную."] },
       "/capacity": {
         title: "Справка: Нагрузка",
         description:
@@ -179,7 +180,7 @@ function TeamScopedApp() {
           "Раздел показывает распределение задач по каждому участнику в выбранных спринтах.",
         bullets: [
           "Фильтры позволяют выбрать кварталы, участников, роли, стримы участников, стрим задач и приоритеты.",
-          "Пагинации задач на этой странице нет: список ограничивается только фильтрами.",
+          "Участники подгружаются по мере прокрутки. Внизу списка можно нажать «Загрузить ещё» и увидеть, сколько участников загружено.",
           "Клик по ячейке нагрузки открывает редактирование нагрузки для задачи и спринта.",
           "Итоги справа показывают суммарную загрузку по участнику.",
           "Пустой выбор участников означает показ всех участников, а не скрытый фильтр по всем id.",
@@ -272,16 +273,6 @@ function TeamScopedApp() {
     }
   }, [store, isTodoPath]);
 
-  const navigateToTeam = React.useCallback(
-    (nextTeam: string) => {
-      const suffix = currentPathSuffix.startsWith("/")
-        ? currentPathSuffix
-        : `/${currentPathSuffix}`;
-      navigate(`/${nextTeam}${suffix}`);
-    },
-    [currentPathSuffix, navigate]
-  );
-
   const buildPath = React.useCallback(
     (suffix: string) => `/${teamKey}${suffix}`,
     [teamKey]
@@ -291,18 +282,20 @@ function TeamScopedApp() {
 
   return (
     <JiraExportProvider scopeKey={teamKey}>
-      <TeamScopedAppContent
-        buildPath={buildPath}
-        currentPathSuffix={currentPathSuffix}
-        handleExportExcel={handleExportExcel}
-        handleToggleAllParticipants={handleToggleAllParticipants}
-        hideAllParticipants={hideAllParticipants}
-        isBacklogPage={isBacklogPage}
-        isExporting={isExporting}
-        teamKey={teamKey}
-        teamScopedPageTitle={teamScopedPageTitle}
-        helpContent={helpContent}
-      />
+      <PlanningSelectionProvider key={teamKey}>
+        <TeamScopedAppContent
+          buildPath={buildPath}
+          currentPathSuffix={currentPathSuffix}
+          handleExportExcel={handleExportExcel}
+          handleToggleAllParticipants={handleToggleAllParticipants}
+          hideAllParticipants={hideAllParticipants}
+          isBacklogPage={isBacklogPage}
+          isExporting={isExporting}
+          teamKey={teamKey}
+          teamScopedPageTitle={teamScopedPageTitle}
+          helpContent={helpContent}
+        />
+      </PlanningSelectionProvider>
     </JiraExportProvider>
   );
 }
@@ -351,33 +344,36 @@ function TeamScopedAppContent({
             flexWrap="wrap"
             sx={{ flexGrow: 1 }}
           >
-            <Button component={Link} to={buildPath("/")}>
-              Дорожная карта
-            </Button>
-            <Button component={Link} to={buildPath("/backlog")}>
-              Бэклог
-            </Button>
-            <Button component={Link} to={buildPath("/capacity")}>
-              Нагрузка
-            </Button>
-            <Button component={Link} to={buildPath("/participant-work")}>
-              По сотрудникам
-            </Button>
-            <Button component={Link} to={buildPath("/time")}>
-              Кварталы/Спринты
-            </Button>
-            <Button component={Link} to={buildPath("/team")}>
-              Участники
-            </Button>
-            <Button component={Link} to={buildPath("/releases")}>
-              Релизы
-            </Button>
-            <Button component={Link} to={buildPath("/planning")}>
-              Планирование
-            </Button>
-            <Button component={Link} to={buildPath("/history")}>
-              История
-            </Button>
+            {[
+              ["/", "Дорожная карта"],
+              ["/backlog", "Бэклог"],
+              ["/capacity", "Нагрузка"],
+              ["/participant-work", "По сотрудникам"],
+              ["/time", "Кварталы/Спринты"],
+              ["/team", "Участники"],
+              ["/releases", "Релизы"],
+              ["/planning", "Планирование"],
+              ["/history", "История"],
+            ].map(([path, label]) => {
+              const currentPath = currentPathSuffix.replace(/\/+$/, "") || "/";
+              const active = currentPath === path || (path !== "/" && currentPath.startsWith(`${path}/`));
+              return (
+                <Button
+                  key={path}
+                  component={Link}
+                  to={buildPath(path)}
+                  aria-current={active ? "page" : undefined}
+                  sx={active ? {
+                    bgcolor: "primary.main",
+                    color: "primary.contrastText",
+                    fontWeight: 700,
+                    "&:hover": { bgcolor: "primary.dark" },
+                  } : undefined}
+                >
+                  {label}
+                </Button>
+              );
+            })}
             {isTaskListPage && (
               <Tooltip title="Экспортировать задачи в Excel">
                 <span>
@@ -448,7 +444,7 @@ function TeamScopedAppContent({
       <Toolbar />
 
       <Container maxWidth="xl" sx={{ py: 2 }}>
-        <Routes>
+        <React.Suspense fallback={<PageLoading />}><Routes>
           <Route path="time" element={<TimeSetupPage />} />
           <Route path="team" element={<TeamPage />} />
           <Route path="capacity" element={<CapacityPage />} />
@@ -462,7 +458,7 @@ function TeamScopedAppContent({
           />
           <Route path="releases" element={<ReleasesPage />} />
           <Route path="history" element={<HistoryPage />} />
-        </Routes>
+        </Routes></React.Suspense>
       </Container>
     </>
   );
@@ -491,10 +487,10 @@ export default function App() {
   }, [location.pathname]);
 
   return (
-    <Routes>
+    <React.Suspense fallback={<PageLoading />}><Routes>
       <Route path="/:teamKey/*" element={<TeamScopedApp />} />
       <Route path="/teams" element={<TeamsPage />} />
       <Route path="*" element={<Navigate to={`/${currentTeam}/`} replace />} />
-    </Routes>
+    </Routes></React.Suspense>
   );
 }

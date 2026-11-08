@@ -5,6 +5,9 @@ spring:
     url: jdbc:postgresql://localhost:5432/sprints
     username: sprints
     password: sprints
+    hikari:
+      data-source-properties:
+        reWriteBatchedInserts: true
   jpa:
     hibernate:
       ddl-auto: validate
@@ -12,6 +15,9 @@ spring:
       hibernate:
         jdbc:
           time_zone: UTC
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
         default_batch_fetch_size: 50
         globally_quoted_identifiers: true
     open-in-view: false

@@ -33,6 +33,17 @@ public interface SprintRepository extends JpaRepository<SprintEntity, UUID> {
 
     List<SprintEntity> findByTeamKeyAndIdIn(String teamKey, Iterable<UUID> ids);
 
+    @Query("""
+        select s from SprintEntity s join fetch s.quarter q
+        where s.teamKey = :teamKey and (s.id in :sprintIds or q.id in :quarterIds)
+        order by q.startDate, s.order
+        """)
+    List<SprintEntity> findPlanningWindowSprints(
+        @Param("teamKey") String teamKey,
+        @Param("sprintIds") java.util.Collection<UUID> sprintIds,
+        @Param("quarterIds") java.util.Collection<UUID> quarterIds
+    );
+
     Optional<SprintEntity> findFirstByTeamKeyAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
         String teamKey,
         java.time.LocalDate dateFrom,

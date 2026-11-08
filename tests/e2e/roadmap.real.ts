@@ -34,6 +34,111 @@ test.describe("Roadmap and backlog against PostgreSQL", () => {
     await expect.poll(async () => { try { return (await request.get(`${prefix}/actuator/health`)).status(); } catch { return 0; } }, { timeout: 45_000 }).toBe(200);
   });
 
+  test("backlog quick icon immediately creates a linked planning item and header follows navigation", async ({ page, request }, testInfo) => {
+    const { team, task } = await seed(request);
+    try {
+      await page.addInitScript(() => localStorage.setItem("sprints-planning-user-name", "Quick planning regression"));
+      await page.goto(`/#/${team}/backlog`);
+      const header = page.getByRole("banner");
+      await expect(header.locator('a[aria-current="page"]')).toHaveText("Бэклог");
+      const card = page.getByTestId(`backlog-task-${task.id}`);
+      const transfer = card.getByRole("button", { name: `Добавить в планирование: ${task.title}`, exact: true });
+      await expect(transfer).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("backlog-quick-transfer.png"), fullPage: true });
+      const transferred = page.waitForResponse(response => response.request().method() === "POST"
+        && response.url().endsWith(`/planning-workbench/from-task/${task.id}`));
+      await transfer.click();
+      const response = await transferred;
+      expect(response.ok()).toBeTruthy();
+      const item = await response.json();
+      expect(item.sourceTaskId).toBe(task.id);
+      await expect(card.getByTestId(`transfer-to-planning-${task.id}`)).toHaveAccessibleName(`Убрать из планирования: ${task.title}`);
+      await expect(card).toBeVisible();
+      const original = await get(request, `/${team}/tasks/${task.id}`);
+      expect(original.workspace).toBe("BACKLOG");
+      expect(original.allocations).toEqual(task.allocations);
+      await header.getByRole("link", { name: "Планирование", exact: true }).click();
+      await expect(header.locator('a[aria-current="page"]')).toHaveText("Планирование");
+      await expect(page.getByTestId(`planning-item-${item.id}`)).toBeVisible();
+      await expect(page.getByTestId("planning-selected-count")).toHaveText("1");
+      await expect(page.getByTestId("planning-run-preview")).toBeEnabled();
+      expect((await get(request, `/${team}/planning-workbench/backlog`)).content.map((item: any) => item.id)).toEqual([item.id]);
+      await page.screenshot({ path: testInfo.outputPath("planning-after-quick-transfer.png"), fullPage: true });
+      await header.getByRole("link", { name: "Бэклог", exact: true }).click();
+      const remove = page.getByTestId(`transfer-to-planning-${task.id}`);
+      await expect(remove).toHaveAccessibleName(`Убрать из планирования: ${task.title}`);
+      await remove.click();
+      await expect(remove).toHaveAccessibleName(`Добавить в планирование: ${task.title}`);
+      expect((await get(request, `/${team}/planning-workbench/backlog`)).content.map((entry: any) => entry.id)).toEqual([item.id]);
+      await header.getByRole("link", { name: "Планирование", exact: true }).click();
+      await expect(page.getByTestId("planning-selected-count")).toHaveText("0");
+      await expect(page.getByTestId(`planning-item-${item.id}`)).toBeVisible();
+      await header.getByRole("link", { name: "Бэклог", exact: true }).click();
+      await page.getByTestId(`transfer-to-planning-${task.id}`).click();
+      await expect(page.getByTestId(`transfer-to-planning-${task.id}`)).toHaveAccessibleName(`Убрать из планирования: ${task.title}`);
+      await header.getByRole("link", { name: "Планирование", exact: true }).click();
+      await expect(page.getByTestId("planning-selected-count")).toHaveText("1");
+      await page.getByTestId("planning-run-preview").click();
+      await expect(header.locator('a[aria-current="page"]')).toHaveText("Планирование");
+      await expect(page.getByTestId(`planning-preview-task-${item.id}`)).toBeVisible();
+      await page.getByTestId("planning-preview-apply").click();
+      await expect(header.locator('a[aria-current="page"]')).toHaveText("Дорожная карта");
+      await header.getByRole("link", { name: "Планирование", exact: true }).click();
+      await expect(page.getByTestId("planning-selected-count")).toHaveText("0");
+      await expect(page.getByTestId(`planning-item-${item.id}`)).toHaveCount(0);
+    } finally { await cleanup(request, team); }
+  });
+
+  test("counts all roadmap statuses in capacity, participant workload and planning committed load", async ({ request }) => {
+    const { team, active, sprint, quarter } = await seed(request);
+    try {
+      const roadmapTasks = [];
+      for (const [index, status] of ["inprogress", "done", "canceled"].entries()) {
+        roadmapTasks.push(await post(request, `/${team}/tasks`, {
+          title: `Roadmap ${status}`, workspace: "ROADMAP", status, priority: 1,
+          initialQuarterId: quarter.id, participantIds: [active.id],
+          allocations: { [active.id]: { [sprint.id]: index + 1 } },
+        }));
+      }
+      const canceledBacklog = await post(request, `/${team}/tasks`, {
+        title: "Canceled backlog estimate", workspace: "BACKLOG", status: "canceled", priority: 1,
+        initialQuarterId: quarter.id, participantIds: [active.id],
+        allocations: { [active.id]: { [sprint.id]: 100 } },
+      });
+      expect(canceledBacklog.workspace).toBe("BACKLOG");
+
+      const assertCommittedWorkload = async (expected: number, includedTaskIds: string[]) => {
+        const capacity = await get(request, `/${team}/capacity?quarterId=${quarter.id}`);
+        const row = capacity.find((item: any) => item.participant.id === active.id);
+        expect(row.totalQuarterWorkload).toBe(expected);
+        expect(row.cells.find((cell: any) => cell.sprintId === sprint.id).workloadDays).toBe(expected);
+
+        const workload = await get(request, `/${team}/participant-workload?quarterId=${quarter.id}`);
+        const tasks = workload.content.find((item: any) => item.participant.id === active.id).tasks;
+        expect(tasks.map((task: any) => task.id).sort()).toEqual([...includedTaskIds].sort());
+        expect(tasks.reduce((total: number, task: any) => total + (task.allocations[sprint.id] || 0), 0)).toBe(expected);
+
+        const item = await post(request, `/${team}/planning-workbench/items`, {
+          title: "Workload preview", priority: 1, initialQuarterId: quarter.id,
+          planningDemands: [{ kind: "PARTICIPANT", participantId: active.id, days: 1 }],
+        });
+        const preview = await post(request, `/${team}/planning-workbench/preview`, {
+          plannerType: "ALGORITHM", itemIds: [item.id],
+        });
+        const summary = preview.participantSummary.find((item: any) => item.participant.id === active.id);
+        expect(summary.totalCommitted).toBe(expected);
+        expect(summary.cells.find((cell: any) => cell.sprintId === sprint.id).committed).toBe(expected);
+      };
+
+      await assertCommittedWorkload(6, roadmapTasks.map(task => task.id));
+      // Moving the completed task to backlog removes its load without deleting its allocation.
+      const moved = await post(request, `/${team}/tasks/update`, { id: roadmapTasks[1].id, status: "backlog" });
+      expect(moved.workspace).toBe("BACKLOG");
+      expect(moved.allocations[active.id][sprint.id]).toBe(2);
+      await assertCommittedWorkload(4, [roadmapTasks[0].id, roadmapTasks[2].id]);
+    } finally { await cleanup(request, team); }
+  });
+
   test("preserves inactive assignments and task identity through planning apply", async ({ request }) => {
     const { team, task, active, old, sprint, quarter } = await seed(request);
     try {
@@ -79,26 +184,29 @@ test.describe("Roadmap and backlog against PostgreSQL", () => {
       await expect(card.getByText("Неактивен", { exact: true })).toBeVisible();
       await expect(card.getByRole("button", { name: /Добавить.*корзин.*Jira/i })).toHaveCount(0);
       const requestsBeforeTextEdit = taskRequests.length;
-      await card.getByText("Описание", { exact: true }).click();
+      await card.getByRole("button", { name: "Описание:", exact: true }).click();
       const description = card.getByRole("textbox", { name: "Описание", exact: true });
       await description.fill("Описание сохраняется без перечитывания списка");
       await description.press("Tab");
       await expect.poll(async () => (await get(request, `/${team}/tasks/${task.id}`)).description).toBe("Описание сохраняется без перечитывания списка");
       expect(taskRequests).toHaveLength(requestsBeforeTextEdit);
-      const dateField = card.getByRole("combobox", { name: "Релиз (ПРОМ)", exact: true });
+      const dateField = card.getByRole("combobox", { name: "Релиз", exact: true });
       await dateField.fill("15.12.2020");
       await dateField.press("Enter");
       await expect.poll(async () => (await get(request, `/${team}/tasks/${task.id}`)).releasePromDate).toBe("2020-12-15");
       await page.reload();
-      await expect(card.getByRole("combobox", { name: "Релиз (ПРОМ)", exact: true })).toHaveValue("15.12.2020");
-      const releaseFilter = page.getByRole("combobox", { name: "Релиз", exact: true });
+      await expect(card.getByRole("combobox", { name: "Релиз", exact: true })).toHaveValue("15.12.2020");
+      const releaseFilter = page.getByRole("combobox", { name: "Релиз", exact: true }).first();
       await releaseFilter.fill("15.12.2020"); await releaseFilter.press("Enter");
       await expect(card).toBeVisible();
       const before = await get(request, `/${team}/releases`);
       await releaseFilter.fill("16.12.2020"); await releaseFilter.press("Enter");
+      await expect(card).toBeVisible(); // Multiple dates use OR semantics.
+      const releaseControl = releaseFilter.locator('xpath=ancestor::div[contains(@class,"MuiAutocomplete-root")]');
+      await releaseControl.getByText("15.12.2020", { exact: true }).locator("..").getByTestId("CancelIcon").click();
       await expect(card, JSON.stringify(taskRequests)).toHaveCount(0);
       expect(await get(request, `/${team}/releases`)).toHaveLength(before.length);
-      await releaseFilter.fill(""); await releaseFilter.press("Enter");
+      await releaseControl.getByRole("button", { name: "Clear", exact: true }).click();
       await expect(card).toBeVisible();
       await card.getByRole("combobox", { name: /^Статус/ }).click();
       await page.getByRole("option", { name: "В работе", exact: true }).click();

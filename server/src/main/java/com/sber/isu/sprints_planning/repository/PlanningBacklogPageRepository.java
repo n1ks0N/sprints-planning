@@ -22,16 +22,19 @@ public class PlanningBacklogPageRepository {
             params.put("quarters", quarterIds);
             where.append("""
                 and (exists(select 1 from jsonb_array_elements_text(i.planning_quarter_ids) v where cast(v.value as uuid) in (:quarters))
-                  or exists(select 1 from sprints s join jsonb_array_elements_text(i.planning_sprint_ids) v on s.id = cast(v.value as uuid)
+                  or exists(select 1 from {h-schema}sprints s join jsonb_array_elements_text(i.planning_sprint_ids) v on s.id = cast(v.value as uuid)
                     where s.team_key = :team and s.quarter_id in (:quarters))
                   or (jsonb_array_length(i.planning_quarter_ids) = 0 and jsonb_array_length(i.planning_sprint_ids) = 0 and i.initial_quarter_id in (:quarters)))
                 """);
         }
         var priorityValues = values(priorities == null ? List.of() : List.of(priorities)).stream().map(Short::valueOf).toList();
         if (!priorityValues.isEmpty()) { where.append(" and i.priority in (:priorities) "); params.put("priorities", priorityValues); }
-        if (release != null && !release.isBlank()) {
-            if (release.startsWith("date:")) { where.append(" and r.prom_date = :releaseDate "); params.put("releaseDate", java.time.LocalDate.parse(release.substring(5))); }
-            else { where.append(" and i.release_date_id = :release "); params.put("release", UUID.fromString(release)); }
+        var releases = com.sber.isu.sprints_planning.service.ReleaseSelection.decode(release);
+        if (!releases.isEmpty()) {
+            List<String> alternatives = new ArrayList<>();
+            if (!releases.ids().isEmpty()) { alternatives.add("i.release_date_id in (:releaseIds)"); params.put("releaseIds", releases.ids()); }
+            if (!releases.dates().isEmpty()) { alternatives.add("r.prom_date in (:releaseDates)"); params.put("releaseDates", releases.dates()); }
+            where.append(" and (").append(String.join(" or ", alternatives)).append(") ");
         }
         collection(where, params, "streams", streams, Boolean.TRUE.equals(withoutStream));
         collection(where, params, "customers", customers, Boolean.TRUE.equals(withoutCustomer));
@@ -39,7 +42,7 @@ public class PlanningBacklogPageRepository {
             where.append(" and (lower(i.title) like :search or lower(i.description) like :search or lower(i.dod) like :search) ");
             params.put("search", "%" + search.trim().toLowerCase(Locale.ROOT) + "%");
         }
-        String from = " from planning_backlog_items i left join releases r on r.id = i.release_date_id ";
+        String from = " from {h-schema}planning_backlog_items i left join {h-schema}releases r on r.id = i.release_date_id ";
         var countQuery = entityManager.createNativeQuery("select count(*)" + from + where);
         params.forEach(countQuery::setParameter);
         long total = ((Number) countQuery.getSingleResult()).longValue();
@@ -50,10 +53,10 @@ public class PlanningBacklogPageRepository {
             case "load" -> "(select coalesce(sum(cast(d->>'days' as numeric)),0) from jsonb_array_elements(i.planning_demands) d)";
             case "releaseDate" -> """
                 coalesce(r.prom_date,
-                  (select min(q.start_date) from sprints s join quarters q on q.id = s.quarter_id
+                  (select min(q.start_date) from {h-schema}sprints s join {h-schema}quarters q on q.id = s.quarter_id
                     join jsonb_array_elements_text(i.planning_sprint_ids) v on s.id = cast(v.value as uuid) where s.team_key = :team),
-                  (select min(q.start_date) from quarters q join jsonb_array_elements_text(i.planning_quarter_ids) v on q.id = cast(v.value as uuid) where q.team_key = :team),
-                  (select q.start_date from quarters q where q.id = i.initial_quarter_id), date '9999-12-31')
+                  (select min(q.start_date) from {h-schema}quarters q join jsonb_array_elements_text(i.planning_quarter_ids) v on q.id = cast(v.value as uuid) where q.team_key = :team),
+                  (select q.start_date from {h-schema}quarters q where q.id = i.initial_quarter_id), date '9999-12-31')
                 """;
             default -> "i.display_order";
         };

@@ -83,3 +83,17 @@ server/
 Дорожная карта: `/#/customlab/`, отдельный бэклог: `/#/customlab/backlog`, планирование: `/#/customlab/planning`.
 Режим Jira mock позволяет проверить интерфейс экспорта без создания задач во внешней Jira.
 `npm run e2e:real -- --workers=1` запускает реальные сценарии на отдельных временных командах и удаляет их данные после проверки.
+
+## Проверка нестандартной схемы PostgreSQL
+
+Native SQL планирования и создания релиза использует `{h-schema}`, чтобы учитывать `hibernate.default_schema`
+так же, как JPQL. Проверка `PlanningWorkbenchSchemaIntegrationTest` требует отдельную тестовую базу с
+мигрированной схемой `planning_review`, которая отсутствует в `search_path` подключения:
+
+```bash
+PLANNING_SCHEMA_TEST_URL=jdbc:postgresql://localhost:5432/planning_schema_test \
+  mvn -Drevision=0.1.0 -Dtest=PlanningWorkbenchSchemaIntegrationTest test
+```
+
+Тест проверяет пустой список, фильтры, все сортировки, пагинацию и ручное создание даты релиза;
+его изменения данных откатываются транзакцией. Без переменной окружения тест пропускается.

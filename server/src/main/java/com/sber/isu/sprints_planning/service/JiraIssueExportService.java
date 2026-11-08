@@ -942,6 +942,7 @@ public class JiraIssueExportService {
                 jiraResponse.key(),
                 issueUrl(jiraResponse.key())
             );
+            logStoryJiraEvent(batch, taskId, "task.jira.export", "Создана Story Jira", jiraResponse.key());
             return item.withTaskJiraIssueId(reservation.reservationId().toString())
                 .withCreated(
                     "Jira Story создана",
@@ -953,6 +954,7 @@ public class JiraIssueExportService {
         } catch (JiraIssueProcessingException ex) {
             if (ex.manualCheckRequired()) {
                 markIssueManualCheckRequired(reservation.reservationId(), ex.getMessage());
+                logStoryJiraEvent(batch, taskId, "task.jira.export.manual-check", "Требуется ручная проверка Story Jira", ex.getMessage());
                 return item.withTaskJiraIssueId(reservation.reservationId().toString())
                     .withManualCheck(ex.getMessage(), requestPreview);
             }
@@ -962,6 +964,7 @@ public class JiraIssueExportService {
         } catch (RuntimeException ex) {
             String message = "Экспорт Story в Jira не завершен, требуется ручная проверка";
             markIssueManualCheckRequired(reservation.reservationId(), message);
+            logStoryJiraEvent(batch, taskId, "task.jira.export.manual-check", "Требуется ручная проверка Story Jira", message);
             return item.withTaskJiraIssueId(reservation.reservationId().toString())
                 .withManualCheck(message, requestPreview);
         }
@@ -2050,6 +2053,13 @@ public class JiraIssueExportService {
             List.of(change),
             meta
         );
+    }
+
+    private void logStoryJiraEvent(JiraExportBatchEntity batch, UUID taskId, String eventType, String action, String value) {
+        apiHistoryService.logEntityEvent(batch.getTeamKey(), batch.getSessionId(), batch.getUserName(),
+            "POST", "/jira/issues", 200, TASK_ENTITY_TYPE, taskId, eventType, action,
+            List.of(new TaskHistoryChangeDto("jiraStoryIssue", "Story Jira", null, value)),
+            Map.of("source", "POST /jira/issues", "projectKey", batch.getProjectKey(), "issueScope", ISSUE_SCOPE_STORY));
     }
 
     private String participantName(TaskJiraIssueEntity entity) {

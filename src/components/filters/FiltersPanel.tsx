@@ -5,6 +5,8 @@ import type { SxProps, Theme } from "@mui/material/styles";
 import FilterAutocomplete from "./FilterAutocomplete";
 import ReleaseDateField from "../ReleaseDateField";
 import type { FilterAutocompleteProps } from "./FilterAutocomplete";
+import QuarterFilter from "./QuarterFilter";
+import ReleaseFilter from "./ReleaseFilter";
 
 export type SearchFilterConfig = {
   label: string;
@@ -14,9 +16,26 @@ export type SearchFilterConfig = {
   placeholder?: string;
   sx?: SxProps<Theme>;
   commitOnBlurOnly?: boolean;
+  debounceMs?: number;
 };
 
+function DebouncedSearchField({ value, onChange, onCommit, debounceMs = 250, ...props }: SearchFilterConfig) {
+  const [draft, setDraft] = React.useState(value);
+  React.useEffect(() => setDraft(value), [value]);
+  React.useEffect(() => {
+    if (draft === value) return;
+    const timeout = setTimeout(() => onChange?.(draft), debounceMs);
+    return () => clearTimeout(timeout);
+  }, [draft, value, debounceMs, onChange]);
+  return <TextField label={props.label} placeholder={props.placeholder} sx={props.sx} size="small" fullWidth value={draft}
+    onChange={event => setDraft(event.target.value)}
+    onBlur={() => { if (draft !== value) onChange?.(draft); onCommit?.(draft); }}
+    onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); (event.target as HTMLInputElement).blur(); } }} />;
+}
+
 export type FiltersPanelFilter =
+  | { type: "quarters"; key: string; props: React.ComponentProps<typeof QuarterFilter>; minWidth?: number; maxWidth?: number }
+  | { type: "releases"; key: string; props: React.ComponentProps<typeof ReleaseFilter>; minWidth?: number; maxWidth?: number }
   | { type: "releaseDate"; key: string; props: React.ComponentProps<typeof ReleaseDateField>; minWidth?: number; maxWidth?: number }
   | {
       type: "autocomplete";
@@ -97,21 +116,22 @@ export default function FiltersPanel({
             }
           : undefined;
 
+        if (filter.type === "quarters") {
+          return <Box key={filter.key} sx={wrapItemSx ?? baseSx}><QuarterFilter {...filter.props} /></Box>;
+        }
+        if (filter.type === "releases") {
+          return <Box key={filter.key} sx={wrapItemSx ?? baseSx}><ReleaseFilter {...filter.props} /></Box>;
+        }
         if (filter.type === "releaseDate") {
           return <Box key={filter.key} sx={wrapItemSx ?? baseSx}><ReleaseDateField {...filter.props} /></Box>;
         }
         if (filter.type === "autocomplete") {
-          const sx = baseSx
-            ? mergeSx(baseSx, filter.props.sx)
-            : filter.props.sx;
-          const field = <FilterAutocomplete key={filter.key} {...filter.props} sx={sx} />;
-          return isWrapLayout ? (
-            <Box key={filter.key} sx={wrapItemSx}>
-              {field}
-            </Box>
-          ) : (
-            field
-          );
+          return <Box key={filter.key} sx={wrapItemSx ?? baseSx}><FilterAutocomplete {...filter.props} /></Box>;
+        }
+
+        if (filter.props.debounceMs) {
+          const field = <DebouncedSearchField {...filter.props} sx={baseSx ? mergeSx(baseSx, filter.props.sx) : filter.props.sx} />;
+          return <Box key={filter.key} sx={wrapItemSx ?? baseSx}>{field}</Box>;
         }
 
         const {
@@ -139,7 +159,7 @@ export default function FiltersPanel({
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  e.currentTarget.blur();
+                  (e.target as HTMLInputElement).blur();
                 }
               }}
               placeholder={placeholder}
@@ -167,7 +187,7 @@ export default function FiltersPanel({
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                e.currentTarget.blur();
+                (e.target as HTMLInputElement).blur();
               }
             }}
             placeholder={placeholder}

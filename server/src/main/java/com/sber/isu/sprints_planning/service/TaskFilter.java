@@ -21,8 +21,22 @@ public record TaskFilter(
     boolean withoutQuarter,
     UUID pinnedTaskId,
     String workspace,
-    java.time.LocalDate releasePromDate
+    java.time.LocalDate releasePromDate,
+    ReleaseSelection releases
 ) {
+
+    public TaskFilter(Set<UUID> quarterIds, Set<Short> priorities, Set<String> statuses, UUID releaseDateId, Set<String> streams, boolean withoutStream, Set<String> customers, boolean withoutCustomer, Set<UUID> participantIds, Set<String> roles, Set<String> userStreams, String searchQuery, boolean withoutQuarter, UUID pinnedTaskId, String workspace, java.time.LocalDate releasePromDate) {
+        this(quarterIds, priorities, statuses, releaseDateId, streams, withoutStream, customers, withoutCustomer, participantIds, roles, userStreams, searchQuery, withoutQuarter, pinnedTaskId, workspace, releasePromDate, ReleaseSelection.parse(releaseDateId == null ? null : releaseDateId.toString(), releasePromDate == null ? null : releasePromDate.toString()));
+    }
+
+    public TaskFilter withReleases(String ids, String dates) {
+        ReleaseSelection extra = ReleaseSelection.parse(ids, dates);
+        Set<UUID> allIds = new LinkedHashSet<>(releases.ids()); allIds.addAll(extra.ids());
+        Set<java.time.LocalDate> allDates = new LinkedHashSet<>(releases.dates()); allDates.addAll(extra.dates());
+        return new TaskFilter(quarterIds, priorities, statuses, releaseDateId, streams, withoutStream, customers,
+            withoutCustomer, participantIds, roles, userStreams, searchQuery, withoutQuarter, pinnedTaskId, workspace, releasePromDate,
+            new ReleaseSelection(allIds, allDates));
+    }
 
     public TaskFilter(Set<UUID> quarterIds, Set<Short> priorities, Set<String> statuses, UUID releaseDateId, Set<String> streams, boolean withoutStream, Set<String> customers, boolean withoutCustomer, Set<UUID> participantIds, Set<String> roles, Set<String> userStreams, String searchQuery, boolean withoutQuarter, UUID pinnedTaskId) {
         this(quarterIds, priorities, statuses, releaseDateId, streams, withoutStream, customers, withoutCustomer, participantIds, roles, userStreams, searchQuery, withoutQuarter, pinnedTaskId, null, null);

@@ -125,7 +125,7 @@ public class ApiHistoryService {
     @Transactional(readOnly = true)
     public List<ApiSessionHistoryDto> getHistory(String teamKey, int page, int size) {
         int safePage = Math.max(0, page);
-        int safeSize = Math.max(1, size);
+        int safeSize = Math.min(100, Math.max(1, size));
         Pageable pageable = PageRequest.of(safePage, safeSize);
         List<ApiHistorySessionSummaryProjection> summaries = historyRepository.findActionSessionSummaries(teamKey, pageable);
         if (summaries.isEmpty()) {
@@ -141,15 +141,14 @@ public class ApiHistoryService {
             ));
         }
         Map<String, List<ApiCallHistoryEntity>> actionsBySession = new LinkedHashMap<>();
-        Pageable actionsPageable = PageRequest.of(0, MAX_ACTIONS_PER_SESSION);
-        for (Map.Entry<String, SessionSummary> entry : orderedSessions.entrySet()) {
-            SessionSummary summary = entry.getValue();
-            actionsBySession.put(entry.getKey(), historyRepository.findActionHistoryByTeamKeyAndSession(
-                teamKey,
-                summary.sessionId(),
-                summary.userName(),
-                actionsPageable
-            ));
+        List<ApiCallHistoryEntity> actions = historyRepository.findActionHistoryForSessions(
+            teamKey,
+            summaries.stream().map(ApiHistorySessionSummaryProjection::sessionId).toArray(String[]::new),
+            summaries.stream().map(ApiHistorySessionSummaryProjection::userName).toArray(String[]::new),
+            MAX_ACTIONS_PER_SESSION
+        );
+        for (ApiCallHistoryEntity action : actions) {
+            actionsBySession.computeIfAbsent(sessionKey(action.getSessionId(), action.getUserName()), key -> new ArrayList<>()).add(action);
         }
 
         return orderedSessions.entrySet().stream()
@@ -160,8 +159,8 @@ public class ApiHistoryService {
     @Transactional(readOnly = true)
     public Page<TaskHistoryItemDto> getTaskHistory(String teamKey, UUID taskId, int page, int size) {
         int safePage = Math.max(0, page);
-        int safeSize = Math.max(1, size);
-        Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt"));
+        int safeSize = Math.min(200, Math.max(1, size));
+        Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt", "id"));
         return historyRepository
             .findAllByTeamKeyAndEntityTypeAndEntityId(teamKey, TASK_ENTITY_TYPE, taskId, pageable)
             .map(this::toTaskHistoryItemDto);

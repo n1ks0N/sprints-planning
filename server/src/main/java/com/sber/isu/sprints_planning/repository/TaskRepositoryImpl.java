@@ -35,12 +35,40 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
+@Transactional(readOnly = true)
 public class TaskRepositoryImpl implements TaskRepositoryCustom {
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    @Override
+    public TaskEntity findWithDetailsById(UUID id, String teamKey) {
+        List<TaskEntity> tasks = loadDetails(List.of(id), teamKey);
+        initializeDetailLeaders(tasks, teamKey);
+        return tasks.stream().findFirst().orElse(null);
+    }
+
+    @Override
+    public List<TaskEntity> findAllByIdInAndTeamKey(List<UUID> ids, String teamKey) {
+        if (ids.isEmpty()) return List.of();
+        List<TaskEntity> tasks = loadDetails(ids, teamKey);
+        initializeDetailLeaders(tasks, teamKey);
+        return tasks;
+    }
+
+    private void initializeDetailLeaders(List<TaskEntity> tasks, String teamKey) {
+        // Most leaders were loaded with the assignees. Jira also needs the fields
+        // of a leader who is not assigned to the task, after this transaction ends.
+        List<UUID> ids = tasks.stream().map(TaskEntity::getLeaderParticipant).filter(Objects::nonNull)
+            .filter(leader -> !org.hibernate.Hibernate.isInitialized(leader)).map(ParticipantEntity::getId).distinct().toList();
+        if (!ids.isEmpty()) entityManager.createQuery("""
+            select distinct p from ParticipantEntity p left join fetch p.userStreams
+            where p.teamKey = :teamKey and p.id in :ids
+            """, ParticipantEntity.class).setParameter("teamKey", teamKey).setParameter("ids", ids).getResultList();
+    }
 
     @Override
     public List<TaskEntity> findFilteredWithDetails(String teamKey, TaskFilter filter) {
@@ -49,7 +77,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         if (ids.isEmpty()) {
             return List.of();
         }
-        List<TaskEntity> tasks = loadDetails(ids);
+        List<TaskEntity> tasks = loadDetails(ids, teamKey);
         Map<UUID, TaskEntity> byId = tasks.stream()
             .collect(Collectors.toMap(TaskEntity::getId, Function.identity()));
         return ids.stream()
@@ -152,7 +180,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
             return new PageImpl<>(List.of(), pageable, total);
         }
 
-        List<TaskEntity> tasks = loadDetails(ids);
+        List<TaskEntity> tasks = loadDetails(ids, teamKey);
         Map<UUID, TaskEntity> byId = tasks.stream()
             .collect(Collectors.toMap(TaskEntity::getId, Function.identity()));
         List<TaskEntity> ordered = ids.stream()
@@ -302,7 +330,7 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         coalesce.value(positiveAllocationQuarterStart(cb, query, task));
         coalesce.value(positiveLoadQuarterStart(cb, query, task));
         coalesce.value(initialQuarter.get("startDate"));
-        coalesce.value(LocalDate.MAX);
+        coalesce.value(LocalDate.of(9999, 12, 31));
         return coalesce;
     }
 
@@ -336,30 +364,32 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         return sub;
     }
 
-    private List<TaskEntity> loadDetails(List<UUID> ids) {
-        List<TaskEntity> base = fetchBaseTasks(ids);
+    private List<TaskEntity> loadDetails(List<UUID> ids, String teamKey) {
+        List<TaskEntity> base = fetchBaseTasks(ids, teamKey);
         if (base.isEmpty()) {
             return base;
         }
-        fetchParticipants(ids);
-        fetchAllocations(ids);
-        fetchLoads(ids);
-        fetchCustomers(ids);
-        fetchStreams(ids);
+        // Fetch collections independently: joining them together multiplies rows.
+        List<UUID> scopedIds = base.stream().map(TaskEntity::getId).toList();
+        fetchParticipants(scopedIds);
+        fetchAllocations(scopedIds);
+        fetchLoads(scopedIds);
+        fetchCustomers(scopedIds);
+        fetchStreams(scopedIds);
         return base;
     }
 
-    private List<TaskEntity> fetchBaseTasks(List<UUID> ids) {
+    private List<TaskEntity> fetchBaseTasks(List<UUID> ids, String teamKey) {
         return entityManager.createQuery(
                 """
                     select distinct t from TaskEntity t
-                    left join fetch t.leaderParticipant lp
                     left join fetch t.releaseDate rd
-                    where t.id in :ids
+                    where t.id in :ids and t.teamKey = :teamKey
                 """,
                 TaskEntity.class
             )
             .setParameter("ids", ids)
+            .setParameter("teamKey", teamKey)
             .getResultList();
     }
 
@@ -446,7 +476,13 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
         predicates.add(teamPredicate);
         Predicate workspacePredicate = filter.workspace() == null ? cb.conjunction() : cb.equal(task.get("workspace"), filter.workspace());
         predicates.add(workspacePredicate);
-        if (filter.releasePromDate() != null) predicates.add(cb.equal(task.get("releaseDate").get("promDate"), filter.releasePromDate()));
+        if (!filter.releases().isEmpty()) {
+            var release = task.join("releaseDate", jakarta.persistence.criteria.JoinType.LEFT);
+            List<Predicate> releases = new ArrayList<>();
+            if (!filter.releases().ids().isEmpty()) releases.add(release.get("id").in(filter.releases().ids()));
+            if (!filter.releases().dates().isEmpty()) releases.add(release.get("promDate").in(filter.releases().dates()));
+            predicates.add(cb.or(releases.toArray(Predicate[]::new)));
+        }
 
         if (!filter.participantIds().isEmpty()) {
             predicates.add(participantExists(query, cb, task, filter.participantIds()));
@@ -462,10 +498,6 @@ public class TaskRepositoryImpl implements TaskRepositoryCustom {
 
         if (!filter.priorities().isEmpty()) {
             predicates.add(task.get("priority").in(filter.priorities()));
-        }
-
-        if (filter.releaseDateId() != null) {
-            predicates.add(cb.equal(task.get("releaseDate").get("id"), filter.releaseDateId()));
         }
 
         if (!filter.streams().isEmpty() || filter.withoutStream()) {

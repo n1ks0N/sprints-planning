@@ -1,4 +1,5 @@
 import { configureStore } from "@reduxjs/toolkit";
+import { setupListeners } from "@reduxjs/toolkit/query";
 import { api } from "./api";
 import uiReducer, { persistUIState } from "./uiSlice";
 import undoReducer from "./undoSlice";
@@ -18,6 +19,8 @@ export const store = configureStore({
     return result;
   }),
 });
+
+setupListeners(store.dispatch);
 
 // Сохранение UI-фильтров в localStorage
 let lastPersistedUI = store.getState().ui;

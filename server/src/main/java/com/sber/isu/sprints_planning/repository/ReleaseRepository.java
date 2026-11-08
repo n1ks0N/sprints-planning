@@ -30,5 +30,19 @@ public interface ReleaseRepository extends JpaRepository<ReleaseEntity, UUID> {
 
     boolean existsByTeamKeyAndPromDate(String teamKey, LocalDate promDate);
 
+    @org.springframework.data.jpa.repository.Query("""
+        select r.id as id, r.name as name, r.promDate as promDate from ReleaseEntity r where r.teamKey = :team
+        and (locate(:search, cast(r.promDate as string)) > 0
+             or locate(:search, function('to_char', r.promDate, 'DD.MM.YYYY')) > 0)
+        order by r.promDate, r.id
+        """)
+    List<OptionRow> searchOptions(String team, String search, org.springframework.data.domain.Pageable pageable);
+
+    @org.springframework.data.jpa.repository.Query("""
+        select r.id as id, r.name as name, r.promDate as promDate from ReleaseEntity r
+        where r.teamKey = :team and r.id in :ids order by r.promDate, r.id
+        """)
+    List<OptionRow> findSelectedOptions(String team, List<UUID> ids);
+
     boolean existsByTeamKeyAndPromDateAndIdNot(String teamKey, LocalDate promDate, UUID id);
 }

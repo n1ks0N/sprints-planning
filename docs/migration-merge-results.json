@@ -1,0 +1,199 @@
+{
+  "date": "2026-11-08",
+  "production_sql_file": "server/database/1.0.0/1.0.0_22_roadmap_backlog.sql",
+  "physical_file_23_removed": true,
+  "preserved_changesets": 4,
+  "liquibase": "4.29.2",
+  "postgres": "15.15",
+  "runtime": "OpenJDK 21 Temurin",
+  "java_target": 17,
+  "class_file_major": 61,
+  "test_suites": [
+    {
+      "suite": "MigrationMergeSafetyTest",
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        {
+          "name": "aLockTimeoutRollsBackWithoutChangingExistingData",
+          "passed": true
+        },
+        {
+          "name": "rejectedUpgradeLeavesExistingDataAndSchemaIntact(Rejection)[1]",
+          "passed": true
+        },
+        {
+          "name": "rejectedUpgradeLeavesExistingDataAndSchemaIntact(Rejection)[2]",
+          "passed": true
+        },
+        {
+          "name": "rejectedUpgradeLeavesExistingDataAndSchemaIntact(Rejection)[3]",
+          "passed": true
+        },
+        {
+          "name": "cleanupNeverDropsAnotherSchemasIndexOrACustomUniqueIndex(IndexDrift)[1]",
+          "passed": true
+        },
+        {
+          "name": "cleanupNeverDropsAnotherSchemasIndexOrACustomUniqueIndex(IndexDrift)[2]",
+          "passed": true
+        },
+        {
+          "name": "populatedUpgradePartialExecutionRepeatedUpdateAndIndexRollbackPreserveData",
+          "passed": true
+        },
+        {
+          "name": "indexCleanupStopsIfTheCoveringPrimaryKeyIsMissing",
+          "passed": true
+        },
+        {
+          "name": "mergePreservesAlreadyAppliedIdentitiesChecksumsAndTransactionBoundaries",
+          "passed": true
+        },
+        {
+          "name": "cancelledConcurrentDropCanResumeWithoutTouchingData",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "suite": "BackendSchemaAuditIntegrationTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        {
+          "name": "migrationRollbackPreservesDataAndQueriesRespectTheMappedSchema",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "main_database_read_only_preflight": {
+    "database": "existing main local database",
+    "read_only": true,
+    "checks": 8,
+    "expected": [
+      "0",
+      "0",
+      "1",
+      "1",
+      "1",
+      "1",
+      "1",
+      "1"
+    ],
+    "actual": [
+      "0",
+      "0",
+      "1",
+      "1",
+      "1",
+      "1",
+      "1",
+      "1"
+    ],
+    "passed": true
+  },
+  "already_applied_database_startup": {
+    "jar_sha256": "774c9ceae127d8ea0e8b444b09ff67a9e69743e1922c8873e7fa0cf9ae858a8d",
+    "runtime": "OpenJDK 21 Temurin",
+    "resource_file_23_present": false,
+    "unchanged_public_tables_including_changelog": {
+      "tasks": {
+        "md5": "0f65818cb206298d31b3482336d06e15",
+        "rows": 500
+      },
+      "teams": {
+        "md5": "fa7567ea2fc753536c24c123b7248a70",
+        "rows": 2
+      },
+      "sprints": {
+        "md5": "c95fa92711b2b60df526f9aeff071352",
+        "rows": 24
+      },
+      "quarters": {
+        "md5": "2e24410eef28d18f66527f9c6c7a49e1",
+        "rows": 4
+      },
+      "releases": {
+        "md5": "38349cc4fb177b26d03d9fb9882a5784",
+        "rows": 44
+      },
+      "task_loads": {
+        "md5": "5128e8c38773e33f090689595a464c55",
+        "rows": 3000
+      },
+      "participants": {
+        "md5": "4ef81bba0900cd6dd077063b8e0d6e37",
+        "rows": 50
+      },
+      "task_streams": {
+        "md5": "eb9497918677609f85a56c5955422a00",
+        "rows": 2
+      },
+      "task_customers": {
+        "md5": "f8854b2b827f8c51318ec6f7ac532362",
+        "rows": 2
+      },
+      "api_call_history": {
+        "md5": "88a6223a6a371b6e340ec7274e043928",
+        "rows": 20088
+      },
+      "task_allocations": {
+        "md5": "fb81e29ae08a70199a38117b0183ba92",
+        "rows": 16500
+      },
+      "task_jira_issues": {
+        "md5": "285a6aa1726f6586b374449fc4e52b32",
+        "rows": 2600
+      },
+      "databasechangelog": {
+        "md5": "b5566b00457b43ae9f077ac6c16b08cd",
+        "rows": 23
+      },
+      "task_participants": {
+        "md5": "1747d883c56c324a7244157dba23470b",
+        "rows": 2750
+      },
+      "task_stream_values": {
+        "md5": "1fe4ba21f48dea75122f0232bc63cc42",
+        "rows": 1000
+      },
+      "jira_export_batches": {
+        "md5": "d41d8cd98f00b204e9800998ecf8427e",
+        "rows": 0
+      },
+      "task_customer_values": {
+        "md5": "00142b737859031fe6def754c90f2e7d",
+        "rows": 1000
+      },
+      "planning_backlog_items": {
+        "md5": "f14b23fc8c2dcdafc48753688ccf1eb9",
+        "rows": 500
+      },
+      "participant_role_values": {
+        "md5": "4e9e4e92f96ee6c8cbb68143bc4f4f6d",
+        "rows": 3
+      },
+      "participant_user_streams": {
+        "md5": "a67cd3fd9178da63313a828c259d520b",
+        "rows": 100
+      },
+      "participant_stream_values": {
+        "md5": "be73bf331065c109b53ebd397539d133",
+        "rows": 6
+      }
+    },
+    "api_totals": {
+      "roadmap": 400,
+      "backlog": 100,
+      "planning": 500
+    },
+    "data_and_changelog_identical": true
+  },
+  "sql_sha256": "5d03bf42750eb7c402cb7fc380f15c4487a384c29528c185d4562141bd47fac8"
+}

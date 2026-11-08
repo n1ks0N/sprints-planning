@@ -10,7 +10,7 @@ export type UIState = {
     withoutQuarterFilter: boolean;
     withoutStreamFilter: boolean;
     withoutCustomerFilter: boolean;
-    releaseSprintFilter: string; // "all" | "" | releaseDateId
+    releaseFilters: string[]; // ISO PROM dates; legacy release IDs are resolved by the filter
     priorityFilter: number[]; // [1,2,3]
     streamFilter: string[]; // multi-select
     customerFilter: string[]; // multi-select
@@ -59,7 +59,7 @@ function defaultState(): UIState {
   return {
     taskLists: {},
     todo: { quarterId: "all", selectedQuarterIds: [], withoutQuarterFilter: false, withoutStreamFilter: false,
-      withoutCustomerFilter: false, releaseSprintFilter: "all", priorityFilter: [], streamFilter: [], customerFilter: [],
+      withoutCustomerFilter: false, releaseFilters: [], priorityFilter: [], streamFilter: [], customerFilter: [],
       statusFilter: [], searchQuery: "", tasksPageSize: "20", hideAllParticipants: false, sortBy: "manual", sortDirection: "asc" },
     backlog: {
       quarterId: "all",
@@ -67,7 +67,7 @@ function defaultState(): UIState {
       withoutQuarterFilter: false,
       withoutStreamFilter: false,
       withoutCustomerFilter: false,
-      releaseSprintFilter: "all",
+      releaseFilters: [],
       priorityFilter: [],
       streamFilter: [],
       customerFilter: [],
@@ -95,6 +95,10 @@ function defaultState(): UIState {
       taskStreamFilter: "",
     },
   };
+}
+
+function reuseArray<T>(next: T[], previous: T[]) {
+  return next.length === previous.length && next.every((value, index) => value === previous[index]) ? previous : next;
 }
 
 function sanitizeBacklog(
@@ -140,10 +144,10 @@ function sanitizeBacklog(
       typeof input?.quarterId === "string"
         ? input.quarterId
         : defaults.quarterId,
-    releaseSprintFilter:
-      typeof input?.releaseSprintFilter === "string"
-        ? input.releaseSprintFilter
-        : defaults.releaseSprintFilter,
+    releaseFilters: reuseArray(Array.isArray(input?.releaseFilters)
+      ? [...new Set<string>(input.releaseFilters.filter((v: unknown): v is string => typeof v === "string" && !!v.trim()))]
+      : typeof input?.releaseSprintFilter === "string" && input.releaseSprintFilter && input.releaseSprintFilter !== "all"
+      ? [input.releaseSprintFilter] : defaults.releaseFilters.slice(), defaults.releaseFilters),
     withoutQuarterFilter:
       typeof input?.withoutQuarterFilter === "boolean"
         ? input.withoutQuarterFilter
@@ -156,16 +160,16 @@ function sanitizeBacklog(
       typeof input?.withoutCustomerFilter === "boolean"
         ? input.withoutCustomerFilter
         : defaults.withoutCustomerFilter,
-    priorityFilter,
-    streamFilter,
-    customerFilter,
-    statusFilter,
+    priorityFilter: reuseArray(priorityFilter, defaults.priorityFilter),
+    streamFilter: reuseArray(streamFilter, defaults.streamFilter),
+    customerFilter: reuseArray(customerFilter, defaults.customerFilter),
+    statusFilter: reuseArray(statusFilter, defaults.statusFilter),
     searchQuery:
       typeof input?.searchQuery === "string"
         ? input.searchQuery
         : defaults.searchQuery,
     tasksPageSize,
-    selectedQuarterIds,
+    selectedQuarterIds: reuseArray(selectedQuarterIds, defaults.selectedQuarterIds),
     hideAllParticipants:
       typeof input?.hideAllParticipants === "boolean"
         ? input.hideAllParticipants
@@ -306,7 +310,9 @@ const uiSlice = createSlice({
     setTaskListFilters(state, action: PayloadAction<{ key: string; changes: Partial<UIState["backlog"]> }>) {
       const { key, changes } = action.payload;
       const current = state.taskLists[key] ?? (key.endsWith(":BACKLOG") ? state.todo : state.backlog);
-      state.taskLists[key] = sanitizeBacklog({ ...current, ...changes }, current);
+      const next = sanitizeBacklog({ ...current, ...changes }, current);
+      if ((Object.keys(next) as (keyof typeof next)[]).every(field => next[field] === current[field])) return;
+      state.taskLists[key] = next;
     },
     setBacklogFilters(
       state,

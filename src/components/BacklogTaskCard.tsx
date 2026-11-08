@@ -1,7 +1,8 @@
-import ReleaseDateField from "./ReleaseDateField";
+import AssignmentReleaseDateField from "./AssignmentReleaseDateField";
 import * as React from "react";
 import {
   Paper,
+  CircularProgress,
   Typography,
   Stack,
   Box,
@@ -29,6 +30,8 @@ import {
 } from "@mui/material";
 import {
   AddTask,
+  PlaylistAdd,
+  PlaylistRemove,
   Delete,
   CopyAll,
   ArrowBack,
@@ -50,10 +53,7 @@ import moment from "moment";
 import "moment/locale/ru";
 import {
   DndContext,
-  PointerSensor,
   closestCenter,
-  useSensor,
-  useSensors,
   DragEndEvent,
 } from "@dnd-kit/core";
 import {
@@ -64,13 +64,12 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-import EditableNumberCell from "./EditableNumberCell";
+import TaskAllocationCell from "./TaskAllocationCell";
 import FilterAutocomplete from "./filters/FilterAutocomplete";
 import type {
   BacklogItem,
   Participant,
   Sprint,
-  Quarter,
   TaskPriority,
   TaskStatus,
 } from "../types";
@@ -106,6 +105,7 @@ export type DragHandleProps = {
 };
 
 type EditableTextProps = {
+  label?: string;
   value: string;
   onCommit?: (v: string) => void;
   placeholder?: string;
@@ -119,6 +119,7 @@ type EditableTextProps = {
 };
 
 const EditableText = React.memo(function EditableText({
+  label,
   value,
   onCommit,
   placeholder,
@@ -154,8 +155,14 @@ const EditableText = React.memo(function EditableText({
     }
   }, [draft, editing, onCommit, value]);
 
+  const labelControl = label ? <Box component="button" type="button" onClick={handleStart}
+    sx={{ display: "block", border: 0, p: 0, background: "none", color: "text.secondary", font: "inherit", cursor: "text", textAlign: "left" }}>
+    {label}:
+  </Box> : null;
   if (!editing) {
-    return (
+    if (label && !value?.trim()) return labelControl;
+    return (<>
+      {labelControl}
       <Box
         component="span"
         data-testid={dataTestId}
@@ -181,10 +188,11 @@ const EditableText = React.memo(function EditableText({
           </Typography>
         )}
       </Box>
-    );
+    </>);
   }
 
-  return (
+  return (<>
+    {labelControl}
     <InputBase
       multiline={multiline}
       minRows={minRows}
@@ -220,7 +228,7 @@ const EditableText = React.memo(function EditableText({
         "data-testid": dataTestId ? `${dataTestId}-input` : undefined,
       }}
     />
-  );
+  </>);
 });
 
 type EditableParticipantProps = {
@@ -336,21 +344,21 @@ const SortableParticipantRow = ({
 };
 
 export type BacklogTaskCardProps = {
-  onTransferToPlanning?: (task: BacklogItem) => void;
+  onTransferToPlanning?: (task: BacklogItem) => Promise<boolean>;
+  onRemoveFromPlanning?: (task: BacklogItem) => void;
+  isPlanningSelected?: boolean;
   task: BacklogItem;
   allocationsByParticipant: Record<string, Record<string, number>>;
   participants: Participant[];
   participantMap: Map<string, Participant>;
   participantOrder: string[];
   sprintsGlobalOrdered: Sprint[];
-  sprintsByQuarter: Map<string, Sprint[]>;
-  quartersSorted: Quarter[];
   selectedQuarterIds: string[];
   withoutQuarterFilter: boolean;
   quarterFilterOptions: { value: string; label: string }[];
   customerOptions: string[];
   streamOptions: string[];
-  releaseOptions: { value: string; label: string }[];
+  releaseOptions?: { value: string; label: string }[];
   participantSensors: any;
   onStatusChange: (task: BacklogItem, status: TaskStatus) => void;
   onPriorityChange: (task: BacklogItem, priority: TaskPriority) => void;
@@ -381,7 +389,7 @@ export type BacklogTaskCardProps = {
     sprintId: string,
     value: number
   ) => void;
-  onAllocCommit: (
+  onAllocCommit?: (
     taskId: string,
     participantId: string,
     sprintId: string,
@@ -415,8 +423,6 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
   participantMap,
   participantOrder,
   sprintsGlobalOrdered,
-  sprintsByQuarter,
-  quartersSorted,
   selectedQuarterIds,
   withoutQuarterFilter,
   quarterFilterOptions,
@@ -429,6 +435,8 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
   onUpdateTaskPatch,
   onDuplicateTask,
   onTransferToPlanning,
+  onRemoveFromPlanning,
+  isPlanningSelected = false,
   onOpenTaskHistory,
   onUpdateJiraLinks,
   onMoveTask,
@@ -456,7 +464,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
   const rows = allocationsByParticipant || {};
   const taskStatus = task.status ?? "inprogress";
   const canExportJira = task.workspace !== "BACKLOG" && task.status !== "backlog";
-  const taskQuarterIds = getTaskQuarters(task);
+  const taskQuarterIds = React.useMemo(() => getTaskQuarters(task), [getTaskQuarters, task]);
   const taskHasQuarterOverride = hasTaskQuarterOverride(task.id);
   const [selectedParticipantToAdd, setSelectedParticipantToAdd] =
     React.useState<Participant | null>(null);
@@ -484,21 +492,32 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
 
   const orderedParticipantIds =
     participantOrder.length > 0 ? participantOrder : task.participantIds || [];
-  const participantRows: Participant[] = orderedParticipantIds
-    .map((id) => participantMap.get(id))
-    .filter(Boolean) as Participant[];
-
-  const sumBySprint: Record<string, number> = {};
-  for (const s of effectiveSprints) {
-    sumBySprint[s.id] = participantRows.reduce((a, p) => {
-      const v = Number(rows[p.id]?.[s.id] || 0);
-      return a + normalizeDayAmount(v);
-    }, 0);
-  }
+  const participantRows = React.useMemo(() => orderedParticipantIds
+    .map(id => participantMap.get(id)).filter((participant): participant is Participant => Boolean(participant)), [orderedParticipantIds, participantMap]);
+  const sumBySprint = React.useMemo(() => Object.fromEntries(effectiveSprints.map(sprint => [sprint.id,
+    participantRows.reduce((total, participant) => total + normalizeDayAmount(Number(rows[participant.id]?.[sprint.id] || 0)), 0),
+  ])), [effectiveSprints, participantRows, rows]);
 
   const leaderPid = task.leaderId || undefined;
   const releaseDateId = task.releaseDateId || "";
   const relSprintId = task.releaseSprintId || "";
+
+  const [planningTransferPending, setPlanningTransferPending] = React.useState(false);
+  const planningTransferInFlight = React.useRef(false);
+  const canTogglePlanning = !planningTransferPending && (isPlanningSelected
+    ? Boolean(onRemoveFromPlanning) : task.status === "backlog" && Boolean(onTransferToPlanning));
+  const handleTransferToPlanning = async () => {
+    if (!canTogglePlanning || planningTransferInFlight.current) return;
+    if (isPlanningSelected) { onRemoveFromPlanning?.(task); return; }
+    planningTransferInFlight.current = true;
+    setPlanningTransferPending(true);
+    try { await onTransferToPlanning?.(task); }
+    catch { /* The owner reports the error; selection remains unchanged. */ }
+    finally { planningTransferInFlight.current = false; setPlanningTransferPending(false); }
+  };
+  const planningTransferLabel = planningTransferPending ? "Переносим в планирование…"
+    : isPlanningSelected ? "Убрать из планирования"
+    : task.status !== "backlog" ? "Перенос доступен для задач «В бэклоге»" : "Добавить в планирование";
 
   const [customersDraft, setCustomersDraft] = React.useState<string[]>(
     task.customers || []
@@ -611,10 +630,10 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
       <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
         Заголовок: {task.title || "—"}
       </Typography>
-      <Typography variant="body2">
+      <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
         Описание: {task.description || "—"}
       </Typography>
-      <Typography variant="body2">DOD: {task.dod || "—"}</Typography>
+      <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>DOD: {task.dod || "—"}</Typography>
     </Stack>
   );
 
@@ -647,14 +666,6 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
       setSelectedParticipantToAdd(null);
     }
   }, [availableParticipants, selectedParticipantToAdd]);
-
-  const allowedReleaseValues = React.useMemo(
-    () => new Set(releaseOptions.map((opt) => opt.value)),
-    [releaseOptions]
-  );
-  const normalizedReleaseValue = allowedReleaseValues.has(releaseDateId)
-    ? releaseDateId
-    : "";
 
   const clampedTextSx = {
     display: "-webkit-box",
@@ -753,7 +764,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
         sx={{ mb: 1 }}
       >
         <Tooltip title={tooltipContent} arrow placement="top-start">
-          <Box sx={{ flex: 1, minWidth: 260, cursor: "help" }}>
+          <Box sx={{ flex: "2 1 0", minWidth: 0, width: { xs: "100%", md: "auto" }, cursor: "help" }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
               <EditableText
                 value={task.title || ""}
@@ -777,8 +788,8 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
               variant="body2"
               sx={{ color: "text.secondary", mt: 0.5 }}
             >
-              Описание:{" "}
               <EditableText
+                label="Описание"
                 value={task.description || ""}
                 onCommit={(v) => {
                   if (v !== (task.description || "")) {
@@ -789,8 +800,8 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                 multiline
                 minRows={2}
                 maxRows={6}
-                displaySx={clampedTextSx}
-                inputSx={{ width: "100%" }}
+                displaySx={{ ...clampedTextSx, color: "#333", whiteSpace: "pre-wrap" }}
+                inputSx={{ width: "100%", color: "#333" }}
               />
             </Typography>
 
@@ -798,8 +809,8 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
               variant="body2"
               sx={{ color: "text.secondary", mt: 0.5 }}
             >
-              DOD:{" "}
               <EditableText
+                label="DOD"
                 value={task.dod || ""}
                 onCommit={(v) => {
                   if (v !== (task.dod || "")) {
@@ -810,8 +821,8 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                 multiline
                 minRows={2}
                 maxRows={6}
-                displaySx={clampedTextSx}
-                inputSx={{ width: "100%" }}
+                displaySx={{ ...clampedTextSx, color: "#333", whiteSpace: "pre-wrap" }}
+                inputSx={{ width: "100%", color: "#333" }}
               />
             </Typography>
           </Box>
@@ -824,7 +835,9 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
             gap: 1,
             alignItems: "center",
             justifyContent: "flex-end",
-            minWidth: 320,
+            flex: "3 1 0",
+            minWidth: 0,
+            width: { xs: "100%", md: "auto" },
           }}
         >
           <TextField
@@ -836,7 +849,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
             onChange={(e) =>
               onStatusChange(task, e.target.value as TaskStatus)
             }
-            sx={{ minWidth: 180 }}
+            sx={{ width: 145 }}
             SelectProps={{
               renderValue: (value) => {
                 const key = value as TaskStatus;
@@ -870,7 +883,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
             onChange={(e) =>
               onPriorityChange(task, Number(e.target.value) as TaskPriority)
             }
-            sx={{ minWidth: 120 }}
+            sx={{ width: 105 }}
           >
             <MenuItem value={1}>1</MenuItem>
             <MenuItem value={2}>2</MenuItem>
@@ -980,7 +993,7 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
             sx={{ minWidth: 180, maxWidth: 300, flexShrink: 0 }}
           />
 
-          <ReleaseDateField label="Релиз (ПРОМ)" value={task.releasePromDate || releaseDateId}
+          <AssignmentReleaseDateField compact label="Релиз" value={task.releasePromDate || releaseDateId}
             options={releaseOptions} onChange={(value) => onUpdateTaskPatch(task,
               /^\d{4}-\d{2}-\d{2}$/.test(value) ? { releasePromDate: value, releaseDateId: "" } : { releaseDateId: value, releasePromDate: undefined })} />
 
@@ -1012,6 +1025,25 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                 >
                   <OpenInNew fontSize="small" />
                 </IconButton>
+              </Tooltip>
+            )}
+
+            {!isPreview && onTransferToPlanning && (
+              <Tooltip title={planningTransferLabel}>
+                <span>
+                  <IconButton
+                    size="small"
+                    disabled={!canTogglePlanning}
+                    onClick={handleTransferToPlanning}
+                    aria-label={`${planningTransferLabel}: ${task.title}`}
+                    data-testid={`transfer-to-planning-${task.id}`}
+                    sx={{ color: isPlanningSelected ? "success.main" : undefined }}
+                  >
+                    {planningTransferPending ? <CircularProgress size={18} color="inherit" />
+                      : isPlanningSelected ? <PlaylistRemove fontSize="small" />
+                      : <PlaylistAdd fontSize="small" />}
+                  </IconButton>
+                </span>
               </Tooltip>
             )}
 
@@ -1127,8 +1159,9 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
                     </ListItemIcon>
                     <ListItemText>Редактировать ссылки Jira</ListItemText>
                   </MenuItem>
-                  {onTransferToPlanning && <MenuItem onClick={() => handleTaskOption(() => onTransferToPlanning(task))}>
-                    <ListItemText>В планирование</ListItemText>
+                  {onTransferToPlanning && <MenuItem disabled={!canTogglePlanning} onClick={() => handleTaskOption(() => { void handleTransferToPlanning(); })}>
+                    <ListItemIcon>{isPlanningSelected ? <PlaylistRemove fontSize="small" /> : <PlaylistAdd fontSize="small" />}</ListItemIcon>
+                    <ListItemText>{isPlanningSelected ? "Убрать из планирования" : "Добавить в планирование"}</ListItemText>
                   </MenuItem>}
                   <MenuItem onClick={() => handleTaskOption(() => onDuplicateTask(task))}>
                     <ListItemIcon>
@@ -1339,14 +1372,11 @@ const BacklogTaskCard = React.memo(function BacklogTaskCard({
 
                             {effectiveSprints.map((s) => (
                               <TableCell key={s.id} align="center">
-                                <EditableNumberCell
+                                <TaskAllocationCell
+                                  taskId={task.id} participantId={p.id} sprintId={s.id}
                                   value={Number(row[s.id] || 0)}
-                                  onChange={(v) =>
-                                    onAllocChange(task.id, p.id, s.id, v)
-                                  }
-                                  onCommit={(next) =>
-                                    onAllocCommit(task.id, p.id, s.id, next)
-                                  }
+                                  onChange={onAllocChange}
+                                  onCommit={onAllocCommit}
                                   dataTestId={
                                     isPreview
                                       ? `planning-preview-allocation-${task.id}-${p.id}-${s.id}`

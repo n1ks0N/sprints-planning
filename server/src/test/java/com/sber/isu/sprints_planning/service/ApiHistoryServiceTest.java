@@ -117,7 +117,7 @@ class ApiHistoryServiceTest {
 
         when(historyRepository.findActionSessionSummaries(eq("team-a"), any(Pageable.class)))
             .thenReturn(List.of(summary));
-        when(historyRepository.findActionHistoryByTeamKeyAndSession(eq("team-a"), eq("session-1"), eq("user"), any(Pageable.class)))
+        when(historyRepository.findActionHistoryForSessions(eq("team-a"), any(String[].class), any(String[].class), eq(200)))
             .thenReturn(List.of(action));
 
         var result = service.getHistory("team-a", 0, 10);
@@ -128,13 +128,10 @@ class ApiHistoryServiceTest {
         assertThat(result.get(0).actions()).hasSize(1);
         assertThat(result.get(0).actions().get(0).id()).isEqualTo(actionId);
 
-        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
-        verify(historyRepository).findActionHistoryByTeamKeyAndSession(
-            eq("team-a"),
-            eq("session-1"),
-            eq("user"),
-            pageableCaptor.capture()
-        );
-        assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(200);
+        ArgumentCaptor<String[]> sessions = ArgumentCaptor.forClass(String[].class);
+        ArgumentCaptor<String[]> users = ArgumentCaptor.forClass(String[].class);
+        verify(historyRepository).findActionHistoryForSessions(eq("team-a"), sessions.capture(), users.capture(), eq(200));
+        assertThat(sessions.getValue()).containsExactly("session-1");
+        assertThat(users.getValue()).containsExactly("user");
     }
 }

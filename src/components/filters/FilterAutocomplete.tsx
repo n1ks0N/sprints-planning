@@ -93,19 +93,7 @@ const toUniqueList = (values: string[]) => {
   return out;
 };
 
-export function FilterAutocomplete(props: FilterAutocompleteProps) {
-  const {
-    label,
-    options,
-    allowCustom = true,
-    placeholder,
-    size = "small",
-    sx,
-    disableClearable,
-    helperText,
-    sortOptions = true,
-  } = props;
-
+function useFilterOptions(options: OptionInput[], sortOptions: boolean) {
   const normalized = React.useMemo(
     () => normalizeOptions(options, sortOptions),
     [options, sortOptions]
@@ -121,55 +109,87 @@ export function FilterAutocomplete(props: FilterAutocompleteProps) {
     [normalized.byValue]
   );
 
-  if (props.multiple) {
-    const selected = React.useMemo(
-      () => props.value.map((val) => buildOption(val)),
-      [props.value, buildOption]
-    );
+  return { normalized, buildOption };
+}
 
-    const handleChange = (
-      _: any,
-      value: Array<FilterOption | string>,
-      _reason: AutocompleteChangeReason
-    ) => {
-      const rawValues = value.map((item) =>
-        typeof item === "string" ? item : item.value
-      );
-      props.onChange(toUniqueList(rawValues));
-    };
+function MultipleFilterAutocomplete(props: MultipleProps) {
+  const {
+    label,
+    options,
+    allowCustom = true,
+    placeholder,
+    size = "small",
+    sx,
+    disableClearable,
+    helperText,
+    sortOptions = true,
+  } = props;
 
-    return (
-      <Autocomplete
-        multiple
-        options={normalized.list}
-        freeSolo={allowCustom}
-        value={selected}
-        onChange={handleChange}
-        sx={sx}
-        size={size}
-        disableClearable={disableClearable}
-        clearOnBlur={!allowCustom}
-        filterSelectedOptions
-        fullWidth
-        getOptionLabel={(option) =>
-          typeof option === "string" ? option : option.label
-        }
-        isOptionEqualToValue={(option, value) =>
-          (typeof option === "string" ? option : option.value) ===
-          (typeof value === "string" ? value : value.value)
-        }
-        renderInput={(params) => (
-          <TextField
-            {...params}
-            label={label}
-            placeholder={placeholder}
-            size={size}
-            helperText={helperText}
-          />
-        )}
-      />
+  const { normalized, buildOption } = useFilterOptions(options, sortOptions);
+
+  const selected = React.useMemo(
+    () => props.value.map((val) => buildOption(val)),
+    [props.value, buildOption]
+  );
+
+  const handleChange = (
+    _: any,
+    value: Array<FilterOption | string>,
+    _reason: AutocompleteChangeReason
+  ) => {
+    const rawValues = value.map((item) =>
+      typeof item === "string" ? item : item.value
     );
-  }
+    props.onChange(toUniqueList(rawValues));
+  };
+
+  return (
+    <Autocomplete
+      multiple
+      options={normalized.list}
+      freeSolo={allowCustom}
+      value={selected}
+      onChange={handleChange}
+      sx={sx}
+      size={size}
+      disableClearable={disableClearable}
+      clearOnBlur={!allowCustom}
+      filterSelectedOptions
+      fullWidth
+      getOptionLabel={(option) =>
+        typeof option === "string" ? option : option.label
+      }
+      isOptionEqualToValue={(option, value) =>
+        (typeof option === "string" ? option : option.value) ===
+        (typeof value === "string" ? value : value.value)
+      }
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={label}
+          placeholder={placeholder}
+          size={size}
+          helperText={helperText}
+        />
+      )}
+    />
+  );
+}
+
+function SingleFilterAutocomplete(props: SingleProps) {
+  const {
+    label,
+    options,
+    allowCustom = true,
+    placeholder,
+    size = "small",
+    sx,
+    disableClearable,
+    helperText,
+    sortOptions = true,
+  } = props;
+
+  const { normalized, buildOption } = useFilterOptions(options, sortOptions);
 
   const singleValue = React.useMemo(
     () => (props.value ? buildOption(props.value) : null),
@@ -285,4 +305,8 @@ export function FilterAutocomplete(props: FilterAutocompleteProps) {
   );
 }
 
-export default FilterAutocomplete;
+export function FilterAutocomplete(props: FilterAutocompleteProps) {
+  return props.multiple ? <MultipleFilterAutocomplete {...props} /> : <SingleFilterAutocomplete {...props} />;
+}
+
+export default React.memo(FilterAutocomplete);

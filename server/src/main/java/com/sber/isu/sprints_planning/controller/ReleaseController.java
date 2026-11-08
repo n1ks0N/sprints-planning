@@ -34,8 +34,10 @@ public class ReleaseController {
     public List<ReleaseService.Option> getOptions(@PathVariable String teamKey,
         @org.springframework.web.bind.annotation.RequestParam(required = false) List<java.util.UUID> quarterId,
         @org.springframework.web.bind.annotation.RequestParam(required = false)
-        @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate fromDate) {
-        return releaseService.options(TeamKeyNormalizer.normalize(teamKey), quarterId, fromDate);
+        @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate fromDate,
+        @org.springframework.web.bind.annotation.RequestParam(required = false) String search,
+        @org.springframework.web.bind.annotation.RequestParam(required = false) List<java.util.UUID> ids) {
+        return releaseService.options(TeamKeyNormalizer.normalize(teamKey), quarterId, fromDate, search, ids);
     }
 
     @PostMapping("/releases")

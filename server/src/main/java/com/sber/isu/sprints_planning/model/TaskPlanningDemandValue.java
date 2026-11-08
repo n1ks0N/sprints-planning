@@ -1,6 +1,7 @@
 package com.sber.isu.sprints_planning.model;
 
 import java.math.BigDecimal;
+import java.util.Objects;
 import java.util.UUID;
 
 public class TaskPlanningDemandValue {
@@ -60,5 +61,19 @@ public class TaskPlanningDemandValue {
 
     public void setDays(BigDecimal days) {
         this.days = days;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) return true;
+        if (!(other instanceof TaskPlanningDemandValue value)) return false;
+        return Objects.equals(kind, value.kind) && Objects.equals(role, value.role)
+            && Objects.equals(participantId, value.participantId) && Objects.equals(stream, value.stream)
+            && Objects.equals(days, value.days);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(kind, role, participantId, stream, days);
     }
 }

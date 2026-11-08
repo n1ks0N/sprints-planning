@@ -189,13 +189,9 @@ public class PlanningWorkbenchService {
             return false;
         }
 
-        String normalizedReleaseDateId = normalizeOptional(releaseDateId);
-        if (normalizedReleaseDateId != null) {
-            String actualRelease = item.getReleaseDate() == null ? null : (normalizedReleaseDateId.startsWith("date:") ? "date:" + item.getReleaseDate().getPromDate() : item.getReleaseDate().getId().toString());
-            if (!normalizedReleaseDateId.equals(actualRelease)) {
-                return false;
-            }
-        }
+        ReleaseSelection releases = ReleaseSelection.decode(releaseDateId);
+        if (!releases.isEmpty() && (item.getReleaseDate() == null ||
+            !releases.matches(item.getReleaseDate().getId(), item.getReleaseDate().getPromDate()))) return false;
 
         Set<String> selectedQuarterIds = normalizeFilterSet(quarterIds);
         if (!selectedQuarterIds.isEmpty() && collectPlanningItemQuarterIds(teamKey, item).stream().noneMatch(selectedQuarterIds::contains)) {
@@ -474,7 +470,11 @@ public class PlanningWorkbenchService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No planning items selected");
         }
 
-        List<SprintEntity> relevantSprints = resolveRelevantSprints(teamKey, items);
+        Map<UUID, List<SprintEntity>> allowedSprints = resolveAllowedSprints(teamKey, items);
+        List<SprintEntity> relevantSprints = allowedSprints.values().stream().flatMap(List::stream)
+            .distinct()
+            .sorted(Comparator.comparing((SprintEntity sprint) -> sprint.getQuarter().getStartDate()).thenComparingInt(SprintEntity::getOrder))
+            .toList();
         if (relevantSprints.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected items do not have planning window");
         }
@@ -483,7 +483,7 @@ public class PlanningWorkbenchService {
             .filter(ParticipantEntity::isActive)
             .toList();
         Map<String, Map<String, BigDecimal>> committed = aggregateCommittedLoad(teamKey, relevantSprints);
-        List<PlanningDraftTask> draftTasks = toDraftTasks(items, teamKey);
+        List<PlanningDraftTask> draftTasks = toDraftTasks(items, allowedSprints);
 
         PlanningSolverResult solverResult = draftTasks.isEmpty()
             ? new PlanningSolverResult(plannerType, Map.of(), List.of(), BigDecimal.ZERO, BigDecimal.ZERO)
@@ -508,20 +508,28 @@ public class PlanningWorkbenchService {
         String rawSessionId,
         String rawUserName
     ) {
-        planningBacklogItemRepository.lockSelected(teamKey, request.itemIds().stream().map(UUID::fromString).sorted().toList());
+        List<UUID> requestedIds = request.itemIds().stream().map(UUID::fromString).distinct().sorted().toList();
+        List<UUID> sourceIds = planningBacklogItemRepository.findSourceTaskIds(teamKey, requestedIds);
+        // Task deletion cascades to drafts: acquire task locks first in both paths.
+        // The projection above does not initialize draft entities before their locks.
+        Map<UUID, com.sber.isu.sprints_planning.model.TaskEntity> sources = new LinkedHashMap<>();
+        if (!sourceIds.isEmpty()) {
+            if (taskRepository.lockAllByIdInAndTeamKey(sourceIds, teamKey).size() != sourceIds.size()) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Исходная задача удалена");
+            }
+            taskRepository.findAllByIdInAndTeamKey(sourceIds, teamKey).forEach(task -> sources.put(task.getId(), task));
+        }
+        planningBacklogItemRepository.lockSelected(teamKey, requestedIds);
         List<PlanningBacklogItemEntity> items = fetchSelectedItems(teamKey, request.itemIds());
         if (items.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No planning items selected");
         }
-        Map<UUID, com.sber.isu.sprints_planning.model.TaskEntity> sources = new LinkedHashMap<>();
-        for (var item : items.stream().filter(i -> i.getSourceTaskId() != null).sorted(Comparator.comparing(PlanningBacklogItemEntity::getSourceTaskId)).toList()) {
-            taskRepository.findByIdAndTeamKeyForUpdate(item.getSourceTaskId(), teamKey)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Исходная задача удалена"));
-            var source = taskRepository.findWithDetailsById(item.getSourceTaskId(), teamKey);
-            if (!"backlog".equals(source.getStatus()) || !"BACKLOG".equals(source.getWorkspace()) || !Objects.equals(item.getSourceRevision(), source.getRevision())) {
+        for (var item : items) {
+            if (item.getSourceTaskId() == null) continue;
+            var source = sources.get(item.getSourceTaskId());
+            if (source == null || !"backlog".equals(source.getStatus()) || !"BACKLOG".equals(source.getWorkspace()) || !Objects.equals(item.getSourceRevision(), source.getRevision())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Исходная задача изменена. Удалите её заготовку и передайте актуальную задачу в планирование заново.");
             }
-            sources.put(source.getId(), source);
         }
         Map<String, ApplyItemState> applyStates = buildApplyStates(teamKey, items, request.itemPatches());
         Map<String, Map<String, Map<String, BigDecimal>>> normalized = normalizeAllocations(request.allocations());
@@ -595,7 +603,7 @@ public class PlanningWorkbenchService {
             ), null));
         }
 
-        List<TaskDto> appliedTasks = taskService.applyPlanningBatch(teamKey, mutations);
+        List<TaskDto> appliedTasks = taskService.applyPlanningBatch(teamKey, mutations, sources);
         planningBacklogItemRepository.deleteAll(items);
         return appliedTasks;
     }
@@ -792,10 +800,10 @@ public class PlanningWorkbenchService {
             .toList();
     }
 
-    private List<PlanningDraftTask> toDraftTasks(List<PlanningBacklogItemEntity> items, String teamKey) {
+    private List<PlanningDraftTask> toDraftTasks(List<PlanningBacklogItemEntity> items, Map<UUID, List<SprintEntity>> allowedSprints) {
         List<PlanningDraftTask> draftTasks = new ArrayList<>();
         for (PlanningBacklogItemEntity item : items) {
-            List<String> allowedSprintIds = resolveAllowedSprints(item, teamKey).stream()
+            List<String> allowedSprintIds = allowedSprints.getOrDefault(item.getId(), List.of()).stream()
                 .map(sprint -> sprint.getId().toString())
                 .toList();
             int demandOrder = 0;
@@ -930,18 +938,6 @@ public class PlanningWorkbenchService {
         return matcher.replaceFirst(Matcher.quoteReplacement(matcher.group(1) + formattedDays + matcher.group(3)));
     }
 
-    private List<SprintEntity> resolveRelevantSprints(String teamKey, List<PlanningBacklogItemEntity> items) {
-        LinkedHashSet<UUID> sprintIds = new LinkedHashSet<>();
-        for (PlanningBacklogItemEntity item : items) {
-            resolveAllowedSprints(item, teamKey).forEach(sprint -> sprintIds.add(sprint.getId()));
-        }
-        return sprintIds.isEmpty()
-            ? List.of()
-            : sprintRepository.findByTeamKeyAndIdIn(teamKey, sprintIds).stream()
-                .sorted(Comparator.comparing((SprintEntity sprint) -> sprint.getQuarter().getStartDate()).thenComparingInt(SprintEntity::getOrder))
-                .toList();
-    }
-
     private boolean isSprintAllowed(PlanningBacklogItemEntity item, SprintEntity sprint) {
         if (item.getPlanningSprintIds() != null && !item.getPlanningSprintIds().isEmpty()) {
             return item.getPlanningSprintIds().contains(sprint.getId());
@@ -952,19 +948,28 @@ public class PlanningWorkbenchService {
         return item.getInitialQuarter() != null && item.getInitialQuarter().getId().equals(sprint.getQuarter().getId());
     }
 
-    private List<SprintEntity> resolveAllowedSprints(PlanningBacklogItemEntity item, String teamKey) {
-        if (item.getPlanningSprintIds() != null && !item.getPlanningSprintIds().isEmpty()) {
-            return sprintRepository.findByTeamKeyAndIdIn(teamKey, item.getPlanningSprintIds()).stream()
-                .sorted(Comparator.comparing(SprintEntity::getStartDate).thenComparingInt(SprintEntity::getOrder))
-                .toList();
+    private Map<UUID, List<SprintEntity>> resolveAllowedSprints(String teamKey, List<PlanningBacklogItemEntity> items) {
+        Set<UUID> sprintIds = new LinkedHashSet<>();
+        Set<UUID> quarterIds = new LinkedHashSet<>();
+        for (PlanningBacklogItemEntity item : items) {
+            if (item.getPlanningSprintIds() != null && !item.getPlanningSprintIds().isEmpty()) {
+                sprintIds.addAll(item.getPlanningSprintIds());
+            } else if (item.getPlanningQuarterIds() != null && !item.getPlanningQuarterIds().isEmpty()) {
+                quarterIds.addAll(item.getPlanningQuarterIds());
+            } else if (item.getInitialQuarter() != null) {
+                quarterIds.add(item.getInitialQuarter().getId());
+            }
         }
-        if (item.getPlanningQuarterIds() != null && !item.getPlanningQuarterIds().isEmpty()) {
-            return sprintRepository.findByTeamKeyAndQuarterIdsOrderByQuarterAndOrder(teamKey, item.getPlanningQuarterIds());
+        List<SprintEntity> sprints = sprintIds.isEmpty() && quarterIds.isEmpty() ? List.of()
+            : sprintRepository.findPlanningWindowSprints(teamKey, sprintIds, quarterIds);
+        Map<UUID, List<SprintEntity>> result = new LinkedHashMap<>();
+        for (PlanningBacklogItemEntity item : items) {
+            Comparator<SprintEntity> ordering = item.getPlanningSprintIds() != null && !item.getPlanningSprintIds().isEmpty()
+                ? Comparator.comparing(SprintEntity::getStartDate).thenComparingInt(SprintEntity::getOrder)
+                : Comparator.comparing((SprintEntity sprint) -> sprint.getQuarter().getStartDate()).thenComparingInt(SprintEntity::getOrder);
+            result.put(item.getId(), sprints.stream().filter(sprint -> isSprintAllowed(item, sprint)).sorted(ordering).toList());
         }
-        if (item.getInitialQuarter() != null) {
-            return sprintRepository.findByTeamKeyAndQuarterIdOrderByOrderAsc(teamKey, item.getInitialQuarter().getId());
-        }
-        return List.of();
+        return result;
     }
 
     private Map<String, Map<String, BigDecimal>> aggregateCommittedLoad(String teamKey, List<SprintEntity> sprints) {

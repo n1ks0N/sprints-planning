@@ -1,3 +1,6 @@
+import { shallowEqual } from "react-redux";
+import useResolvedQuarterFilter from "./useResolvedQuarterFilter";
+import useToday from "./useToday";
 import * as React from "react";
 import { skipToken } from "@reduxjs/toolkit/query";
 import {
@@ -12,7 +15,11 @@ import {
   TableCell,
   TableContainer,
   Tooltip,
-  TablePagination,
+  Box,
+  Button,
+  TextField,
+  MenuItem,
+  Alert,
 } from "@mui/material";
 import {
   useActiveParticipantsQuery,
@@ -23,7 +30,7 @@ import {
   useGetParticipantWorkloadQuery,
   useUpsertTaskAllocationMutation,
 } from "../app/api";
-import EditableNumberCell from "../components/EditableNumberCell";
+import TaskAllocationCell from "../components/TaskAllocationCell";
 import type {
   Sprint,
   Quarter,
@@ -31,6 +38,7 @@ import type {
   ParticipantWorkloadTask,
   Allocations,
   CapacityCell,
+  CapacityRow,
 } from "../types";
 import { setParticipantWorkloadFilters } from "../app/uiSlice";
 import FiltersPanel from "../components/filters/FiltersPanel";
@@ -67,12 +75,12 @@ function shallowArrayEqual<T>(a: readonly T[], b: readonly T[]) {
   return true;
 }
 
-function getCurrentQuarterId(quarters: Quarter[]) {
-  const today = new Date().toISOString().slice(0, 10);
-  return quarters.find((quarter) => quarter.startDate <= today && today <= quarter.endDate)?.id || "";
-}
+const EMPTY_QUARTERS: Quarter[] = [];
+const EMPTY_SPRINTS: Sprint[] = [];
+const EMPTY_WORKLOAD: ParticipantWorkloadRow[] = [];
+const EMPTY_CAPACITY: CapacityRow[] = [];
 
-export default function ParticipantWorkloadPage() {
+function ParticipantWorkloadPage() {
   const dispatch = useAppDispatch();
   const currentTeamKey = useAppSelector(selectCurrentTeamKey);
   const ui = useAppSelector((s) => s.ui.participantWorkload);
@@ -81,26 +89,24 @@ export default function ParticipantWorkloadPage() {
   const [participantPageNumber, setParticipantPageNumber] = React.useState(0);
   const [participantPageSize, setParticipantPageSize] = React.useState(10);
 
-  const { data: quarters = [] } = useGetQuartersQuery();
-  const { data: participants = [] } = useActiveParticipantsQuery();
-  const { data: sprintsData = [] } = useGetSprintsQuery(undefined);
-  const { data: filtersData } = useGetFiltersQuery();
-  const allSprints = sprintsData;
-
-  React.useEffect(() => {
-    if (!quarters.length) return;
-    const actualIds = new Set(quarters.map((quarter) => quarter.id));
-    const filtered = ui.selectedQuarterIds.filter((id) => actualIds.has(id));
-    const nextQuarterIds = filtered.length ? filtered : [getCurrentQuarterId(quarters)].filter(Boolean);
-    if (!shallowArrayEqual(nextQuarterIds, ui.selectedQuarterIds)) {
-      dispatch(setParticipantWorkloadFilters({ selectedQuarterIds: nextQuarterIds }));
-    }
-  }, [dispatch, quarters, ui.selectedQuarterIds]);
+  const { data: quartersData } = useGetQuartersQuery(undefined, { selectFromResult: ({ data }) => ({ data }) });
+  const quarters = quartersData ?? EMPTY_QUARTERS;
+  const { data: participants } = useActiveParticipantsQuery();
+  const { data: allSprints = EMPTY_SPRINTS } = useGetSprintsQuery(undefined, { selectFromResult: ({ data }) => ({ data }) });
+  const { data: filtersData } = useGetFiltersQuery(undefined, { selectFromResult: ({ data }) => ({ data }) });
+  const today = useToday();
+  const currentQuarterId = React.useMemo(() => quarters.find(q => q.startDate <= today && today <= q.endDate)?.id, [quarters, today]);
+  const persistQuarters = React.useCallback((ids: string[]) => { dispatch(setParticipantWorkloadFilters({ selectedQuarterIds: ids })); }, [dispatch]);
+  const selectedQuarterIds = useResolvedQuarterFilter(quartersData, ui.selectedQuarterIds, persistQuarters, currentQuarterId);
+  const hasSelectedQuarter = selectedQuarterIds.length > 0;
+  const isQuarterRequired = quartersData !== undefined && !hasSelectedQuarter;
 
   const workloadFiltersSignature = React.useMemo(
     () =>
       JSON.stringify({
-        quarterIds: ui.selectedQuarterIds,
+        teamKey: currentTeamKey,
+        pageSize: participantPageSize,
+        quarterIds: selectedQuarterIds,
         participantIds: ui.selectedParticipantIds,
         roles: ui.rolesFilter,
         userStreams: ui.userStreamsFilter,
@@ -108,22 +114,27 @@ export default function ParticipantWorkloadPage() {
         taskStream: ui.taskStreamFilter,
       }),
     [
+      currentTeamKey, participantPageSize,
       ui.priorityFilter,
       ui.rolesFilter,
       ui.selectedParticipantIds,
-      ui.selectedQuarterIds,
+      selectedQuarterIds,
       ui.taskStreamFilter,
       ui.userStreamsFilter,
     ]
   );
 
+  const previousFiltersSignature = React.useRef(workloadFiltersSignature);
+  const effectivePageNumber = previousFiltersSignature.current === workloadFiltersSignature ? participantPageNumber : 0;
   React.useEffect(() => {
+    previousFiltersSignature.current = workloadFiltersSignature;
     setParticipantPageNumber(0);
   }, [workloadFiltersSignature]);
 
   const workloadQueryArgs = React.useMemo(
     () => ({
-      quarterIds: ui.selectedQuarterIds,
+      teamKey: currentTeamKey,
+      quarterIds: selectedQuarterIds,
       participantIds: ui.selectedParticipantIds.length
         ? ui.selectedParticipantIds
         : undefined,
@@ -131,38 +142,57 @@ export default function ParticipantWorkloadPage() {
       userStreams: ui.userStreamsFilter.length ? ui.userStreamsFilter : undefined,
       priority: ui.priorityFilter,
       streams: ui.taskStreamFilter ? [ui.taskStreamFilter] : undefined,
-      page: participantPageNumber,
+      page: effectivePageNumber,
       size: participantPageSize,
     }),
     [
-      participantPageNumber,
+      currentTeamKey, effectivePageNumber,
       participantPageSize,
       ui.priorityFilter,
       ui.rolesFilter,
       ui.selectedParticipantIds,
-      ui.selectedQuarterIds,
+      selectedQuarterIds,
       ui.taskStreamFilter,
       ui.userStreamsFilter,
     ]
   );
   const {
-    data: workloadPage,
+    currentData: workloadPage,
+    isFetching: isWorkloadFetching,
+    refetch: refetchWorkload,
     isError: isWorkloadError,
   } = useGetParticipantWorkloadQuery(
-    quarters.length > 0 && ui.selectedQuarterIds.length > 0
+    quartersData !== undefined && hasSelectedQuarter
       ? workloadQueryArgs
       : skipToken
   );
-  const workloadRows = workloadPage?.content ?? [];
+  const workloadRows = hasSelectedQuarter ? workloadPage?.content ?? EMPTY_WORKLOAD : EMPTY_WORKLOAD;
+  const loadMoreSentinelRef = React.useRef<HTMLDivElement>(null);
+  const totalParticipants = hasSelectedQuarter ? workloadPage?.page.totalElements ?? 0 : 0;
+  const hasMoreParticipants = workloadRows.length < totalParticipants;
+  const loadNextPage = React.useCallback(() => {
+    if (!hasMoreParticipants || isWorkloadFetching || isWorkloadError) return;
+    setParticipantPageNumber(page => Math.max(page, (workloadPage?.page.number ?? 0) + 1));
+  }, [hasMoreParticipants, isWorkloadFetching, isWorkloadError, workloadPage?.page.number]);
+  React.useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting) loadNextPage();
+    }, { rootMargin: "300px", threshold: 0 });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadNextPage]);
+
 
   const sprintsInScope = React.useMemo(() => {
-    const selected = new Set(ui.selectedQuarterIds);
+    const selected = new Set(selectedQuarterIds);
     const list =
       selected.size === 0
         ? [...allSprints]
         : allSprints.filter((s) => selected.has(s.quarterId));
     return list.sort(byStart);
-  }, [allSprints, ui.selectedQuarterIds]);
+  }, [allSprints, selectedQuarterIds]);
 
   const participantOptions = React.useMemo(
     () =>
@@ -173,17 +203,6 @@ export default function ParticipantWorkloadPage() {
     [participants]
   );
 
-  const quarterOptions = React.useMemo(
-    () =>
-      quarters
-        .slice()
-        .sort((a, b) => a.endDate.localeCompare(b.endDate))
-        .map((q) => ({
-          value: q.id,
-          label: `${q.name} (${q.startDate} → ${q.endDate})`,
-        })),
-    [quarters]
-  );
 
   const priorityOptions = React.useMemo(
     () => [1, 2, 3].map((p) => ({ value: String(p), label: String(p) })),
@@ -254,11 +273,11 @@ export default function ParticipantWorkloadPage() {
     [workloadRows]
   );
 
-  const { data: capacityRows = [] } = useGetCapacityQuery({
-    quarterIds: ui.selectedQuarterIds.length ? ui.selectedQuarterIds : undefined,
+  const { data: capacityRows = EMPTY_CAPACITY } = useGetCapacityQuery({
+    quarterIds: selectedQuarterIds.length ? selectedQuarterIds : undefined,
     participantIds: pageParticipantIds,
   }, {
-    skip: ui.selectedQuarterIds.length === 0 || pageParticipantIds.length === 0,
+    skip: !quartersData || pageParticipantIds.length === 0,
   });
 
   const capacityCellMap = React.useMemo(() => {
@@ -291,7 +310,7 @@ export default function ParticipantWorkloadPage() {
   React.useEffect(() => {
     setAllocations((prev) => {
       const next: Allocations = {};
-      let changed = Object.keys(prev).length > 0;
+      let changed = false;
       for (const row of workloadRows) {
         const pid = row.participant.id;
         for (const t of row.tasks) {
@@ -305,14 +324,18 @@ export default function ParticipantWorkloadPage() {
           }
           next[t.id] = {
             ...(next[t.id] || {}),
-            [pid]: participantAllocations,
+            [pid]: shallowEqual(prev[t.id]?.[pid], participantAllocations) ? prev[t.id][pid] : participantAllocations,
           };
           if (!prev[t.id]?.[pid]) {
             changed = true;
           }
         }
       }
-      return changed ? next : prev;
+      Object.entries(next).forEach(([taskId, taskRows]) => {
+        if (shallowEqual(prev[taskId], taskRows)) next[taskId] = prev[taskId];
+        else changed = true;
+      });
+      return changed || Object.keys(prev).length !== Object.keys(next).length ? next : prev;
     });
   }, [sprintsInScope, workloadRows]);
 
@@ -360,7 +383,7 @@ export default function ParticipantWorkloadPage() {
   const getRowsForParticipant = (row: ParticipantWorkloadRow) => {
     const pid = row.participant.id;
     const rows = row.tasks
-      .filter((t) => ui.priorityFilter.includes(t.priority) && t.status !== "backlog")
+      .filter((t) => ui.priorityFilter.includes(t.priority))
       .map((t) => ({
         task: t,
         perSprint: sprintsInScope.map((s) =>
@@ -392,15 +415,12 @@ export default function ParticipantWorkloadPage() {
         }}
         filters={[
           {
-            type: "autocomplete",
+            type: "quarters",
             key: "quarters",
             minWidth: 200,
             props: {
-              multiple: true,
-              allowCustom: false,
               label: "Фильтр по кварталам",
-              options: quarterOptions,
-              value: ui.selectedQuarterIds,
+              value: selectedQuarterIds,
               onChange: (ids) =>
                 dispatch(
                   setParticipantWorkloadFilters({
@@ -480,29 +500,18 @@ export default function ParticipantWorkloadPage() {
           },
         ]}
       />
+      <TextField select size="small" label="Количество сотрудников" value={participantPageSize}
+        onChange={event => setParticipantPageSize(Number(event.target.value))} sx={{ width: 220, my: 2 }}>
+        {[5, 10, 20, 50].map(size => <MenuItem key={size} value={size}>{size}</MenuItem>)}
+      </TextField>
 
       <Stack spacing={2}>
-        {isWorkloadError && (
+        {isQuarterRequired && <Alert severity="error">Квартал обязателен</Alert>}
+        {!isQuarterRequired && isWorkloadError && (
           <Typography sx={{ color: "error.main" }}>
             Не удалось загрузить задачи по текущим фильтрам
           </Typography>
         )}
-        <TablePagination
-          component="div"
-          count={workloadPage?.page?.totalElements ?? 0}
-          page={participantPageNumber}
-          rowsPerPage={participantPageSize}
-          rowsPerPageOptions={[5, 10, 20, 50]}
-          labelRowsPerPage="Сотрудников на странице"
-          labelDisplayedRows={({ from, to, count }) =>
-            `${from}-${to} из ${count === -1 ? `больше ${to}` : count}`
-          }
-          onPageChange={(_, nextPage) => setParticipantPageNumber(nextPage)}
-          onRowsPerPageChange={(event) => {
-            setParticipantPageSize(Number(event.target.value));
-            setParticipantPageNumber(0);
-          }}
-        />
         {workloadRows.map((workloadRow) => {
           const p = workloadRow.participant;
           const rows = getRowsForParticipant(workloadRow);
@@ -620,19 +629,11 @@ export default function ParticipantWorkloadPage() {
                                 key={`${p.id}-${r.task.id}-${s.id}`}
                                 align="center"
                               >
-                                <EditableNumberCell
+                                <TaskAllocationCell
+                                  taskId={r.task.id} participantId={p.id} sprintId={s.id}
                                   value={v}
-                                  onChange={(next) =>
-                                    handleAllocChange(
-                                      r.task.id,
-                                      p.id,
-                                      s.id,
-                                      next
-                                    )
-                                  }
-                                  onCommit={(next) =>
-                                    commitCell(r.task.id, p.id, s.id, next)
-                                  }
+                                  onChange={handleAllocChange}
+                                  onCommit={commitCell}
                                   title={`${r.task.title} / ${s.name}`}
                                 />
                               </TableCell>
@@ -699,12 +700,21 @@ export default function ParticipantWorkloadPage() {
           );
         })}
 
-        {!workloadRows.length && (
+        {hasSelectedQuarter && !workloadRows.length && !isWorkloadFetching && !isWorkloadError && (
           <Typography sx={{ color: "text.secondary" }}>
             Нет участников по выбранным фильтрам
           </Typography>
         )}
+        <Box ref={loadMoreSentinelRef} sx={{ height: 1 }} />
+        {hasSelectedQuarter && <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
+          <Typography variant="body2" color="text.secondary">Загружено {workloadRows.length} из {totalParticipants} сотрудников</Typography>
+          <Button variant="outlined" onClick={isWorkloadError ? () => { void refetchWorkload(); } : loadNextPage} disabled={isWorkloadFetching || (!hasMoreParticipants && !isWorkloadError)}>
+            {isWorkloadFetching ? "Загрузка..." : isWorkloadError ? "Повторить загрузку" : "Загрузить еще"}
+          </Button>
+        </Stack>}
       </Stack>
     </Paper>
   );
 }
+
+export default React.memo(ParticipantWorkloadPage);

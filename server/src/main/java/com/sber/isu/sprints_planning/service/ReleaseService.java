@@ -37,6 +37,16 @@ public class ReleaseService {
             .map(r -> new Option(r.getId().toString(), r.getName(), r.getPromDate())).toList();
     }
 
+    public List<Option> options(String teamKey, List<UUID> quarters, LocalDate fromDate, String search, List<UUID> ids) {
+        if (ids != null && !ids.isEmpty()) {
+            return releaseRepository.findSelectedOptions(teamKey, ids).stream()
+                .map(r -> new Option(r.getId().toString(), r.getName(), r.getPromDate())).toList();
+        }
+        if (search == null || search.isBlank()) return options(teamKey, quarters, fromDate);
+        return releaseRepository.searchOptions(teamKey, search.trim(), org.springframework.data.domain.PageRequest.of(0, 100))
+            .stream().map(r -> new Option(r.getId().toString(), r.getName(), r.getPromDate())).toList();
+    }
+
     @Transactional
     public ReleaseEntity resolveDate(String teamKey, String rawDate, String existingId) {
         if (rawDate == null || rawDate.isBlank()) return null;
@@ -54,7 +64,7 @@ public class ReleaseService {
         ReleaseEntity r = new ReleaseEntity();
         recalculateFromAnchor(r, "promDate", date);
         entityManager.createNativeQuery("""
-            insert into releases(id, team_key, prom_date, psi_date, ops_start, ops_end, regress_start, regress_end,
+            insert into {h-schema}releases(id, team_key, prom_date, psi_date, ops_start, ops_end, regress_start, regress_end,
               ff_date, ff_inner_date, ift_start, ift_end, build_date, cr_date, dev_start, dev_end, st_date, created_at, updated_at)
             values (:id,:team,:prom,:psi,:opsStart,:opsEnd,:regressStart,:regressEnd,:ff,:ffInner,:iftStart,:iftEnd,:build,:cr,:devStart,:devEnd,:st,:today,:today)
             on conflict (team_key, prom_date) do nothing

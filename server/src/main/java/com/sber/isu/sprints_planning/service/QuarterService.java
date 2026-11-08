@@ -37,6 +37,14 @@ public class QuarterService {
             .toList();
     }
 
+    public List<QuarterDto> options(String teamKey, String search) {
+        LocalDate today = LocalDate.now(java.time.ZoneId.of("Europe/Moscow"));
+        LocalDate current = LocalDate.of(today.getYear(), ((today.getMonthValue() - 1) / 3) * 3 + 1, 1);
+        return quarterRepository.findOptions(teamKey, search == null ? "" : search.trim(),
+                current.minusMonths(3), current.plusMonths(6), org.springframework.data.domain.PageRequest.of(0, 100))
+            .stream().map(DtoMapper::toQuarterDto).toList();
+    }
+
     @Transactional
     public QuarterDto create(String teamKey, QuarterCreateRequest request) {
         LocalDate start = request.startDate();

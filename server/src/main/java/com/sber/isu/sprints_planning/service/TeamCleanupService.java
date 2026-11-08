@@ -1,14 +1,14 @@
 package com.sber.isu.sprints_planning.service;
 
 import java.util.List;
-import org.springframework.jdbc.core.JdbcTemplate;
+import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class TeamCleanupService {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final EntityManager entityManager;
 
     private static final List<String> TEAM_TABLES = List.of(
         "planning_backlog_items",
@@ -29,25 +29,24 @@ public class TeamCleanupService {
         "quarters"
     );
 
-    public TeamCleanupService(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    public TeamCleanupService(EntityManager entityManager) {
+        this.entityManager = entityManager;
     }
 
     @Transactional
     public void deleteTeamData(String teamKey) {
         for (String table : TEAM_TABLES) {
-            jdbcTemplate.update("DELETE FROM " + table + " WHERE team_key = ?", teamKey);
+            entityManager.createNativeQuery("DELETE FROM {h-schema}" + table + " WHERE team_key = :teamKey")
+                .setParameter("teamKey", teamKey).executeUpdate();
         }
     }
 
+    @Transactional(readOnly = true)
     public long countTeamData(String teamKey) {
         long total = 0;
         for (String table : TEAM_TABLES) {
-            total += jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM " + table + " WHERE team_key = ?",
-                Long.class,
-                teamKey
-            );
+            total += ((Number) entityManager.createNativeQuery("SELECT COUNT(*) FROM {h-schema}" + table + " WHERE team_key = :teamKey")
+                .setParameter("teamKey", teamKey).getSingleResult()).longValue();
         }
         return total;
     }

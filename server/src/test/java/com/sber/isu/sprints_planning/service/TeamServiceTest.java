@@ -14,7 +14,6 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 class TeamServiceTest {
@@ -58,7 +57,7 @@ class TeamServiceTest {
         private final List<String> deletedTeams = new ArrayList<>();
 
         private RecordingTeamCleanupService() {
-            super(new JdbcTemplate());
+            super(null);
         }
 
         @Override

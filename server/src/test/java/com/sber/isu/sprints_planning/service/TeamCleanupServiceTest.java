@@ -1,63 +1,57 @@
 package com.sber.isu.sprints_planning.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Query;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.mockito.Answers;
 
 class TeamCleanupServiceTest {
-
-    private RecordingJdbcTemplate jdbcTemplate;
+    private final List<String> statements = new ArrayList<>();
+    private final List<String> teams = new ArrayList<>();
     private TeamCleanupService service;
 
     @BeforeEach
     void setUp() {
-        jdbcTemplate = new RecordingJdbcTemplate();
-        service = new TeamCleanupService(jdbcTemplate);
+        EntityManager entityManager = mock(EntityManager.class);
+        when(entityManager.createNativeQuery(anyString())).thenAnswer(invocation -> {
+            statements.add(invocation.getArgument(0));
+            Query query = mock(Query.class, Answers.RETURNS_SELF);
+            when(query.setParameter(anyString(), org.mockito.ArgumentMatchers.any())).thenAnswer(parameter -> {
+                assertThat((String) parameter.getArgument(0)).isEqualTo("teamKey");
+                teams.add(parameter.getArgument(1));
+                return query;
+            });
+            when(query.getSingleResult()).thenReturn(1L);
+            return query;
+        });
+        service = new TeamCleanupService(entityManager);
     }
 
     @Test
-    void deleteTeamDataIncludesPlanningAndReferenceTables() {
+    void deleteTeamDataIncludesPlanningAndReferenceTablesAndUsesMappedSchema() {
         service.deleteTeamData("team-a");
-
-        assertThat(jdbcTemplate.updateSql).anyMatch(sql -> sql.contains("planning_backlog_items"));
-        assertThat(jdbcTemplate.updateSql).anyMatch(sql -> sql.contains("participant_role_values"));
-        assertThat(jdbcTemplate.updateSql).anyMatch(sql -> sql.contains("participant_stream_values"));
-        assertThat(jdbcTemplate.updateSql).anyMatch(sql -> sql.contains("task_customers"));
-        assertThat(jdbcTemplate.updateSql).anyMatch(sql -> sql.contains("task_streams"));
+        assertThat(statements).anyMatch(sql -> sql.contains("planning_backlog_items"));
+        assertThat(statements).anyMatch(sql -> sql.contains("participant_role_values"));
+        assertThat(statements).anyMatch(sql -> sql.contains("participant_stream_values"));
+        assertThat(statements).anyMatch(sql -> sql.contains("task_customers"));
+        assertThat(statements).anyMatch(sql -> sql.contains("task_streams"));
+        assertThat(statements).allSatisfy(sql -> assertThat(sql).startsWith("DELETE FROM {h-schema}").endsWith("WHERE team_key = :teamKey"));
+        assertThat(teams).hasSize(statements.size()).containsOnly("team-a");
     }
 
     @Test
-    void countTeamDataAccountsForPlanningAndReferenceTables() {
+    void countTeamDataUsesTheSameSchemaAndScopeAsDeletion() {
         long total = service.countTeamData("team-a");
-
-        assertThat(jdbcTemplate.countSql).anyMatch(sql -> sql.contains("planning_backlog_items"));
-        assertThat(jdbcTemplate.countSql).anyMatch(sql -> sql.contains("participant_role_values"));
-        assertThat(jdbcTemplate.countSql).anyMatch(sql -> sql.contains("participant_stream_values"));
-        assertThat(total).isEqualTo(jdbcTemplate.countSql.size());
-    }
-
-    private static final class RecordingJdbcTemplate extends JdbcTemplate {
-
-        private final List<String> updateSql = new ArrayList<>();
-        private final List<String> countSql = new ArrayList<>();
-
-        @Override
-        public int update(String sql, Object... args) {
-            updateSql.add(sql);
-            return 1;
-        }
-
-        @Override
-        public <T> T queryForObject(String sql, Class<T> requiredType, Object... args) {
-            countSql.add(sql);
-            if (Long.class.equals(requiredType)) {
-                return requiredType.cast(Long.valueOf(1));
-            }
-            return null;
-        }
+        assertThat(total).isEqualTo(statements.size());
+        assertThat(statements).allSatisfy(sql -> assertThat(sql).startsWith("SELECT COUNT(*) FROM {h-schema}").endsWith("WHERE team_key = :teamKey"));
+        assertThat(teams).hasSize(statements.size()).containsOnly("team-a");
     }
 }

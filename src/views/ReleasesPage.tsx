@@ -103,7 +103,7 @@ function InlineDate({
   );
 }
 
-export default function ReleasesPage() {
+function ReleasesPage() {
   const { data: releasesRaw = [] } = useGetReleasesQuery();
   const [addRelease, { isLoading: adding }] = useAddReleaseMutation();
   const [updateRelease] = useUpdateReleaseMutation();
@@ -440,3 +440,5 @@ export default function ReleasesPage() {
     </Paper>
   );
 }
+
+export default React.memo(ReleasesPage);

@@ -99,7 +99,7 @@ function SortableRow({
   };
 
   return (
-    <TableRow ref={setNodeRef} style={style} hover>
+    <TableRow ref={setNodeRef} style={style} hover data-testid={`participant-${participant.id}`}>
       <TableCell width={44}>
         <span
           {...attributes}
@@ -116,18 +116,12 @@ function SortableRow({
   );
 }
 
-export default function TeamPage() {
-  const { data: participants = [] } = useActiveParticipantsQuery();
-  const { data: filters } = useGetFiltersQuery();
-  const [addParticipant] = useAddParticipantMutation();
-  const [updateParticipant] = useUpdateParticipantMutation();
-  const [deleteParticipant] = useDeleteParticipantMutation();
-  const [reorderParticipants] = useReorderParticipantsMutation();
-  const dispatch = useAppDispatch();
-  const { filterRoles, filterRates, filterUserStreams } = useAppSelector(
-    (s) => s.ui.team
-  );
+const EMPTY_OPTIONS: string[] = [];
 
+type ParticipantOptions = { allRoleOptions: string[]; allUserStreamOptions: string[]; rateOptions: string[] };
+
+const ParticipantCreationForm = React.memo(function ParticipantCreationForm({ allRoleOptions, allUserStreamOptions, rateOptions }: ParticipantOptions) {
+  const [addParticipant] = useAddParticipantMutation();
   // Добавление
   const [newName, setNewName] = React.useState("");
   const [newRole, setNewRole] = React.useState<string>("");
@@ -139,8 +133,110 @@ export default function TeamPage() {
   const [newUserStreamInput, setNewUserStreamInput] = React.useState<string>("");
   const [newJiraLogin, setNewJiraLogin] = React.useState("");
 
-  // Редактирование
-  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const handleAdd = async () => {
+    const roleValue = newRoleInput?.trim() || newRole?.trim();
+    const rateStr = (newRateInput?.trim() || newRate?.trim() || "").replace(
+      ",",
+      "."
+    );
+    const rate = parseFloat(rateStr);
+    if (!newName.trim() || !roleValue || isNaN(rate)) return;
+    if (rate < 0 || rate > 1) return;
+
+    const userStreams = normalizeUserStreams([
+      ...newUserStreams,
+      newUserStreamInput,
+    ]);
+
+    await addParticipant({
+      fullName: newName.trim(),
+      role: roleValue,
+      rate,
+      userStreams,
+      jiraLogin: newJiraLogin.trim() || null,
+    }).unwrap();
+    setNewName("");
+    setNewRole("");
+    setNewRoleInput("");
+    setNewRate("1");
+    setNewRateInput("");
+    setNewUserStreams([]);
+    setNewUserStreamInput("");
+    setNewJiraLogin("");
+  };
+
+  return (
+    <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 2 }}>
+        <TextField
+          label="ФИО"
+          size="small"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          sx={{ minWidth: 240 }}
+        />
+        <Autocomplete
+          size="small"
+          freeSolo
+          options={allRoleOptions}
+          value={newRole}
+          inputValue={newRoleInput}
+          onChange={(_, val) => setNewRole((val as string) ?? "")}
+          onInputChange={(_, val) => setNewRoleInput(val)}
+          renderInput={(params) => <TextField {...params} label="Роль" />}
+          sx={{ minWidth: 220 }}
+        />
+        <Autocomplete
+          multiple
+          size="small"
+          freeSolo
+          options={allUserStreamOptions}
+          value={newUserStreams}
+          inputValue={newUserStreamInput}
+          onChange={(_, val) => setNewUserStreams(val as string[])}
+          onInputChange={(_, val) => setNewUserStreamInput(val)}
+          renderInput={(params) => <TextField {...params} label="Стрим" />}
+          sx={{ minWidth: 240 }}
+        />
+        <Autocomplete
+          size="small"
+          freeSolo
+          options={rateOptions}
+          value={newRate}
+          inputValue={newRateInput}
+          onChange={(_, val) => setNewRate((val as string) ?? "")}
+          onInputChange={(_, val) => setNewRateInput(val)}
+          renderInput={(params) => (
+            <TextField {...params} label="Ставка (0..1)" />
+          )}
+          sx={{ minWidth: 180 }}
+        />
+        <TextField
+          label="Jira login"
+          size="small"
+          value={newJiraLogin}
+          onChange={(e) => setNewJiraLogin(e.target.value)}
+          sx={{ minWidth: 220 }}
+        />
+        <Button
+          variant="contained"
+          onClick={handleAdd}
+          sx={{ whiteSpace: "nowrap" }}
+        >
+          Добавить
+        </Button>
+      </Stack>
+  );
+});
+
+type ParticipantTableRowProps = ParticipantOptions & {
+  p: Participant;
+  isEditing: boolean;
+  onEditingChange: (id: string | null) => void;
+  updateParticipant: ReturnType<typeof useUpdateParticipantMutation>[0];
+  removeParticipant: (id: string) => Promise<void>;
+};
+const ParticipantTableRow = React.memo(function ParticipantTableRow({ p, isEditing, onEditingChange, updateParticipant, removeParticipant,
+  allRoleOptions, allUserStreamOptions, rateOptions }: ParticipantTableRowProps) {
   const [editName, setEditName] = React.useState("");
   const [editRole, setEditRole] = React.useState<string>("");
   const [editRoleInput, setEditRoleInput] = React.useState<string>("");
@@ -151,6 +247,205 @@ export default function TeamPage() {
   const [editUserStreamInput, setEditUserStreamInput] = React.useState<string>("");
   const [editJiraLogin, setEditJiraLogin] = React.useState("");
 
+  const startEdit = (p: Participant) => {
+    onEditingChange(p.id);
+    setEditName(p.fullName);
+    setEditRole(p.role);
+    setEditRoleInput(p.role);
+    setEditRate(String(Number(p.rate.toFixed(2))));
+    setEditRateInput(String(Number(p.rate.toFixed(2))));
+    setEditUserStreams(p.userStreams || []);
+    setEditUserStreamInput("");
+    setEditJiraLogin(p.jiraLogin || "");
+  };
+
+  const cancelEdit = () => {
+    onEditingChange(null);
+    setEditName("");
+    setEditRole("");
+    setEditRoleInput("");
+    setEditRate("1");
+    setEditRateInput("");
+    setEditUserStreams([]);
+    setEditUserStreamInput("");
+    setEditJiraLogin("");
+  };
+
+  const saveEdit = async () => {
+    if (!isEditing) return;
+    const roleValue = editRoleInput?.trim() || editRole?.trim();
+    const rateStr = (editRateInput?.trim() || editRate?.trim() || "").replace(
+      ",",
+      "."
+    );
+    const rate = parseFloat(rateStr);
+    if (!editName.trim() || !roleValue || isNaN(rate)) return;
+    if (rate < 0 || rate > 1) return;
+
+    const userStreams = normalizeUserStreams([
+      ...editUserStreams,
+      editUserStreamInput,
+    ]);
+
+    await updateParticipant({
+      id: p.id,
+      fullName: editName.trim(),
+      role: roleValue,
+      rate,
+      userStreams,
+      jiraLogin: editJiraLogin.trim() || null,
+    }).unwrap();
+    cancelEdit();
+  };
+
+
+  const userStreams = p.userStreams || [];
+  return (
+    <SortableRow key={p.id} participant={p}>
+      {/* ФИО */}
+      <TableCell sx={{ minWidth: 260 }}>
+        {!isEditing ? (
+          <Typography>{p.fullName}</Typography>
+        ) : (
+          <TextField
+            size="small"
+            fullWidth
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            label="ФИО"
+          />
+        )}
+      </TableCell>
+
+      {/* Роль */}
+      <TableCell sx={{ minWidth: 220 }}>
+        {!isEditing ? (
+          <Chip label={p.role || "—"} size="small" />
+        ) : (
+          <Autocomplete
+            size="small"
+            freeSolo
+            options={allRoleOptions}
+            value={editRole}
+            inputValue={editRoleInput}
+            onChange={(_, val) => setEditRole((val as string) ?? "")}
+            onInputChange={(_, val) => setEditRoleInput(val)}
+            renderInput={(params) => <TextField {...params} label="Роль" />}
+          />
+        )}
+      </TableCell>
+
+      {/* Стрим пользователя */}
+      <TableCell sx={{ minWidth: 240 }}>
+        {!isEditing ? (
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            {userStreams.length ? (
+              userStreams.map((stream) => (
+                <Chip key={stream} label={stream} size="small" />
+              ))
+            ) : (
+              <Typography color="text.secondary">—</Typography>
+            )}
+          </Stack>
+        ) : (
+          <Autocomplete
+            multiple
+            freeSolo
+            size="small"
+            options={allUserStreamOptions}
+            value={editUserStreams}
+            inputValue={editUserStreamInput}
+            onChange={(_, val) => setEditUserStreams(val as string[])}
+            onInputChange={(_, val) => setEditUserStreamInput(val)}
+            renderInput={(params) => <TextField {...params} label="Стрим" />}
+          />
+        )}
+      </TableCell>
+
+      {/* Ставка 0..1 (Autocomplete freeSolo как у роли) */}
+      <TableCell sx={{ minWidth: 180 }}>
+        {!isEditing ? (
+          <Typography>{p.rate.toFixed(2)}</Typography>
+        ) : (
+          <Autocomplete
+            size="small"
+            freeSolo
+            options={rateOptions}
+            value={editRate}
+            inputValue={editRateInput}
+            onChange={(_, val) => setEditRate((val as string) ?? "")}
+            onInputChange={(_, val) => setEditRateInput(val)}
+            renderInput={(params) => (
+              <TextField {...params} label="Ставка (0..1)" />
+            )}
+          />
+        )}
+      </TableCell>
+
+      <TableCell sx={{ minWidth: 220 }}>
+        {!isEditing ? (
+          <Typography color={p.jiraLogin ? "text.primary" : "text.secondary"}>
+            {p.jiraLogin || "—"}
+          </Typography>
+        ) : (
+          <TextField
+            size="small"
+            fullWidth
+            value={editJiraLogin}
+            onChange={(e) => setEditJiraLogin(e.target.value)}
+            label="Jira login"
+          />
+        )}
+      </TableCell>
+
+      {/* Действия */}
+      <TableCell align="right" width={160}>
+        {!isEditing ? (
+          <Stack direction="row" spacing={1} justifyContent="flex-end">
+            <IconButton aria-label="edit" onClick={() => startEdit(p)}>
+              <Edit />
+            </IconButton>
+            <IconButton
+              aria-label="Деактивировать участника"
+              title="Деактивировать участника"
+              onClick={() => removeParticipant(p.id)}
+            >
+              <Delete />
+            </IconButton>
+          </Stack>
+        ) : (
+          <Stack direction="row" spacing={1} justifyContent="flex-end">
+            <IconButton color="primary" aria-label="save" onClick={saveEdit}>
+              <Save />
+            </IconButton>
+            <IconButton
+              color="inherit"
+              aria-label="cancel"
+              onClick={cancelEdit}
+            >
+              <Close />
+            </IconButton>
+          </Stack>
+        )}
+      </TableCell>
+    </SortableRow>
+  );
+
+});
+
+function TeamPage() {
+  const { data: participants = [] } = useActiveParticipantsQuery();
+  const { data: filters } = useGetFiltersQuery();
+  const [updateParticipant] = useUpdateParticipantMutation();
+  const [deleteParticipant] = useDeleteParticipantMutation();
+  const [reorderParticipants] = useReorderParticipantsMutation();
+  const dispatch = useAppDispatch();
+  const { filterRoles, filterRates, filterUserStreams } = useAppSelector(
+    (s) => s.ui.team
+  );
+
+  // Редактирование
+  const [editingId, setEditingId] = React.useState<string | null>(null);
   const allRoleOptions = React.useMemo(
     () =>
       Array.from(new Set([...PRESET_ROLES, ...(filters?.participantRoles || []), ...uniqueRolesFrom(participants)])),
@@ -228,12 +523,14 @@ export default function TeamPage() {
     return list;
   }, [participants, filterRoles, filterRates, filterUserStreams]);
 
+  const sortableParticipantIds = React.useMemo(() => filtered.map(p => p.id), [filtered]);
+
   // DnD
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
-  const onDragEnd = async (event: DragEndEvent) => {
+  const onDragEnd = React.useCallback(async (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
@@ -277,235 +574,18 @@ export default function TeamPage() {
       console.error("Reorder failed", e);
       patch.undo?.();
     }
-  };
+  }, [filtered, participants, dispatch, reorderParticipants]);
 
   // CRUD
-  const handleAdd = async () => {
-    const roleValue = newRoleInput?.trim() || newRole?.trim();
-    const rateStr = (newRateInput?.trim() || newRate?.trim() || "").replace(
-      ",",
-      "."
-    );
-    const rate = parseFloat(rateStr);
-    if (!newName.trim() || !roleValue || isNaN(rate)) return;
-    if (rate < 0 || rate > 1) return;
-
-    const userStreams = normalizeUserStreams([
-      ...newUserStreams,
-      newUserStreamInput,
-    ]);
-
-    await addParticipant({
-      fullName: newName.trim(),
-      role: roleValue,
-      rate,
-      userStreams,
-      jiraLogin: newJiraLogin.trim() || null,
-    }).unwrap();
-    setNewName("");
-    setNewRole("");
-    setNewRoleInput("");
-    setNewRate("1");
-    setNewRateInput("");
-    setNewUserStreams([]);
-    setNewUserStreamInput("");
-    setNewJiraLogin("");
-  };
-
-  const startEdit = (p: Participant) => {
-    setEditingId(p.id);
-    setEditName(p.fullName);
-    setEditRole(p.role);
-    setEditRoleInput(p.role);
-    setEditRate(String(Number(p.rate.toFixed(2))));
-    setEditRateInput(String(Number(p.rate.toFixed(2))));
-    setEditUserStreams(p.userStreams || []);
-    setEditUserStreamInput("");
-    setEditJiraLogin(p.jiraLogin || "");
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditName("");
-    setEditRole("");
-    setEditRoleInput("");
-    setEditRate("1");
-    setEditRateInput("");
-    setEditUserStreams([]);
-    setEditUserStreamInput("");
-    setEditJiraLogin("");
-  };
-
-  const saveEdit = async () => {
-    if (!editingId) return;
-    const roleValue = editRoleInput?.trim() || editRole?.trim();
-    const rateStr = (editRateInput?.trim() || editRate?.trim() || "").replace(
-      ",",
-      "."
-    );
-    const rate = parseFloat(rateStr);
-    if (!editName.trim() || !roleValue || isNaN(rate)) return;
-    if (rate < 0 || rate > 1) return;
-
-    const userStreams = normalizeUserStreams([
-      ...editUserStreams,
-      editUserStreamInput,
-    ]);
-
-    await updateParticipant({
-      id: editingId,
-      fullName: editName.trim(),
-      role: roleValue,
-      rate,
-      userStreams,
-      jiraLogin: editJiraLogin.trim() || null,
-    }).unwrap();
-    cancelEdit();
-  };
-
-  const removeParticipant = async (id: string) => {
+  const removeParticipant = React.useCallback(async (id: string) => {
     if (!window.confirm("Деактивировать участника? Он останется в задачах, но больше не будет учитываться в нагрузке.")) return;
     try {
       await deleteParticipant({ id }).unwrap();
     } catch (e) {
       console.error(e);
     }
-  };
+  }, [deleteParticipant]);
 
-  const renderRow = (p: Participant) => {
-    const isEditing = editingId === p.id;
-    const userStreams = p.userStreams || [];
-    return (
-      <SortableRow key={p.id} participant={p}>
-        {/* ФИО */}
-        <TableCell sx={{ minWidth: 260 }}>
-          {!isEditing ? (
-            <Typography>{p.fullName}</Typography>
-          ) : (
-            <TextField
-              size="small"
-              fullWidth
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              label="ФИО"
-            />
-          )}
-        </TableCell>
-
-        {/* Роль */}
-        <TableCell sx={{ minWidth: 220 }}>
-          {!isEditing ? (
-            <Chip label={p.role || "—"} size="small" />
-          ) : (
-            <Autocomplete
-              size="small"
-              freeSolo
-              options={allRoleOptions}
-              value={editRole}
-              inputValue={editRoleInput}
-              onChange={(_, val) => setEditRole((val as string) ?? "")}
-              onInputChange={(_, val) => setEditRoleInput(val)}
-              renderInput={(params) => <TextField {...params} label="Роль" />}
-            />
-          )}
-        </TableCell>
-
-        {/* Стрим пользователя */}
-        <TableCell sx={{ minWidth: 240 }}>
-          {!isEditing ? (
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-              {userStreams.length ? (
-                userStreams.map((stream) => (
-                  <Chip key={stream} label={stream} size="small" />
-                ))
-              ) : (
-                <Typography color="text.secondary">—</Typography>
-              )}
-            </Stack>
-          ) : (
-            <Autocomplete
-              multiple
-              freeSolo
-              size="small"
-              options={allUserStreamOptions}
-              value={editUserStreams}
-              inputValue={editUserStreamInput}
-              onChange={(_, val) => setEditUserStreams(val as string[])}
-              onInputChange={(_, val) => setEditUserStreamInput(val)}
-              renderInput={(params) => <TextField {...params} label="Стрим" />}
-            />
-          )}
-        </TableCell>
-
-        {/* Ставка 0..1 (Autocomplete freeSolo как у роли) */}
-        <TableCell sx={{ minWidth: 180 }}>
-          {!isEditing ? (
-            <Typography>{p.rate.toFixed(2)}</Typography>
-          ) : (
-            <Autocomplete
-              size="small"
-              freeSolo
-              options={rateOptions}
-              value={editRate}
-              inputValue={editRateInput}
-              onChange={(_, val) => setEditRate((val as string) ?? "")}
-              onInputChange={(_, val) => setEditRateInput(val)}
-              renderInput={(params) => (
-                <TextField {...params} label="Ставка (0..1)" />
-              )}
-            />
-          )}
-        </TableCell>
-
-        <TableCell sx={{ minWidth: 220 }}>
-          {!isEditing ? (
-            <Typography color={p.jiraLogin ? "text.primary" : "text.secondary"}>
-              {p.jiraLogin || "—"}
-            </Typography>
-          ) : (
-            <TextField
-              size="small"
-              fullWidth
-              value={editJiraLogin}
-              onChange={(e) => setEditJiraLogin(e.target.value)}
-              label="Jira login"
-            />
-          )}
-        </TableCell>
-
-        {/* Действия */}
-        <TableCell align="right" width={160}>
-          {!isEditing ? (
-            <Stack direction="row" spacing={1} justifyContent="flex-end">
-              <IconButton aria-label="edit" onClick={() => startEdit(p)}>
-                <Edit />
-              </IconButton>
-              <IconButton
-                aria-label="Деактивировать участника"
-                title="Деактивировать участника"
-                onClick={() => removeParticipant(p.id)}
-              >
-                <Delete />
-              </IconButton>
-            </Stack>
-          ) : (
-            <Stack direction="row" spacing={1} justifyContent="flex-end">
-              <IconButton color="primary" aria-label="save" onClick={saveEdit}>
-                <Save />
-              </IconButton>
-              <IconButton
-                color="inherit"
-                aria-label="cancel"
-                onClick={cancelEdit}
-              >
-                <Close />
-              </IconButton>
-            </Stack>
-          )}
-        </TableCell>
-      </SortableRow>
-    );
-  };
 
   return (
     <Paper elevation={0} sx={{ p: 2 }}>
@@ -514,65 +594,7 @@ export default function TeamPage() {
       </Typography>
 
       {/* Добавление */}
-      <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 2 }}>
-        <TextField
-          label="ФИО"
-          size="small"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          sx={{ minWidth: 240 }}
-        />
-        <Autocomplete
-          size="small"
-          freeSolo
-          options={allRoleOptions}
-          value={newRole}
-          inputValue={newRoleInput}
-          onChange={(_, val) => setNewRole((val as string) ?? "")}
-          onInputChange={(_, val) => setNewRoleInput(val)}
-          renderInput={(params) => <TextField {...params} label="Роль" />}
-          sx={{ minWidth: 220 }}
-        />
-        <Autocomplete
-          multiple
-          size="small"
-          freeSolo
-          options={allUserStreamOptions}
-          value={newUserStreams}
-          inputValue={newUserStreamInput}
-          onChange={(_, val) => setNewUserStreams(val as string[])}
-          onInputChange={(_, val) => setNewUserStreamInput(val)}
-          renderInput={(params) => <TextField {...params} label="Стрим" />}
-          sx={{ minWidth: 240 }}
-        />
-        <Autocomplete
-          size="small"
-          freeSolo
-          options={rateOptions}
-          value={newRate}
-          inputValue={newRateInput}
-          onChange={(_, val) => setNewRate((val as string) ?? "")}
-          onInputChange={(_, val) => setNewRateInput(val)}
-          renderInput={(params) => (
-            <TextField {...params} label="Ставка (0..1)" />
-          )}
-          sx={{ minWidth: 180 }}
-        />
-        <TextField
-          label="Jira login"
-          size="small"
-          value={newJiraLogin}
-          onChange={(e) => setNewJiraLogin(e.target.value)}
-          sx={{ minWidth: 220 }}
-        />
-        <Button
-          variant="contained"
-          onClick={handleAdd}
-          sx={{ whiteSpace: "nowrap" }}
-        >
-          Добавить
-        </Button>
-      </Stack>
+      <ParticipantCreationForm allRoleOptions={allRoleOptions} allUserStreamOptions={allUserStreamOptions} rateOptions={rateOptions} />
 
       {/* Фильтры */}
       <FiltersPanel
@@ -627,7 +649,7 @@ export default function TeamPage() {
           onDragEnd={onDragEnd}
         >
           <SortableContext
-            items={filtered.map((p) => p.id)}
+            items={sortableParticipantIds}
             strategy={verticalListSortingStrategy}
           >
             <Table size="small">
@@ -645,7 +667,11 @@ export default function TeamPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filtered.map((p) => renderRow(p))}
+                {filtered.map(p => <ParticipantTableRow key={p.id} p={p} isEditing={editingId === p.id}
+                  onEditingChange={setEditingId} updateParticipant={updateParticipant} removeParticipant={removeParticipant}
+                  allRoleOptions={editingId === p.id ? allRoleOptions : EMPTY_OPTIONS}
+                  allUserStreamOptions={editingId === p.id ? allUserStreamOptions : EMPTY_OPTIONS}
+                  rateOptions={editingId === p.id ? rateOptions : EMPTY_OPTIONS} />)}
                 {!filtered.length && (
                   <TableRow>
                     <TableCell colSpan={7}>
@@ -676,3 +702,5 @@ export default function TeamPage() {
     </Paper>
   );
 }
+
+export default React.memo(TeamPage);

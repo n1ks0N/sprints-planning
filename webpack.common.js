@@ -10,6 +10,8 @@ module.exports = {
     rules: [{ test: /\.tsx?$/, use: 'ts-loader', exclude: /node_modules/ }],
   },
   plugins: [
+    // Russian is imported explicitly; avoid bundling Moment's entire locale directory.
+    new webpack.IgnorePlugin({ resourceRegExp: /^\.\/locale$/, contextRegExp: /moment$/ }),
     new webpack.DefinePlugin({
       'process.env.API_URL': JSON.stringify(API_URL),
     }),

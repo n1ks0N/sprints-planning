@@ -44,6 +44,8 @@ public class PlanningWorkbenchController {
         @RequestParam(value = "quarterIds", required = false) List<String> quarterIds,
         @RequestParam(value = "priority", required = false) String priority,
         @RequestParam(value = "releaseDateId", required = false) String releaseDateId,
+        @RequestParam(value = "releaseDateIds", required = false) String releaseDateIds,
+        @RequestParam(value = "releasePromDates", required = false) String releasePromDates,
         @RequestParam(value = "releasePromDate", required = false)
         @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate releasePromDate,
         @RequestParam(value = "streams", required = false) List<String> streams,
@@ -61,7 +63,9 @@ public class PlanningWorkbenchController {
             size,
             quarterIds,
             priority,
-            releasePromDate == null ? releaseDateId : "date:" + releasePromDate,
+            com.sber.isu.sprints_planning.service.ReleaseSelection.parse(
+                java.util.stream.Stream.of(releaseDateId, releaseDateIds).filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.joining(",")),
+                java.util.stream.Stream.of(releasePromDate == null ? null : releasePromDate.toString(), releasePromDates).filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.joining(","))).encode(),
             streams,
             customers,
             search,

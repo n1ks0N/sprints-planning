@@ -1,4 +1,3 @@
-import React from "react";
 import { FormControl, InputLabel, MenuItem, Select, SelectChangeEvent } from "@mui/material";
 import type { TeamOption } from "../teams";
 

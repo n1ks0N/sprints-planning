@@ -2,20 +2,15 @@ import * as React from "react";
 import { Autocomplete, TextField } from "@mui/material";
 import type { FilterOption } from "./filters/FilterAutocomplete";
 
-export const isReleaseDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
-export function parseReleaseDate(raw: string): string | null {
-  const value = raw.trim();
-  const ru = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(value);
-  const iso = ru ? `${ru[3]}-${ru[2]}-${ru[1]}` : value;
-  if (!isReleaseDate(iso)) return null;
-  const [year, month, day] = iso.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return year >= 1000 && date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? iso : null;
-}
-export const formatReleaseDate = (value: string) => isReleaseDate(value) ? value.split("-").reverse().join(".") : value;
+import { parseReleaseDate, formatReleaseDate } from "../utils/releaseDate";
+export { isReleaseDate, parseReleaseDate, formatReleaseDate } from "../utils/releaseDate";
 
 /** Suggested dates never restrict manual input. Commit once, after validation. */
-export default function ReleaseDateField({ label, value, options, onChange }: {
+export default function ReleaseDateField({ label, value, options, onChange, compact = false, onOpen, onClose, loading = false }: {
+  compact?: boolean;
+  onOpen?: () => void;
+  onClose?: () => void;
+  loading?: boolean;
   label: string; value: string; options: FilterOption[]; onChange: (value: string) => void;
 }) {
   const selected = options.find(option => option.value === value || parseReleaseDate(option.label) === value);
@@ -37,7 +32,7 @@ export default function ReleaseDateField({ label, value, options, onChange }: {
     setError(false); lastCommitted.current = formatReleaseDate(date); setInput(lastCommitted.current); onChange(date);
   };
   return <Autocomplete<FilterOption, false, false, true>
-    freeSolo size="small" options={options} inputValue={input}
+    freeSolo size="small" options={options} inputValue={input} onOpen={onOpen} onClose={onClose} loading={loading}
     onKeyDown={event => {
       if (event.key === "Enter") { (event as any).defaultMuiPrevented = true; event.preventDefault(); commit(input); }
       if (event.key === "Escape") { setInput(display); setError(false); }
@@ -51,7 +46,7 @@ export default function ReleaseDateField({ label, value, options, onChange }: {
       else if (next) { setInput(next.label); lastCommitted.current = next.label; setError(false); onChange(parseReleaseDate(next.label) ?? next.value); }
       else commit("");
     }}
-    sx={{ minWidth: 180, maxWidth: 260, flex: "1 1 180px" }}
+    sx={compact ? { width: 140, flex: "0 0 140px" } : { minWidth: 180, maxWidth: 260, flex: "1 1 180px" }}
     renderInput={params => <TextField {...params} label={label} placeholder="ДД.ММ.ГГГГ"
       error={error} helperText={error ? "Введите существующую дату: ДД.ММ.ГГГГ" : undefined}
       onBlur={() => commit(input)} />}
