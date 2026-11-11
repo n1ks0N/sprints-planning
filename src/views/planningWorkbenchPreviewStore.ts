@@ -95,3 +95,8 @@ export const clearPlanningWorkbenchPreview = () => {
   removeSessionValue(PREVIEW_STORAGE_KEY);
   removeSessionValue(REVIEW_STATE_STORAGE_KEY);
 };
+
+export const invalidatePlanningWorkbenchSource = (taskId: string) => {
+  const preview = consumePlanningWorkbenchPreview() ?? loadPlanningWorkbenchReviewState()?.preview;
+  if (preview?.items.some(item => item.sourceTaskId === taskId)) clearPlanningWorkbenchPreview();
+};

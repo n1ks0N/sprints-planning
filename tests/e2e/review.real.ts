@@ -144,3 +144,44 @@ test("linked apply distinguishes omitted metadata from explicit clearing", async
     }
   } finally { await clean(request, key); }
 });
+
+test("deleting a backlog source clears cached planning selection and preserves other drafts", async ({ page, request }) => {
+  const key = await team(request);
+  try {
+    const q = await post(request, `/${key}/quarters`, { year: 2032, number: 1, name: "Q1 2032", startDate: "2032-01-01", endDate: "2032-03-31" });
+    const source = await post(request, `/${key}/tasks`, { title: "Связанная задача", priority: 2, workspace: "BACKLOG", status: "backlog", participantIds: [], initialQuarterId: q.id });
+    const independent = await post(request, `/${key}/planning-workbench/items`, { title: "Самостоятельная заготовка", priority: 2, customers: [], streams: [], planningDemands: [], initialQuarterId: q.id });
+    await page.addInitScript(({ quarterId }) => {
+      localStorage.setItem("sprints-planning-user-name", "E2E User");
+      localStorage.setItem("uiState_v1", JSON.stringify({ todo: { selectedQuarterIds: [quarterId] } }));
+    }, { quarterId: q.id });
+    const planningReads: string[] = [];
+    page.on("request", r => {
+      if (r.method() === "GET" && new URL(r.url()).pathname.endsWith("/planning-workbench/backlog")) planningReads.push(r.url());
+    });
+    await page.goto(`/#/${key}/backlog`);
+    const transferred = page.waitForResponse(r => r.url().endsWith(`/planning-workbench/from-task/${source.id}`) && r.ok());
+    await page.getByTestId(`transfer-to-planning-${source.id}`).click();
+    const linked = await (await transferred).json();
+    await expect(page.getByTestId(`transfer-to-planning-${source.id}`)).toHaveAccessibleName(/Убрать из планирования/);
+    await page.getByRole("banner").getByRole("link", { name: "Планирование", exact: true }).click();
+    await expect(page.getByTestId(`planning-item-${independent.id}`)).toBeVisible();
+    await page.getByTestId("planning-move-all-to-plan").click();
+    await expect(page.getByTestId("planning-selected-count")).toHaveText("2");
+    const initialReads = planningReads.length;
+    await page.getByRole("banner").getByRole("link", { name: "Бэклог", exact: true }).click();
+    page.once("dialog", dialog => dialog.accept());
+    const deleted = page.waitForResponse(r => r.url().endsWith("/tasks/delete") && r.ok());
+    await page.getByTestId(`remove-task-${source.id}`).click();
+    await deleted;
+    await expect(page.getByTestId(`backlog-task-${source.id}`)).toHaveCount(0);
+    await page.getByRole("banner").getByRole("link", { name: "Планирование", exact: true }).click();
+    await expect(page.getByTestId("planning-selected-count")).toHaveText("1");
+    await expect(page.getByTestId(`planning-item-${linked.id}`)).toHaveCount(0);
+    await expect(page.getByTestId(`planning-item-${independent.id}`)).toBeVisible();
+    expect(planningReads).toHaveLength(initialReads + 1);
+    const response = await request.get(`${api}/${key}/planning-workbench/backlog?size=20`);
+    expect(response.ok()).toBeTruthy();
+    expect((await response.json()).content.map((item: { id: string }) => item.id)).toEqual([independent.id]);
+  } finally { await clean(request, key); }
+});

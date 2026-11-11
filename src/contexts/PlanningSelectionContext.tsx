@@ -1,5 +1,8 @@
 import * as React from "react";
 import type { PlanningWorkbenchItem } from "../types";
+import { api } from "../app/api";
+import { planningCacheListener, taskMutationFulfilled } from "../app/planningCacheListener";
+import { invalidatePlanningWorkbenchSource } from "../views/planningWorkbenchPreviewStore";
 
 type PlanningSelection = {
   selectedItemIds: string[];
@@ -20,7 +23,8 @@ type SelectionAction =
   | { type: "cache"; value: React.SetStateAction<Map<string, PlanningWorkbenchItem>> }
   | { type: "add"; item: PlanningWorkbenchItem }
   | { type: "remove"; ids: string[] }
-  | { type: "removeSource"; taskId: string };
+  | { type: "removeSource"; taskId: string }
+  | { type: "deleteSource"; taskId: string };
 
 function removeItems(state: SelectionState, ids: string[]): SelectionState {
   if (!ids.length) return state;
@@ -52,6 +56,8 @@ function selectionReducer(state: SelectionState, action: SelectionAction): Selec
     }
     case "remove": return removeItems(state, action.ids);
     case "removeSource": return removeItems(state, state.selectedItemIds.filter(id => state.itemCacheById.get(id)?.sourceTaskId === action.taskId));
+    case "deleteSource": return removeItems(state, [...state.itemCacheById.values()]
+      .filter(item => item.sourceTaskId === action.taskId).map(item => item.id));
   }
 }
 
@@ -60,6 +66,15 @@ export function PlanningSelectionProvider({ children }: { children: React.ReactN
   const [{ selectedItemIds, itemCacheById }, dispatch] = React.useReducer(selectionReducer, undefined, () => ({
     selectedItemIds: [], itemCacheById: new Map<string, PlanningWorkbenchItem>(),
   }));
+  React.useEffect(() => planningCacheListener.startListening({
+    matcher: taskMutationFulfilled,
+    effect: action => {
+      const args = action.meta.arg.originalArgs;
+      const taskId = "id" in args ? args.id : args.taskId;
+      invalidatePlanningWorkbenchSource(taskId);
+      if (api.endpoints.deleteTask.matchFulfilled(action)) dispatch({ type: "deleteSource", taskId });
+    },
+  }), []);
   const setSelectedItemIds = React.useCallback((value: React.SetStateAction<string[]>) => dispatch({ type: "select", value }), []);
   const setItemCacheById = React.useCallback((value: React.SetStateAction<Map<string, PlanningWorkbenchItem>>) => dispatch({ type: "cache", value }), []);
   const addTransferredItem = React.useCallback((item: PlanningWorkbenchItem) => dispatch({ type: "add", item }), []);

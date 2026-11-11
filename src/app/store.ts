@@ -4,6 +4,7 @@ import { api } from "./api";
 import uiReducer, { persistUIState } from "./uiSlice";
 import undoReducer from "./undoSlice";
 import teamReducer from "./teamSlice";
+import { planningCacheListener } from "./planningCacheListener";
 
 export const store = configureStore({
   reducer: {
@@ -12,7 +13,7 @@ export const store = configureStore({
     undo: undoReducer,
     team: teamReducer,
   },
-  middleware: (gDM) => gDM().concat(api.middleware, (storeApi: any) => (next: any) => (action: any) => {
+  middleware: (gDM) => gDM().prepend(planningCacheListener.middleware).concat(api.middleware, (storeApi: any) => (next: any) => (action: any) => {
     const previousTeam = storeApi.getState().team.currentTeam;
     const result = next(action);
     if (action.type === "team/setCurrentTeam" && previousTeam !== storeApi.getState().team.currentTeam) storeApi.dispatch(api.util.resetApiState());

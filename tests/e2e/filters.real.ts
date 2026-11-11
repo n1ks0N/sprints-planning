@@ -323,9 +323,11 @@ test.describe("Shared filters and creation preferences against PostgreSQL", () =
       await page.getByRole("textbox", { name: "ФИО", exact: true }).fill("Созданный участник");
       await page.getByRole("combobox", { name: "Роль", exact: true }).fill("DEV");
       await page.keyboard.press("Tab");
+      const creationResponse = page.waitForResponse(response => response.request().method() === "POST"
+        && new URL(response.url()).pathname.endsWith(`/${team}/participants`) && response.ok());
       await page.getByRole("button", { name: "Добавить", exact: true }).click();
+      const created = await (await creationResponse).json();
       await expect(page.getByText("Созданный участник", { exact: true })).toBeVisible();
-      const created = (await get(request, `/${team}/participants`)).find((p: any) => p.fullName === "Созданный участник");
       page.once("dialog", dialog => dialog.accept());
       await page.getByTestId(`participant-${created.id}`).getByRole("button", { name: "Деактивировать участника", exact: true }).click();
       await expect(page.getByTestId(`participant-${created.id}`)).toHaveCount(0);

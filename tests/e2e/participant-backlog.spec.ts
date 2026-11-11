@@ -262,3 +262,123 @@ test("failed quick transfer can be retried and canceled backlog tasks cannot tra
   await expect(action).toHaveAccessibleName("Убрать из планирования: Задача 1");
   expect(state.transfers).toEqual(["task-1", "task-1"]);
 });
+
+async function setupLinkedPlanningCache(page: Page) {
+  const state = await setup(page, 2, "BACKLOG");
+  type Draft = (typeof state.tasks)[number] & { sourceTaskId?: string; estimateDays: number; planningDemands: [] };
+  const drafts = new Map<string, Draft>();
+  drafts.set("independent", { ...state.tasks[0], id: "independent", title: "Самостоятельная заготовка", estimateDays: 0, planningDemands: [] });
+  const cache = { reads: 0, failDelete: false };
+  await page.route("**/planning-workbench/backlog*", route => {
+    cache.reads += 1;
+    for (const taskId of state.transfers) {
+      const source = state.tasks.find(task => task.id === taskId);
+      const id = `planning-${taskId}`;
+      if (source && !drafts.has(id)) drafts.set(id, { ...source, id, sourceTaskId: taskId, estimateDays: 5, planningDemands: [] });
+    }
+    const content = [...drafts.values()];
+    return route.fulfill({ json: { content, page: { number: 0, size: 20, totalElements: content.length, totalPages: 1 }, first: true } });
+  });
+  await page.route("**/tasks/delete", route => {
+    if (cache.failDelete) return route.fulfill({ status: 500, json: { message: "Deletion rejected" } });
+    const { id } = route.request().postDataJSON();
+    const index = state.tasks.findIndex(task => task.id === id);
+    state.tasks.splice(index, 1);
+    drafts.delete(`planning-${id}`);
+    return route.fulfill({ json: { id } });
+  });
+  await page.route("**/tasks/update", route => {
+    const body = route.request().postDataJSON();
+    const source = state.tasks.find(task => task.id === body.id)!;
+    Object.assign(source, body);
+    return route.fulfill({ json: source });
+  });
+  return { state, cache };
+}
+
+const openPlanning = async (page: Page) => {
+  await page.getByRole("banner").getByRole("link", { name: "Планирование", exact: true }).click();
+  await expect(page.getByTestId("planning-item-independent")).toBeVisible();
+};
+
+const openBacklog = async (page: Page) => {
+  await page.getByRole("banner").getByRole("link", { name: "Бэклог", exact: true }).click();
+  await expect(page.getByTestId("backlog-task-task-1")).toBeVisible();
+};
+
+async function saveLinkedPreview(page: Page) {
+  await page.evaluate(() => {
+    const preview = { items: [{ id: "planning-task-1", sourceTaskId: "task-1" }] };
+    sessionStorage.setItem("planning-workbench-preview-v2:customlab", JSON.stringify(preview));
+    sessionStorage.setItem("planning-workbench-review-state-v2:customlab", JSON.stringify({ preview }));
+  });
+}
+
+for (const selected of [true, false]) {
+  test(`backlog deletion clears planning caches when the linked item is ${selected ? "selected" : "available"} and preserves them on failure`, async ({ page }) => {
+    const { cache } = await setupLinkedPlanningCache(page);
+    page.on("dialog", dialog => dialog.accept());
+    await page.goto("/#/customlab/backlog");
+    for (const id of ["task-1", "task-2"]) {
+      await page.getByTestId(`transfer-to-planning-${id}`).click();
+      await expect(page.getByTestId(`transfer-to-planning-${id}`)).toHaveAccessibleName(/Убрать из планирования/);
+    }
+    if (!selected) await page.getByTestId("transfer-to-planning-task-1").click();
+    await openPlanning(page);
+    await expect(page.getByTestId("planning-selected-count")).toHaveText(selected ? "2" : "1");
+    await expect(page.getByTestId("planning-item-planning-task-1")).toBeVisible();
+    const initialReads = cache.reads;
+    await saveLinkedPreview(page);
+    await openBacklog(page);
+    cache.failDelete = true;
+    const failedDelete = page.waitForEvent("dialog", dialog => dialog.type() === "alert");
+    await page.getByTestId("remove-task-task-1").click();
+    expect((await failedDelete).message()).toContain("Не удалось удалить задачу");
+    await expect(page.getByTestId("backlog-task-task-1")).toBeVisible();
+    await openPlanning(page);
+    await expect(page.getByTestId("planning-selected-count")).toHaveText(selected ? "2" : "1");
+    await expect(page.getByTestId("planning-item-planning-task-1")).toBeVisible();
+    expect(cache.reads).toBe(initialReads);
+    expect(await page.evaluate(() => sessionStorage.getItem("planning-workbench-preview-v2:customlab"))).not.toBeNull();
+    await openBacklog(page);
+    cache.failDelete = false;
+    await page.getByTestId("remove-task-task-1").click();
+    await expect(page.getByTestId("backlog-task-task-1")).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("planning-workbench-preview-v2:customlab"))).toBeNull();
+    expect(await page.evaluate(() => sessionStorage.getItem("planning-workbench-review-state-v2:customlab"))).toBeNull();
+    await openPlanning(page);
+    await expect(page.getByTestId("planning-selected-count")).toHaveText("1");
+    await expect(page.getByTestId("planning-backlog-count")).toHaveText("1");
+    await expect(page.getByTestId("planning-item-planning-task-1")).toHaveCount(0);
+    await expect(page.getByTestId("planning-item-planning-task-2")).toBeVisible();
+    expect(cache.reads).toBe(initialReads + 1);
+  });
+}
+
+test("source updates invalidate planning queries and only previews containing that source", async ({ page }) => {
+  const { cache } = await setupLinkedPlanningCache(page);
+  await page.goto("/#/customlab/backlog");
+  await page.getByTestId("transfer-to-planning-task-1").click();
+  await expect(page.getByTestId("transfer-to-planning-task-1")).toHaveAccessibleName(/Убрать из планирования/);
+  await openPlanning(page);
+  const initialReads = cache.reads;
+  await saveLinkedPreview(page);
+  await openBacklog(page);
+  for (const number of [2, 1]) {
+    const card = page.getByTestId(`backlog-task-task-${number}`);
+    await card.getByText(`Задача ${number}`, { exact: true }).click();
+    const input = card.getByPlaceholder("Название", { exact: true });
+    await input.fill(`Обновлённая задача ${number}`);
+    const response = page.waitForResponse(r => r.url().endsWith("/tasks/update") && r.ok());
+    await input.blur();
+    await response;
+    await expect(card.getByText(`Обновлённая задача ${number}`, { exact: true })).toBeVisible();
+    const storedPreview = await page.evaluate(() => sessionStorage.getItem("planning-workbench-preview-v2:customlab"));
+    if (number === 2) expect(storedPreview).not.toBeNull();
+    else expect(storedPreview).toBeNull();
+  }
+  await openPlanning(page);
+  await expect(page.getByTestId("planning-selected-count")).toHaveText("1");
+  await expect(page.getByTestId("planning-item-planning-task-1")).toBeVisible();
+  expect(cache.reads).toBe(initialReads + 1);
+});

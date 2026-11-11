@@ -1852,7 +1852,8 @@ function BacklogPage({ workspace = "ROADMAP" }: { workspace?: "ROADMAP" | "BACKL
   const removeTask = React.useCallback(
     async (t: BacklogItem) => {
       if (!window.confirm(`Удалить задачу «${t.title}»?`)) return;
-      await deleteTask({ id: t.id }).unwrap();
+      // The mutation lifecycle reports errors and restores the optimistic cache.
+      await deleteTask({ id: t.id });
     },
     [deleteTask]
   );
